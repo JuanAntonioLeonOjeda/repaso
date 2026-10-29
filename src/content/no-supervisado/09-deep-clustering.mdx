@@ -1,0 +1,110 @@
+K-means sobre píxeles crudos funciona regular: dos fotos del mismo perro con distinta luz están "lejos" píxel a píxel. El **deep clustering** usa una red neuronal para transformar los datos en un **espacio latente** donde las distancias tienen sentido, y agrupa ahí. Esta lección conecta lo no supervisado con Deep Learning (si aún no la has repasado, verás conceptos que se explican allí).
+
+## Autoencoders: comprimir para entender
+
+Un **autoencoder** es una red que aprende a **reconstruir su entrada** pasando por un cuello de botella:
+
+- El **codificador** comprime la entrada $x$ en un vector pequeño $z$ (el espacio latente).
+- El **decodificador** intenta reconstruir $x$ a partir de $z$.
+- Se entrena minimizando el error de reconstrucción. No necesita etiquetas.
+
+Para reconstruir bien con tan poco espacio, la red se ve obligada a guardar en $z$ lo **esencial** de los datos. Ese $z$ es una representación compacta y mucho mejor para agrupar que los píxeles.
+
+<AutoencoderDiagram />
+
+<Callout kind="practice" title="De tus prácticas (T6)">
+El notebook construye un autoencoder para MNIST de dimensiones `784 → 500 → 500 → 2000 → 10` (y su espejo), lo preentrena 300 épocas y después aplica **DEC** sobre el espacio latente de 10 dimensiones. La línea base es k-means sobre los 784 píxeles.
+</Callout>
+
+## DEC y DCN: agrupar mientras se aprende
+
+Agrupar sobre un espacio latente fijo ya mejora mucho, pero se puede ir más allá: **ajustar el codificador para que el espacio latente sea más "agrupable"**.
+
+**DEC (Deep Embedded Clustering)**, el del notebook:
+
+1. Preentrena el autoencoder y quédate con el codificador.
+2. Inicializa los centroides con k-means sobre el espacio latente.
+3. Calcula una asignación blanda de cada punto a cada centroide con una t de Student:
+   $$q_{ij} = \frac{(1 + \lVert z_i - \mu_j \rVert^2)^{-1}}{\sum_{j'} (1 + \lVert z_i - \mu_{j'} \rVert^2)^{-1}}$$
+4. Construye una **distribución objetivo** $p$ que "afila" $q$ (eleva al cuadrado y normaliza: refuerza las asignaciones seguras) y entrena el codificador y los centroides para minimizar $KL(p \,\|\, q)$.
+
+**DCN (Deep Clustering Network)** es parecido pero optimiza a la vez el error de reconstrucción y una pérdida tipo k-means en el espacio latente, para que la red no "olvide" los datos mientras agrupa.
+
+<CodeExercise
+  id="dec-q"
+  title="La asignación blanda de DEC"
+  starter={`
+    import numpy as np
+
+    z = np.array([[0.0, 0.0], [0.2, 0.1], [3.0, 3.0], [1.5, 1.5]])   # puntos en el espacio latente
+    mu = np.array([[0.0, 0.0], [3.0, 3.0]])                          # centroides
+
+    dist2 = ((z[:, None, :] - mu[None, :, :]) ** 2).sum(axis=2)       # (4, 2) distancias al cuadrado
+    q = (1 + dist2) ** ___
+    q = q / q.sum(axis=___, keepdims=True)                             # cada fila suma 1
+
+    # Distribución objetivo: afila q (al cuadrado, ponderado por frecuencia del cluster)
+    p = q ** 2 / q.sum(axis=0)
+    p = p / p.sum(axis=1, keepdims=True)
+
+    print("q:", q.round(3))
+    print("p:", p.round(3))
+  `}
+  solution={`
+    import numpy as np
+
+    z = np.array([[0.0, 0.0], [0.2, 0.1], [3.0, 3.0], [1.5, 1.5]])   # puntos en el espacio latente
+    mu = np.array([[0.0, 0.0], [3.0, 3.0]])                          # centroides
+
+    dist2 = ((z[:, None, :] - mu[None, :, :]) ** 2).sum(axis=2)       # (4, 2) distancias al cuadrado
+    q = (1 + dist2) ** -1
+    q = q / q.sum(axis=1, keepdims=True)                             # cada fila suma 1
+
+    # Distribución objetivo: afila q (al cuadrado, ponderado por frecuencia del cluster)
+    p = q ** 2 / q.sum(axis=0)
+    p = p / p.sum(axis=1, keepdims=True)
+
+    print("q:", q.round(3))
+    print("p:", p.round(3))
+  `}
+  hints={["La t de Student con un grado de libertad es (1 + d²) elevado a −1.", "Para que cada punto reparta su pertenencia, se normaliza por filas (axis=1)."]}
+  check={`
+    assert np.allclose(q.sum(axis=1), 1), "Cada fila de q debe sumar 1"
+    assert abs(q[3, 0] - 0.5) < 1e-9, "El punto (1,5, 1,5) está a la misma distancia de los dos centroides"
+    assert p[1, 0] > q[1, 0], "p debería ser más 'seguro' que q en los puntos claros"
+  `}
+>
+Implementa la fórmula de $q$ y comprueba que $p$ es una versión "más segura" de $q$. El punto del medio queda al 50%.
+</CodeExercise>
+
+## Otras familias
+
+- **VAE (autoencoder variacional) → VaDE**: el codificador no da un punto sino una **distribución** (media y varianza) y el espacio latente se fuerza a seguir una gaussiana. VaDE usa como prior una **mezcla de gaussianas**: cada componente es un cluster. Es como un GMM en el espacio latente, entrenado de punta a punta.
+- **GAN → InfoGAN**: una GAN aprende a generar datos; InfoGAN añade al ruido de entrada un **código categórico** y fuerza a que la imagen generada conserve información sobre él. Sin etiquetas, el código acaba representando categorías (en MNIST, el dígito).
+- **Métodos directos (JULE…)**: sin autoencoder ni generador, alternan agrupar (clustering jerárquico) y ajustar la red con esos grupos como pseudo-etiquetas.
+
+<Quiz
+  id="por-que-latente"
+  options={[
+    "Porque el espacio latente tiene menos dimensiones y k-means va más rápido",
+    "Porque en el espacio latente las distancias reflejan parecido semántico, no parecido píxel a píxel",
+    "Porque el autoencoder ya sabe las etiquetas",
+    "Porque k-means no funciona con imágenes",
+  ]}
+  answer={1}
+  explanation="La velocidad es un efecto secundario. La clave es que la red aprende una representación en la que dos imágenes del mismo 'concepto' quedan cerca aunque sus píxeles sean distintos. El autoencoder nunca ve etiquetas."
+>
+¿Por qué agrupar en el espacio latente de un autoencoder funciona mejor que agrupar los píxeles?
+</Quiz>
+
+<Callout kind="real">
+En la práctica, hoy rara vez se entrena un autoencoder propio para agrupar: se usa un **modelo preentrenado** (una CNN o ViT para imágenes, un *sentence transformer* para texto) como codificador, se obtienen *embeddings* y sobre ellos se aplica UMAP + HDBSCAN o k-means. Es exactamente el patrón de herramientas como BERTopic. Los inconvenientes de la familia deep clustering siguen siendo los del tema: muchos hiperparámetros, mucho cómputo y resultados difíciles de interpretar.
+</Callout>
+
+## Para llevar
+
+- Deep clustering = aprender un espacio latente donde agrupar tenga sentido.
+- Autoencoder: codificador + decodificador entrenados para reconstruir; el cuello de botella es la representación.
+- DEC refina codificador y centroides con asignaciones blandas $q$ y un objetivo afilado $p$.
+- VaDE (VAE + GMM), InfoGAN (GAN con código categórico), JULE (pseudo-etiquetas).
+- En la práctica: embeddings de un modelo preentrenado + clustering clásico.

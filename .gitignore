@@ -1,0 +1,7 @@
+node_modules
+dist
+coverage
+.DS_Store
+.env
+# Course material (slides, notebooks, videos): source for the lessons, not part of the repo.
+Asignaturas/

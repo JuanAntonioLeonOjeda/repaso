@@ -1,0 +1,183 @@
+Los **algoritmos genéticos** copian la evolución: una **población** de soluciones compite, las mejores se reproducen mezclando sus "genes" y, de vez en cuando, mutan. Generación a generación, la población mejora. Son la metaheurística poblacional más conocida y la que usaste en grupo para el TSP en la última actividad guiada.
+
+## Los componentes
+
+1. **Codificación (cromosoma)**: cómo se representa una solución. Binaria (`0110…`), entera, real o una **permutación** (para el TSP: el orden de las ciudades). Es la decisión más importante.
+2. **Función de aptitud (fitness)**: lo buena que es una solución (en el TSP, por ejemplo, la inversa de la longitud).
+3. **Población inicial**: aleatoria, o sembrada con algunas soluciones de un voraz.
+4. **Selección**: quién se reproduce. Las mejores deben tener más probabilidad, pero no exclusividad (si no, se pierde diversidad).
+   - **Ruleta**: probabilidad proporcional a la aptitud.
+   - **Torneo**: se eligen $k$ al azar y gana la mejor. Fácil de ajustar con $k$ (más $k$ = más presión selectiva).
+5. **Cruce (crossover)**: combinar dos padres. En binario: por un punto, dos puntos, uniforme. En permutaciones hay que **mantener la validez** (cada ciudad una vez): **order crossover (OX)**, PMX…
+6. **Mutación**: pequeños cambios aleatorios (voltear un bit, intercambiar dos ciudades). Mantiene la diversidad.
+7. **Reemplazo y elitismo**: la nueva generación sustituye a la anterior; con **elitismo**, las mejores pasan intactas para no perderlas.
+8. **Parada**: número de generaciones, tiempo o estancamiento.
+
+<GeneticSim />
+
+## Ajustar los parámetros
+
+| Parámetro | Si es muy bajo | Si es muy alto |
+|---|---|---|
+| Tamaño de población | poca diversidad, convergencia prematura | lento |
+| Presión selectiva (torneo) | casi aleatorio, no mejora | convergencia prematura |
+| Probabilidad de mutación | se estanca | búsqueda aleatoria |
+| Elitismo | puede perder la mejor solución | menos diversidad |
+
+<Callout kind="idea" title="Convergencia prematura">
+El enemigo nº 1 de un genético: toda la población se vuelve casi igual antes de encontrar algo bueno, y el cruce deja de producir novedades. En la simulación lo ves en el contador de **diversidad**. Remedios: más mutación, torneos más pequeños, poblaciones más grandes o reinicios parciales.
+</Callout>
+
+## En código: OneMax
+
+El problema de juguete clásico: encontrar la cadena binaria con más unos. Trivial para una persona, perfecto para ver todos los operadores funcionando.
+
+<CodeExercise
+  id="onemax"
+  title="Un algoritmo genético completo para OneMax"
+  starter={`
+    import random
+
+    random.seed(1)
+    N_BITS, POBLACION, GENERACIONES, P_MUT = 40, 30, 60, 1 / 40
+
+    def fitness(ind):
+        return sum(ind)
+
+    def torneo(pob, k=3):
+        competidores = random.sample(pob, k)
+        return max(competidores, key=___)
+
+    def cruce_un_punto(a, b):
+        punto = random.randint(1, N_BITS - 1)
+        return a[:punto] + b[___:]
+
+    def mutar(ind):
+        return [1 - bit if random.random() < ___ else bit for bit in ind]
+
+    pob = [[random.randint(0, 1) for _ in range(N_BITS)] for _ in range(POBLACION)]
+    for gen in range(GENERACIONES):
+        elite = max(pob, key=fitness)                    # elitismo: el mejor pasa tal cual
+        hijos = [mutar(cruce_un_punto(torneo(pob), torneo(pob))) for _ in range(POBLACION - 1)]
+        pob = [elite] + hijos
+
+    mejor = max(pob, key=fitness)
+    print("Mejor aptitud:", fitness(mejor), "de", N_BITS)
+  `}
+  solution={`
+    import random
+
+    random.seed(1)
+    N_BITS, POBLACION, GENERACIONES, P_MUT = 40, 30, 60, 1 / 40
+
+    def fitness(ind):
+        return sum(ind)
+
+    def torneo(pob, k=3):
+        competidores = random.sample(pob, k)
+        return max(competidores, key=fitness)
+
+    def cruce_un_punto(a, b):
+        punto = random.randint(1, N_BITS - 1)
+        return a[:punto] + b[punto:]
+
+    def mutar(ind):
+        return [1 - bit if random.random() < P_MUT else bit for bit in ind]
+
+    pob = [[random.randint(0, 1) for _ in range(N_BITS)] for _ in range(POBLACION)]
+    for gen in range(GENERACIONES):
+        elite = max(pob, key=fitness)                    # elitismo: el mejor pasa tal cual
+        hijos = [mutar(cruce_un_punto(torneo(pob), torneo(pob))) for _ in range(POBLACION - 1)]
+        pob = [elite] + hijos
+
+    mejor = max(pob, key=fitness)
+    print("Mejor aptitud:", fitness(mejor), "de", N_BITS)
+  `}
+  hints={["En el torneo gana el que tenga mayor aptitud: la clave es la función fitness.", "El hijo toma el principio de a y el final de b, desde el mismo punto.", "Cada bit muta con probabilidad P_MUT."]}
+  check={`
+    assert fitness(mejor) >= 36, "Tras 60 generaciones debería acercarse a 40 unos"
+    a, b = [0] * N_BITS, [1] * N_BITS
+    hijo = cruce_un_punto(a, b)
+    assert len(hijo) == N_BITS and hijo == sorted(hijo), "El hijo debe ser un prefijo de a y un sufijo de b"
+  `}
+>
+Completa selección por torneo, cruce de un punto y mutación. La probabilidad de mutación $1/n$ (un bit por individuo de media) es una regla clásica.
+</CodeExercise>
+
+## Cruce para permutaciones: order crossover
+
+En el TSP no vale el cruce de un punto: el hijo podría repetir ciudades y saltarse otras. El **OX** copia un tramo de un padre y rellena el resto **en el orden en que aparecen en el otro padre**, saltando las ya usadas.
+
+<CodeExercise
+  id="order-crossover"
+  title="Order crossover (OX)"
+  starter={`
+    def order_crossover(p1, p2, i, j):
+        """Copia p1[i:j+1] en su sitio y rellena el resto con el orden de p2."""
+        hijo = [None] * len(p1)
+        hijo[i:j + 1] = p1[i:j + 1]
+        tomadas = set(hijo[i:j + 1])
+        resto = [c for c in p2 if c not in ___]
+        posiciones = [k for k in range(len(p1)) if hijo[k] is ___]
+        for k, c in zip(posiciones, resto):
+            hijo[k] = c
+        return hijo
+
+    p1 = [1, 2, 3, 4, 5, 6, 7, 8]
+    p2 = [8, 6, 4, 2, 7, 5, 3, 1]
+    print(order_crossover(p1, p2, 2, 4))
+  `}
+  solution={`
+    def order_crossover(p1, p2, i, j):
+        """Copia p1[i:j+1] en su sitio y rellena el resto con el orden de p2."""
+        hijo = [None] * len(p1)
+        hijo[i:j + 1] = p1[i:j + 1]
+        tomadas = set(hijo[i:j + 1])
+        resto = [c for c in p2 if c not in tomadas]
+        posiciones = [k for k in range(len(p1)) if hijo[k] is None]
+        for k, c in zip(posiciones, resto):
+            hijo[k] = c
+        return hijo
+
+    p1 = [1, 2, 3, 4, 5, 6, 7, 8]
+    p2 = [8, 6, 4, 2, 7, 5, 3, 1]
+    print(order_crossover(p1, p2, 2, 4))
+  `}
+  hints={["Del segundo padre se toman las ciudades que no estén ya en el tramo copiado.", "Las posiciones libres son las que siguen a None."]}
+  check={`
+    hijo = order_crossover(p1, p2, 2, 4)
+    assert hijo == [8, 6, 3, 4, 5, 2, 7, 1], "El tramo [3, 4, 5] de p1 y el resto en el orden de p2: 8, 6, 2, 7, 1"
+    assert sorted(hijo) == sorted(p1), "El hijo debe ser una permutación válida"
+  `}
+>
+Implementa OX (en una versión sencilla que rellena de izquierda a derecha). El resultado siempre es una ruta válida.
+</CodeExercise>
+
+<Callout kind="practice" title="Los problemas del trabajo práctico">
+Los tres problemas (sesiones de **doblaje**, horarios de **La Liga**, **tribunales** de TFM) son de asignación con restricciones. El patrón para atacarlos con un genético: (1) una codificación donde sea fácil representar soluciones (por ejemplo, el orden de las tomas, o qué profesor va a qué tribunal), (2) una función de aptitud que sea el coste real **más penalizaciones** por cada restricción incumplida, y (3) operadores que no rompan la estructura. Antes de nada, prueba un voraz sencillo: te da una cota con la que comparar.
+</Callout>
+
+<Callout kind="real">
+En Python hay librerías como **DEAP** o **pymoo** (con la variante multiobjetivo **NSGA-II**, muy usada en ingeniería cuando hay que equilibrar objetivos en conflicto, como coste y tiempo). Los genéticos brillan cuando el espacio es enorme y raro y no hay gradientes (diseño de antenas, de piezas, de horarios). Para problemas que caben en un modelo lineal entero, un solver suele ganarles.
+</Callout>
+
+<Quiz
+  id="convergencia-prematura"
+  options={[
+    "Subir la presión selectiva (torneos de 10)",
+    "Quitar la mutación para que no estropee las buenas soluciones",
+    "Aumentar la mutación o el tamaño de la población, o reducir el tamaño del torneo",
+    "Usar solo elitismo",
+  ]}
+  answer={2}
+  explanation="La población ha perdido diversidad: casi todos los individuos son iguales y el cruce ya no genera nada nuevo. Hay que reintroducir variedad (más mutación, población más grande) o reducir la presión que la eliminó (torneos más pequeños)."
+>
+Tras 20 generaciones, todos los individuos de tu población son casi idénticos y la mejor solución no mejora desde hace 50 generaciones. ¿Qué cambias?
+</Quiz>
+
+## Para llevar
+
+- Población + aptitud + selección + cruce + mutación + elitismo, generación tras generación.
+- La codificación y los operadores deben producir siempre soluciones válidas (OX para permutaciones).
+- Presión selectiva frente a diversidad: el equilibrio que hay que ajustar. Cuidado con la convergencia prematura.
+- Restricciones: penalizaciones en la aptitud. Librerías: DEAP, pymoo (NSGA-II multiobjetivo).

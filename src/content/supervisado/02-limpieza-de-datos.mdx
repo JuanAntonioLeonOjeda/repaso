@@ -1,0 +1,273 @@
+"Basura entra, basura sale". Un modelo mediocre con datos bien preparados casi siempre gana a un modelo brillante con datos sucios. Aquí repasamos las cuatro tareas clásicas de limpieza: **escalar**, **tratar atípicos**, **rellenar huecos** y **elegir atributos**, y sobre todo *el error que más se comete al hacerlas*.
+
+## Escalar: normalizar y estandarizar
+
+Muchos algoritmos comparan distancias o combinan atributos sumándolos (kNN, SVM, regresión logística, redes neuronales, PCA, k-means). Si un atributo va de 0 a 300.000 (salario) y otro de 18 a 90 (edad), **el grande se come al pequeño**. Escalar los pone en igualdad de condiciones.
+
+- **Normalización (min-max)**: lleva cada columna al rango $[0, 1]$.
+  $$x' = \frac{x - x_{\min}}{x_{\max} - x_{\min}}$$
+- **Estandarización (z-score)**: centra en 0 con desviación típica 1.
+  $$x' = \frac{x - \mu}{\sigma}$$
+- **Escalado robusto**: usa la mediana y el rango intercuartílico, así que un atípico apenas le afecta.
+
+<ScalingSim />
+
+<Callout kind="real" title="¿Cuál uso en la práctica?">
+- **StandardScaler** es la opción por defecto para modelos lineales, SVM, redes y PCA.
+- **MinMaxScaler** cuando necesitas un rango acotado (por ejemplo, píxeles a $[0,1]$ —por eso en Deep Learning se divide entre 255—).
+- **RobustScaler** si hay atípicos que no quieres (o no puedes) quitar.
+- Los **árboles y sus ensembles** (Random Forest, XGBoost, LightGBM) **no necesitan escalado**: solo hacen preguntas del tipo "¿x ≤ umbral?", y eso no cambia al escalar.
+</Callout>
+
+<Predict
+  id="minmax-a-mano"
+  answer={["0.2", "0,2", ".2"]}
+  tolerance={0.001}
+  explanation="La columna va de 1 a 6 en entrenamiento, así que el 2 queda en (2 − 1) / (6 − 1) = 0,2. Un valor nuevo de 8 daría 1,4: fuera de [0, 1], y es correcto que así sea (no se vuelve a ajustar con los datos de test)."
+  hints={["Necesitas el mínimo y el máximo de la columna de entrenamiento.", "(x − mín) / (máx − mín)"]}
+>
+Una columna de entrenamiento tiene los valores `[1, 4, 6, 2]`. Tras un `MinMaxScaler` ajustado con ella, ¿en qué se convierte el valor **2**?
+</Predict>
+
+### El error número uno: hacer `fit` con los datos de test
+
+Fíjate en esto de tu práctica `Programa1.Normalizacion`: el escalador **aprende** (`fit`) el mínimo y el máximo **solo de entrenamiento**, y después **aplica** (`transform`) esos mismos valores al test. Si ajustas el escalador con todos los datos, información del test se cuela en el entrenamiento (*data leakage*) y tus métricas serán optimistas: en producción el modelo rendirá peor de lo que creías.
+
+<CodeExercise
+  id="fit-transform"
+  title="fit en train, transform en test"
+  starter={`
+    import numpy as np
+    from sklearn import preprocessing
+
+    X_train = np.array([[ 1., -4.,  5.],
+                        [ 5.,  0.,  2.],
+                        [ 0.,  6., -3.]])
+    X_test = np.array([[ 1., -3.,  2.],
+                       [ 3.,  0.,  0.],
+                       [ 0.,  4., -1.]])
+
+    normalizer = preprocessing.MinMaxScaler()
+    X_train_norm = normalizer.___(X_train)
+
+    # Normaliza X_test SIN volver a ajustar el normalizador
+    X_test_norm = ___
+
+    print(np.round(X_test_norm, 3))
+  `}
+  solution={`
+    import numpy as np
+    from sklearn import preprocessing
+
+    X_train = np.array([[ 1., -4.,  5.],
+                        [ 5.,  0.,  2.],
+                        [ 0.,  6., -3.]])
+    X_test = np.array([[ 1., -3.,  2.],
+                       [ 3.,  0.,  0.],
+                       [ 0.,  4., -1.]])
+
+    normalizer = preprocessing.MinMaxScaler()
+    X_train_norm = normalizer.fit_transform(X_train)
+
+    # Normaliza X_test SIN volver a ajustar el normalizador
+    X_test_norm = normalizer.transform(X_test)
+
+    print(np.round(X_test_norm, 3))
+  `}
+  hints={[
+    "En entrenamiento se ajusta y transforma a la vez: hay un método que hace las dos cosas.",
+    "En test solo se transforma, con el objeto ya ajustado.",
+  ]}
+  check={`
+    expected = (X_test - X_train.min(axis=0)) / (X_train.max(axis=0) - X_train.min(axis=0))
+    assert np.allclose(X_test_norm, expected), "X_test debe escalarse con el mínimo y máximo de X_train, no con los suyos"
+  `}
+>
+Es la celda con `# ???` de tu práctica de normalización. Completa el código para escalar el test con lo aprendido en entrenamiento.
+</CodeExercise>
+
+<Callout kind="real" title="Cómo se evita en la vida real: Pipeline">
+Nadie aplica los escaladores "a mano" en producción. Se usa un `Pipeline` de scikit-learn, que encadena preprocesado y modelo en un único objeto. Cuando haces `cross_val_score(pipeline, X, y)`, el escalador se ajusta **dentro de cada partición** automáticamente, y cuando guardas el modelo, guardas también su preprocesado. Lo verás en la lección de validación.
+
+```python
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
+
+modelo = make_pipeline(StandardScaler(), SVC())
+modelo.fit(X_train, y_train)      # el scaler solo ve X_train
+modelo.predict(X_test)            # y aplica lo aprendido a X_test
+```
+</Callout>
+
+## Atípicos (outliers)
+
+Un atípico es un valor que no encaja con el resto: un error de medida (una persona de 250 años), un fraude, o simplemente un caso raro pero real. **Antes de borrarlo, pregúntate cuál de los tres es**: si buscas fraude, ¡los atípicos son justo lo que quieres encontrar!
+
+### Regla del rango intercuartílico (IQR)
+
+Es lo que dibuja el diagrama de caja y bigotes:
+
+1. $Q_1$ = percentil 25, $Q_3$ = percentil 75, $IQR = Q_3 - Q_1$.
+2. Atípico si está por debajo de $Q_1 - 1{,}5 \cdot IQR$ o por encima de $Q_3 + 1{,}5 \cdot IQR$.
+
+Sencillo, univariante (mira columna a columna) y no asume normalidad.
+
+<CodeExercise
+  id="iqr"
+  title="Detecta atípicos con el IQR"
+  starter={`
+    import numpy as np
+
+    def outliers_iqr(a):
+        """Devuelve las posiciones de los valores atípicos de a."""
+        q1 = np.percentile(a, 25)
+        q3 = np.percentile(a, ___)
+        ric = q3 - q1
+        li = q1 - 1.5 * ric
+        ls = ___
+        return np.where((a < li) | (a > ___))[0]
+
+    salarios = np.array([1800, 2100, 1950, 2300, 2050, 15000, 1700, 2200, 400])
+    print(outliers_iqr(salarios))
+  `}
+  solution={`
+    import numpy as np
+
+    def outliers_iqr(a):
+        """Devuelve las posiciones de los valores atípicos de a."""
+        q1 = np.percentile(a, 25)
+        q3 = np.percentile(a, 75)
+        ric = q3 - q1
+        li = q1 - 1.5 * ric
+        ls = q3 + 1.5 * ric
+        return np.where((a < li) | (a > ls))[0]
+
+    salarios = np.array([1800, 2100, 1950, 2300, 2050, 15000, 1700, 2200, 400])
+    print(outliers_iqr(salarios))
+  `}
+  hints={["El tercer cuartil es el percentil 75.", "El límite superior es simétrico al inferior, pero sumando al Q3."]}
+  check={`
+    assert list(outliers_iqr(salarios)) == [5, 8], "Deberían salir las posiciones 5 (15000) y 8 (400)"
+    assert list(outliers_iqr(np.array([1, 2, 3, 4, 5]))) == [], "Sin atípicos no debería devolver nada"
+  `}
+>
+Completa la función (es la parte "Box plot" de tu `Programa3.Outliers`, convertida en función reutilizable).
+</CodeExercise>
+
+### Métodos multivariantes
+
+Un valor puede ser normal en cada columna por separado y raro en conjunto (1,90 m y 45 kg). Para eso scikit-learn tiene detectores que miran todas las columnas a la vez, todos con la misma interfaz (`fit`, `predict` → `1` normal, `-1` atípico):
+
+| Método | Idea | Cuándo |
+|---|---|---|
+| `EllipticEnvelope` | ajusta una gaussiana multivariante y marca lo que queda lejos | datos aproximadamente normales |
+| `IsolationForest` | los atípicos se aíslan con pocos cortes aleatorios | el más usado en la práctica, escala bien |
+| `LocalOutlierFactor` | compara la densidad de un punto con la de sus vecinos | grupos de distinta densidad |
+| `OneClassSVM` | aprende la frontera de los datos "normales" | pocos datos, con kernel |
+
+El parámetro `contamination` es la proporción de atípicos que **tú** esperas: es una decisión, no algo que el algoritmo descubra.
+
+<RunCode
+  title="IsolationForest en dos líneas"
+  code={`
+    import numpy as np
+    from sklearn.ensemble import IsolationForest
+
+    rng = np.random.default_rng(0)
+    normales = rng.normal(0, 1, size=(200, 2))
+    raros = np.array([[6, 6], [-5, 7], [8, -6]])
+    X = np.vstack([normales, raros])
+
+    detector = IsolationForest(contamination=0.02, random_state=42)
+    etiquetas = detector.fit_predict(X)   # 1 normal, -1 atípico
+
+    print("Atípicos detectados en las posiciones:", np.where(etiquetas == -1)[0])
+    print("Los 3 últimos eran los que metimos a propósito (200, 201, 202)")
+  `}
+/>
+
+## Valores ausentes
+
+Los datos reales tienen huecos (`NaN`, `None`, celdas vacías). Opciones, de más simple a más elaborada:
+
+1. **Eliminar filas** con ausentes. Válido si son pocas y faltan al azar. Peligroso si faltan por un motivo (los que no declaran ingresos suelen tener ingresos atípicos).
+2. **Eliminar columnas** con muchos ausentes (p. ej. más del 50–70%).
+3. **Imputar con un estadístico**: media, mediana (más robusta) o moda (categóricas).
+4. **Imputar con un modelo**: `KNNImputer` (media de los vecinos), `IterativeImputer` (predice cada columna con las demás).
+
+<Callout kind="real">
+Un truco muy usado: imputar **y además** añadir una columna indicadora "este valor faltaba" (`SimpleImputer(add_indicator=True)`). A menudo *que falte* un dato es información útil para el modelo. Y, como con el escalado, el imputador se ajusta solo con entrenamiento (va dentro del `Pipeline`).
+</Callout>
+
+<CodeExercise
+  id="imputar"
+  title="Imputa con la mediana"
+  starter={`
+    import numpy as np
+    from sklearn.impute import SimpleImputer
+
+    X = np.array([[7.0, 2.0],
+                  [np.nan, 3.0],
+                  [5.0, np.nan],
+                  [100.0, 4.0]])
+
+    imputer = SimpleImputer(strategy=___)
+    X_imp = imputer.fit_transform(X)
+    print(X_imp)
+  `}
+  solution={`
+    import numpy as np
+    from sklearn.impute import SimpleImputer
+
+    X = np.array([[7.0, 2.0],
+                  [np.nan, 3.0],
+                  [5.0, np.nan],
+                  [100.0, 4.0]])
+
+    imputer = SimpleImputer(strategy="median")
+    X_imp = imputer.fit_transform(X)
+    print(X_imp)
+  `}
+  hints={["La estrategia se indica con un texto. Las opciones son 'mean', 'median', 'most_frequent' y 'constant'."]}
+  check={`
+    assert X_imp[1, 0] == 7.0, "La mediana de [7, 5, 100] es 7 (la media sería 37,3: ¡el 100 la arrastra!)"
+    assert X_imp[2, 1] == 3.0, "La mediana de [2, 3, 4] es 3"
+  `}
+>
+La primera columna tiene un valor extremo (100). Rellena los huecos con la **mediana**, que no se deja arrastrar por él.
+</CodeExercise>
+
+## Selección de atributos
+
+Más columnas no es mejor: las irrelevantes añaden ruido, alargan el entrenamiento y favorecen el sobreajuste. Tres familias:
+
+- **Filtro**: puntúan cada atributo por separado, sin modelo. Varianza casi cero (columnas constantes), correlación con la clase, tests estadísticos. En tus scripts del caso del glaucoma se hace así: primero se comprueba si cada variable es normal (test de Kolmogorov-Smirnov) y luego se compara cada clase con un *t-test* (si es normal) o con *Mann-Whitney* (si no) para quedarse con las variables que distinguen sanos de enfermos.
+- **Envoltura (wrapper)**: prueban subconjuntos entrenando el modelo (p. ej. `RFE`, eliminación recursiva). Más caros, mejores resultados.
+- **Embebidos**: el propio modelo selecciona (Lasso pone coeficientes a cero; los árboles dan importancias).
+
+<Callout kind="warn">
+La selección de atributos **también** es parte del entrenamiento: si eliges las variables mirando todos los datos y luego haces validación cruzada, ya has hecho trampa. Va dentro del `Pipeline`, igual que el escalado.
+</Callout>
+
+<Quiz
+  id="leakage"
+  options={[
+    "Escalar con StandardScaler ajustado solo con el conjunto de entrenamiento",
+    "Imputar los ausentes con la media de todo el dataset y luego partir en train y test",
+    "Usar un Pipeline con el imputador y el modelo dentro de cross_val_score",
+    "Aplicar transform (sin fit) a los datos de test",
+  ]}
+  answer={1}
+  explanation="La media calculada con todo el dataset incluye los datos de test: estás usando información del test para preparar el entrenamiento. Es data leakage. Lo correcto es partir primero y ajustar el imputador solo con entrenamiento."
+>
+¿Cuál de estas prácticas provoca *data leakage*?
+</Quiz>
+
+## Para llevar
+
+- Escala para modelos basados en distancias o gradientes; los árboles no lo necesitan.
+- **`fit` solo con entrenamiento**, `transform` en todo lo demás. Mejor aún: `Pipeline`.
+- Un atípico puede ser un error o justo lo que buscas: entiende antes de borrar.
+- Mediana mejor que media cuando hay extremos; añade un indicador de "faltaba".
+- La selección de atributos también se valida dentro de la validación cruzada.

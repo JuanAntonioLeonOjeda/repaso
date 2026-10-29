@@ -1,0 +1,169 @@
+Dos usos del aprendizaje no supervisado que mueven mucho dinero: **ordenar por importancia** los nodos de un grafo (así nació Google) y **encontrar qué cosas aparecen juntas** en las transacciones (la cesta de la compra).
+
+## La web como grafo
+
+Cada página es un nodo y cada enlace, una flecha. Con un grafo se pueden hacer muchas cosas: describirlo (grados de entrada y salida), agrupar sus nodos (comunidades) o clasificarlos. La pregunta de PageRank es: **¿qué páginas son importantes?**
+
+### PageRank
+
+Intuición: una página es importante si la enlazan páginas importantes. Es una definición circular, y se resuelve con un **paseo aleatorio**: un navegante salta de página en página siguiendo enlaces al azar; el PageRank de una página es la **proporción de tiempo** que pasa en ella a largo plazo.
+
+Dos problemas y su corrección:
+
+- **Callejones sin salida** (páginas sin enlaces): el navegante se quedaría atascado. Se supone que desde ahí salta a cualquier página.
+- **Trampas** (grupos que solo se enlazan entre sí): acumularían todo el PageRank. Se añade el **teletransporte**: con probabilidad $1 - d$ el navegante salta a una página cualquiera. $d$ (*damping*, típicamente 0,85) es la probabilidad de seguir un enlace.
+
+$$PR = d \cdot A \cdot PR + \frac{1 - d}{N}$$
+
+donde $A$ es la matriz de transición (la columna $j$ reparte el PageRank de la página $j$ entre las páginas a las que enlaza). Se resuelve por **iteración de potencias**: empezar con todo repartido por igual y aplicar la fórmula hasta que no cambie.
+
+<PageRankSim />
+
+<CodeExercise
+  id="pagerank"
+  title="PageRank por iteración de potencias"
+  starter={`
+    import numpy as np
+
+    # Matriz de transición de 4 páginas: A[i, j] = probabilidad de ir de j a i
+    # 0 -> 1, 2 · 1 -> 2 · 2 -> 0 · 3 -> 2
+    A = np.array([[0,   0, 1, 0],
+                  [0.5, 0, 0, 0],
+                  [0.5, 1, 0, 1],
+                  [0,   0, 0, 0]], dtype=float)
+    N = A.shape[0]
+    d = 0.85
+
+    pr = np.full(N, 1 / N)          # empezamos con todo repartido por igual
+    for _ in range(100):
+        pr = ___ * A @ pr + ___ / N
+
+    print("PageRank:", pr.round(3), "· suma:", pr.sum().round(3))
+    print("Página más importante:", int(np.argmax(pr)))
+  `}
+  solution={`
+    import numpy as np
+
+    # Matriz de transición de 4 páginas: A[i, j] = probabilidad de ir de j a i
+    # 0 -> 1, 2 · 1 -> 2 · 2 -> 0 · 3 -> 2
+    A = np.array([[0,   0, 1, 0],
+                  [0.5, 0, 0, 0],
+                  [0.5, 1, 0, 1],
+                  [0,   0, 0, 0]], dtype=float)
+    N = A.shape[0]
+    d = 0.85
+
+    pr = np.full(N, 1 / N)          # empezamos con todo repartido por igual
+    for _ in range(100):
+        pr = d * A @ pr + (1 - d) / N
+
+    print("PageRank:", pr.round(3), "· suma:", pr.sum().round(3))
+    print("Página más importante:", int(np.argmax(pr)))
+  `}
+  hints={["Con probabilidad d se sigue un enlace; con 1 − d se salta a una página al azar.", "El término de teletransporte es (1 − d) / N."]}
+  check={`
+    assert abs(pr.sum() - 1) < 1e-6, "El PageRank debería sumar 1 (es una distribución de probabilidad)"
+    assert int(np.argmax(pr)) == 2, "La página 2 recibe enlaces de 0, 1 y 3: debería ser la más importante"
+    assert pr[3] < pr[1], "La página 3 no recibe ningún enlace: solo tiene el teletransporte"
+  `}
+>
+Implementa la fórmula. La página 3 no recibe enlaces, así que su PageRank viene solo del teletransporte: $(1-d)/N$.
+</CodeExercise>
+
+### Otras ideas sobre grafos del tema
+
+- **Personalized PageRank**: el teletransporte no va a cualquier página, sino a un conjunto de nodos de interés (por ejemplo, lo que le gusta a un usuario). Da relevancia "relativa a" algo: la base de muchos recomendadores.
+- **HITS (hubs y autoridades)**: cada página tiene dos puntuaciones: *autoridad* (la enlazan buenos hubs) y *hub* (enlaza a buenas autoridades). Pensado para búsquedas por tema.
+- **Path Ranking Algorithm (PRA)**: inferir relaciones nuevas en grafos de conocimiento a partir de los caminos que unen dos entidades ("nació en Donostia" + "Donostia está en Gipuzkoa" → probablemente "es de Gipuzkoa").
+
+<Callout kind="real">
+Hoy el trabajo con grafos se hace con librerías como **NetworkX** (exploración), **igraph** o bases de datos de grafos (**Neo4j**), y para aprender representaciones de nodos, con *graph embeddings* y **redes neuronales de grafos** (GNN). Casos reales: detección de fraude (redes de cuentas que se transfieren dinero), recomendación, logística y grafos de conocimiento para buscadores y asistentes.
+</Callout>
+
+## Reglas de asociación: la cesta de la compra
+
+Una regla $X \rightarrow Y$ dice "quien compra $X$ suele comprar también $Y$" (leche → galletas). Tres métricas:
+
+- **Soporte** de un conjunto: proporción de transacciones que lo contienen. $\text{sop}(X)$.
+- **Confianza** de la regla: de las transacciones con $X$, ¿qué proporción tiene $Y$? $\text{conf}(X \rightarrow Y) = \frac{\text{sop}(X \cup Y)}{\text{sop}(X)}$.
+- **Lift**: ¿cuánto más probable es $Y$ sabiendo que hay $X$, frente a su probabilidad normal? $\text{lift} = \frac{\text{conf}(X \rightarrow Y)}{\text{sop}(Y)}$. Mayor que 1 = asociación real; igual a 1 = independientes; menor que 1 = se "evitan".
+
+<Predict
+  id="lift"
+  answer={["1.5", "1,5"]}
+  tolerance={0.01}
+  explanation="Confianza = sop(pan y mantequilla) / sop(pan) = 0,15 / 0,25 = 0,6. Lift = 0,6 / 0,4 = 1,5: quien compra pan tiene un 50% más de probabilidad de llevarse mantequilla que un cliente cualquiera."
+  hints={["Primero la confianza: soporte conjunto entre soporte de pan.", "Después divide la confianza entre el soporte de la mantequilla."]}
+>
+De 1.000 tickets: el 25% tiene pan, el 40% mantequilla y el 15% ambos. ¿Cuál es el *lift* de la regla pan → mantequilla?
+</Predict>
+
+### El algoritmo Apriori
+
+El número de conjuntos de productos posibles crece exponencialmente, así que no se pueden contar todos. **Apriori** se apoya en una propiedad: **si un conjunto no es frecuente, ningún superconjunto suyo lo será**. Así que:
+
+1. Cuenta los productos sueltos y quédate con los que superan un soporte mínimo.
+2. Combina los frecuentes de tamaño $k$ para generar candidatos de tamaño $k+1$; descarta los que contengan algún subconjunto no frecuente; cuenta los que quedan.
+3. Repite. Al final, genera reglas con los conjuntos frecuentes y filtra por confianza y lift.
+
+<CodeExercise
+  id="soporte-confianza"
+  title="Soporte, confianza y lift con pandas"
+  starter={`
+    import pandas as pd
+
+    tickets = [
+        {"pan", "leche"}, {"pan", "pañales", "cerveza", "huevos"}, {"leche", "pañales", "cerveza", "cola"},
+        {"pan", "leche", "pañales", "cerveza"}, {"pan", "leche", "pañales", "cola"},
+    ]
+    productos = sorted(set().union(*tickets))
+    # Tabla de transacciones one-hot: una fila por ticket, una columna por producto
+    df = pd.DataFrame([[p in t for p in productos] for t in tickets], columns=productos)
+
+    def soporte(items):
+        return df[list(items)].all(axis=1).___()
+
+    sop_xy = soporte({"pañales", "cerveza"})
+    confianza = sop_xy / soporte({___})
+    lift = confianza / soporte({"cerveza"})
+    print(f"soporte={sop_xy:.2f}  confianza={confianza:.2f}  lift={lift:.2f}")
+  `}
+  solution={`
+    import pandas as pd
+
+    tickets = [
+        {"pan", "leche"}, {"pan", "pañales", "cerveza", "huevos"}, {"leche", "pañales", "cerveza", "cola"},
+        {"pan", "leche", "pañales", "cerveza"}, {"pan", "leche", "pañales", "cola"},
+    ]
+    productos = sorted(set().union(*tickets))
+    # Tabla de transacciones one-hot: una fila por ticket, una columna por producto
+    df = pd.DataFrame([[p in t for p in productos] for t in tickets], columns=productos)
+
+    def soporte(items):
+        return df[list(items)].all(axis=1).mean()
+
+    sop_xy = soporte({"pañales", "cerveza"})
+    confianza = sop_xy / soporte({"pañales"})
+    lift = confianza / soporte({"cerveza"})
+    print(f"soporte={sop_xy:.2f}  confianza={confianza:.2f}  lift={lift:.2f}")
+  `}
+  hints={["La proporción de True en una columna booleana es su media.", "La regla es pañales → cerveza: el antecedente es pañales."]}
+  check={`
+    assert abs(sop_xy - 0.6) < 1e-9, "Pañales y cerveza aparecen juntos en 3 de 5 tickets"
+    assert abs(confianza - 0.75) < 1e-9, "La confianza debería ser 0,6 / 0,8 = 0,75"
+    assert abs(lift - 1.25) < 1e-9, "El lift debería ser 0,75 / 0,6 = 1,25"
+  `}
+>
+Calcula las tres métricas de la famosa regla pañales → cerveza con cinco tickets de ejemplo.
+</CodeExercise>
+
+<Callout kind="real">
+En la práctica se usa la librería `mlxtend` (`apriori`, `association_rules`) o **FP-Growth**, más eficiente que Apriori. Y ojo con las reglas "obvias": con soporte alto salen cosas como "pan → leche" que todo el mundo sabe. Lo valioso suele estar en reglas con **lift alto** y soporte suficiente para actuar (colocación en tienda, promociones cruzadas, "frecuentemente comprados juntos" en e-commerce).
+</Callout>
+
+## Para llevar
+
+- PageRank: importancia = tiempo que pasa en una página un navegante aleatorio con teletransporte (d ≈ 0,85). Se calcula por iteración.
+- Personalized PageRank y HITS adaptan la idea a intereses o temas.
+- Reglas de asociación: soporte (frecuencia), confianza (fiabilidad), lift (¿asociación real o casualidad?).
+- Apriori poda con la propiedad "subconjunto no frecuente ⇒ superconjunto no frecuente".

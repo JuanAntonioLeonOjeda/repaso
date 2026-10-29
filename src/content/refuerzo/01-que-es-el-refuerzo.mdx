@@ -1,0 +1,192 @@
+En supervisado alguien te da la respuesta correcta. En refuerzo nadie te la da: **actúas, ves qué pasa y recibes una recompensa** (o un castigo), a menudo mucho después. Así aprendió AlphaGo a ganar al campeón del mundo de Go y así se ajustan hoy los LLM para que sus respuestas gusten a las personas (RLHF).
+
+## El bucle agente–entorno
+
+<AgentLoopDiagram />
+
+- **Entorno**: el mundo (un videojuego, un robot, un mercado, un tablero). Tiene sus reglas, que el agente normalmente no conoce.
+- **Agente**: quien decide. Recibe una **observación**, elige una **acción** y el entorno le devuelve la siguiente observación y una **recompensa**.
+- **Estado** $s_t$: la información relevante del entorno en el instante $t$ (a veces la observación lo es; a veces no: un solo fotograma de Breakout no dice hacia dónde va la pelota).
+- **Acción** $a_t$: lo que puede hacer el agente. El **espacio de acciones** puede ser **discreto** (izquierda/derecha/disparar) o **continuo** (cuánto girar el volante).
+- **Recompensa** $r_t$: un número que dice lo bien que ha ido ese paso. **Diseñarla bien es la mitad del problema.**
+- **Paso** (*step*) y **episodio**: un paso es una vuelta del bucle; un episodio, una partida completa hasta un estado final.
+- **Política** (*policy*) $\pi(a \mid s)$: la estrategia del agente, qué hace en cada estado. Es lo que queremos aprender.
+
+El objetivo no es la recompensa inmediata, sino la **recompensa acumulada** a lo largo del episodio.
+
+<CodeExercise
+  id="bucle-gym"
+  title="El bucle de Gym, con un entorno de juguete"
+  starter={`
+    import random
+
+    class Pasillo:
+        """Un pasillo de 6 casillas. Empiezas en la 0; la meta está en la 5.
+        Acciones: 0 = izquierda, 1 = derecha. Cada paso cuesta -1; llegar a la meta da +10."""
+        def reset(self):
+            self.pos = 0
+            return self.pos                                   # observación inicial
+
+        def step(self, accion):
+            self.pos = max(0, self.pos + (1 if accion == 1 else -1))
+            terminado = self.pos == 5
+            recompensa = 10 if terminado else -1
+            return self.pos, recompensa, terminado
+
+    random.seed(0)
+    env = Pasillo()
+    obs = env.___()
+    total, pasos, terminado = 0, 0, False
+    while not terminado:
+        accion = random.choice([0, 1])                       # política aleatoria
+        obs, recompensa, terminado = env.___(accion)
+        total += ___
+        pasos += 1
+    print(f"Episodio terminado en {pasos} pasos con recompensa total {total}")
+  `}
+  solution={`
+    import random
+
+    class Pasillo:
+        """Un pasillo de 6 casillas. Empiezas en la 0; la meta está en la 5.
+        Acciones: 0 = izquierda, 1 = derecha. Cada paso cuesta -1; llegar a la meta da +10."""
+        def reset(self):
+            self.pos = 0
+            return self.pos                                   # observación inicial
+
+        def step(self, accion):
+            self.pos = max(0, self.pos + (1 if accion == 1 else -1))
+            terminado = self.pos == 5
+            recompensa = 10 if terminado else -1
+            return self.pos, recompensa, terminado
+
+    random.seed(0)
+    env = Pasillo()
+    obs = env.reset()
+    total, pasos, terminado = 0, 0, False
+    while not terminado:
+        accion = random.choice([0, 1])                       # política aleatoria
+        obs, recompensa, terminado = env.step(accion)
+        total += recompensa
+        pasos += 1
+    print(f"Episodio terminado en {pasos} pasos con recompensa total {total}")
+  `}
+  hints={["Un episodio empieza reiniciando el entorno.", "Cada acción se aplica con step y devuelve (observación, recompensa, terminado).", "La recompensa total es la suma de las de cada paso."]}
+  check={`
+    assert terminado and obs == 5, "El episodio termina al llegar a la casilla 5"
+    assert total == 10 - (pasos - 1), "Total = +10 al llegar, −1 por cada paso anterior"
+  `}
+>
+Es la estructura de tu práctica `08MIAR_intro_gym` (`env.reset()`, `env.step(action)`), con un entorno de seis casillas escrito a mano. Completa el bucle de un episodio con una política aleatoria. La mejor política posible tarda 5 pasos y obtiene $10 - 4 = 6$; fíjate en lo lejos que queda el azar.
+</CodeExercise>
+
+<Callout kind="practice" title="De tus prácticas: Gym → Gymnasium">
+Las prácticas usan `gym==0.17.3` y `keras-rl2`, que hoy están **abandonados** (por eso la instalación era un calvario de versiones). El sucesor oficial es **Gymnasium** (misma API, con un cambio: `step` devuelve `obs, reward, terminated, truncated, info`, separando "la partida acabó" de "se cortó por tiempo") y para los algoritmos se usa **Stable-Baselines3** (PyTorch). Entrenar un PPO en CartPole hoy es: `PPO("MlpPolicy", "CartPole-v1").learn(50_000)`.
+</Callout>
+
+## Explorar o explotar
+
+El dilema central del refuerzo: ¿haces lo que **ya sabes** que funciona (explotar) o **pruebas** algo nuevo que podría ser mejor (explorar)? Si solo explotas, te quedas con la primera opción decente; si solo exploras, nunca aprovechas lo aprendido.
+
+La estrategia más sencilla es **ε-greedy**: con probabilidad $\varepsilon$ eliges una acción al azar; el resto del tiempo, la mejor según tus estimaciones. Es común empezar con $\varepsilon$ alto e ir bajándolo (*annealing*).
+
+<BanditSim />
+
+<CodeExercise
+  id="epsilon-greedy"
+  title="Un agente ε-greedy para el bandido"
+  starter={`
+    import numpy as np
+
+    rng = np.random.default_rng(1)
+    medias_reales = np.array([1.0, 2.2, 0.4, 1.8, 3.0])   # el agente NO las conoce
+
+    def jugar(epsilon, tiradas=2000):
+        Q = np.zeros(5)          # estimación del premio medio de cada máquina
+        N = np.zeros(5)          # cuántas veces se ha jugado cada una
+        total = 0.0
+        for _ in range(tiradas):
+            if rng.random() < ___:
+                a = rng.integers(5)             # explorar
+            else:
+                a = int(np.argmax(Q))           # explotar
+            r = medias_reales[a] + rng.normal()
+            N[a] += 1
+            Q[a] += (r - Q[a]) / ___            # media incremental
+            total += r
+        return total / tiradas, Q
+
+    for eps in [0.0, 0.1, 0.5]:
+        media, Q = jugar(eps)
+        print(f"ε={eps}: premio medio {media:.2f} · estimaciones {Q.round(1)}")
+  `}
+  solution={`
+    import numpy as np
+
+    rng = np.random.default_rng(1)
+    medias_reales = np.array([1.0, 2.2, 0.4, 1.8, 3.0])   # el agente NO las conoce
+
+    def jugar(epsilon, tiradas=2000):
+        Q = np.zeros(5)          # estimación del premio medio de cada máquina
+        N = np.zeros(5)          # cuántas veces se ha jugado cada una
+        total = 0.0
+        for _ in range(tiradas):
+            if rng.random() < epsilon:
+                a = rng.integers(5)             # explorar
+            else:
+                a = int(np.argmax(Q))           # explotar
+            r = medias_reales[a] + rng.normal()
+            N[a] += 1
+            Q[a] += (r - Q[a]) / N[a]            # media incremental
+            total += r
+        return total / tiradas, Q
+
+    for eps in [0.0, 0.1, 0.5]:
+        media, Q = jugar(eps)
+        print(f"ε={eps}: premio medio {media:.2f} · estimaciones {Q.round(1)}")
+  `}
+  hints={["Se explora con probabilidad ε.", "La media incremental divide el error entre el número de veces que se ha jugado esa máquina."]}
+  check={`
+    rng = np.random.default_rng(1)
+    m0, _ = jugar(0.0)
+    m1, Q1 = jugar(0.1)
+    assert m1 > m0, "Con algo de exploración (ε = 0,1) debería ir mejor que sin explorar"
+    assert int(np.argmax(Q1)) == 4, "Con ε = 0,1 debería descubrir que la máquina 4 es la mejor"
+  `}
+>
+Implementa el agente y compara tres valores de ε. La regla `Q ← Q + (r − Q)/N` es una media que se actualiza sin guardar el historial: verás la misma forma ("estimación ← estimación + paso × error") en todo el refuerzo.
+</CodeExercise>
+
+## Un mapa de los algoritmos
+
+- **Basados en modelo** frente a **libres de modelo** (*model-free*): ¿el agente conoce o aprende cómo funciona el entorno (para planificar) o aprende directamente qué hacer?
+- **Basados en valor** (Q-learning, DQN): aprenden lo bueno que es cada acción en cada estado y actúan eligiendo la mejor. **Basados en política** (Policy Gradient): aprenden directamente la política. **Actor-crítico**: las dos cosas.
+- **On-policy** (aprenden de lo que hace la política actual: PPO, A2C) frente a **off-policy** (pueden aprender de experiencias de otras políticas, guardadas en memoria: DQN, DDPG, SAC).
+
+El temario sigue ese orden: Q-learning → DQN → Policy Gradient → Actor-Critic (A2C/A3C) → acciones continuas (DDPG, PPO) → basados en modelo.
+
+<Callout kind="real" title="¿Dónde se usa el refuerzo de verdad?">
+Menos de lo que su fama sugiere, porque necesita **muchísima interacción** (millones de pasos) y un simulador o un entorno donde equivocarse sea barato. Casos reales: juegos (AlphaGo/AlphaZero, agentes de videojuegos), robótica entrenada en simulación, control de climatización de centros de datos, sistemas de recomendación y pujas de anuncios (como bandidos), optimización de chips y, el más influyente hoy, **RLHF**: ajustar los LLM con PPO usando un modelo de recompensa entrenado con preferencias humanas. Si tu problema tiene datos históricos con la respuesta correcta, probablemente sea supervisado, no refuerzo.
+</Callout>
+
+<Quiz
+  id="es-refuerzo"
+  options={[
+    "Predecir el precio de una vivienda a partir de sus características",
+    "Agrupar clientes por su comportamiento de compra",
+    "Decidir cuándo cambiar los semáforos de un cruce para minimizar la espera, aprendiendo en un simulador de tráfico",
+    "Clasificar correos como spam o no spam",
+  ]}
+  answer={2}
+  explanation="Hay decisiones secuenciales, cada decisión afecta al estado futuro (las colas), la recompensa (menos espera) llega con retraso y no existe una 'respuesta correcta' etiquetada para cada momento. Además hay un simulador donde explorar sin riesgo. Las demás son supervisado o no supervisado."
+>
+¿Cuál de estos problemas encaja de forma natural con el aprendizaje por refuerzo?
+</Quiz>
+
+## Para llevar
+
+- Agente, entorno, estado, acción, recompensa, episodio y política: el vocabulario de todo lo demás.
+- El objetivo es maximizar la recompensa **acumulada**, no la inmediata.
+- Explorar frente a explotar; ε-greedy es la estrategia básica.
+- Familias: valor, política, actor-crítico; on-policy y off-policy; con o sin modelo.
+- Gym → Gymnasium; keras-rl → Stable-Baselines3.

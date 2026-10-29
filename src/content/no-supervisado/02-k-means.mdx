@@ -1,0 +1,136 @@
+K-means es al clustering lo que la regresión lineal a la regresión: el primero que pruebas, el que todo el mundo entiende y el que hay que saber cuándo **no** usar.
+
+## La idea
+
+Quieres repartir los datos en $k$ grupos de forma que cada punto esté cerca del **centro** (centroide) de su grupo. Formalmente, minimizar la inercia:
+
+$$\text{SSE} = \sum_{i} \lVert x_i - \mu_{c(i)} \rVert^2$$
+
+Encontrar el mínimo exacto es NP-difícil, así que se usa una heurística (el algoritmo de Lloyd):
+
+1. Coloca $k$ centroides iniciales.
+2. **Asignación**: cada punto va al centroide más cercano.
+3. **Actualización**: cada centroide se mueve a la media de sus puntos.
+4. Repite 2–3 hasta que nada cambie.
+
+<KMeansSim />
+
+Cada paso reduce (o mantiene) la inercia, así que siempre converge… pero a un **mínimo local**, que depende de dónde empezaste. Por eso:
+
+- **k-means++**: elige los centroides iniciales lejos unos de otros (cada nuevo centroide con probabilidad proporcional a $D(x)^2$, la distancia al centroide más cercano ya elegido). Es el `init` por defecto de sklearn.
+- **`n_init`**: ejecutar varias veces con inicios distintos y quedarse con la de menor inercia.
+
+<CodeExercise
+  id="lloyd"
+  title="Un paso de k-means con numpy"
+  starter={`
+    import numpy as np
+
+    X = np.array([[1, 1], [1.5, 2], [3, 4.5], [5, 7], [3.5, 5], [4.5, 5], [3.5, 4.5]])
+    centroides = np.array([[1, 1], [5, 7]], dtype=float)
+
+    # 1) Asignación: distancia de cada punto a cada centroide -> matriz (7, 2)
+    distancias = np.linalg.norm(X[:, None, :] - centroides[None, :, :], axis=2)
+    etiquetas = np.___(distancias, axis=1)
+
+    # 2) Actualización: cada centroide pasa a ser la media de sus puntos
+    nuevos = np.array([X[etiquetas == k].___(axis=0) for k in range(len(centroides))])
+
+    print("Etiquetas:", etiquetas)
+    print("Nuevos centroides:", nuevos.round(2))
+  `}
+  solution={`
+    import numpy as np
+
+    X = np.array([[1, 1], [1.5, 2], [3, 4.5], [5, 7], [3.5, 5], [4.5, 5], [3.5, 4.5]])
+    centroides = np.array([[1, 1], [5, 7]], dtype=float)
+
+    # 1) Asignación: distancia de cada punto a cada centroide -> matriz (7, 2)
+    distancias = np.linalg.norm(X[:, None, :] - centroides[None, :, :], axis=2)
+    etiquetas = np.argmin(distancias, axis=1)
+
+    # 2) Actualización: cada centroide pasa a ser la media de sus puntos
+    nuevos = np.array([X[etiquetas == k].mean(axis=0) for k in range(len(centroides))])
+
+    print("Etiquetas:", etiquetas)
+    print("Nuevos centroides:", nuevos.round(2))
+  `}
+  hints={["Para cada fila, el índice del valor mínimo: np.argmin.", "La media por columnas de un array: .mean(axis=0)."]}
+  check={`
+    assert list(etiquetas) == [0, 0, 1, 1, 1, 1, 1], "Los dos primeros puntos van al centroide 0 y el resto al 1"
+    assert np.allclose(nuevos, [[1.25, 1.5], [3.9, 5.2]]), "Revisa la media de cada grupo"
+  `}
+>
+Implementa una iteración completa del algoritmo (asignar + actualizar). El truco `X[:, None, :] - centroides[None, :, :]` usa *broadcasting* para restar cada punto a cada centroide de una vez.
+</CodeExercise>
+
+## ¿Cuántos clusters?
+
+K-means te obliga a decidir $k$. Herramientas:
+
+- **Método del codo**: dibujar la inercia frente a $k$ y buscar dónde deja de bajar mucho. Útil pero subjetivo.
+- **Silueta** (lección anterior): el $k$ con mayor silueta media.
+- **El negocio**: a veces $k$ viene impuesto ("queremos 5 campañas distintas").
+
+## Sus limitaciones (importa saberlas)
+
+K-means asume implícitamente clusters **esféricos, de tamaño parecido y densidad parecida**, porque solo mira la distancia al centro. Falla con:
+
+- Grupos alargados o con formas raras (lunas, anillos): ver las lecciones de densidad y espectral.
+- Grupos de tamaños muy distintos.
+- Atípicos: un solo punto lejano arrastra un centroide (la media es sensible). **K-medoids** usa como centro un punto real del grupo (el *medoide*) y es más robusto, a cambio de ser más lento.
+- Variables sin escalar (como todo lo que use distancias).
+
+<Callout kind="practice" title="De tus prácticas (T2.1)">
+El notebook aplica k-means a los **dígitos manuscritos** (cada imagen de 8×8 es un punto de 64 dimensiones) y consigue en torno a un 80% de acierto sin ver una sola etiqueta. Si antes proyecta los datos con **t-SNE** a 2D, el acierto sube muchísimo: los grupos quedan más separados. Y la segunda parte usa k-means para **comprimir los colores de una imagen**: cada píxel es un punto (R, G, B), se agrupan en 16 clusters y cada píxel se sustituye por su centroide. Una paleta de 16 colores en vez de millones.
+</Callout>
+
+<RunCode
+  title="Cuantización de color con k-means"
+  code={`
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import PIL  # load_sample_image lee la foto con Pillow
+    from sklearn.cluster import MiniBatchKMeans
+    from sklearn.datasets import load_sample_image
+
+    china = load_sample_image("china.jpg")          # (427, 640, 3)
+    data = (china / 255.0).reshape(-1, 3)          # un punto RGB por píxel
+
+    k = 16
+    kmeans = MiniBatchKMeans(n_clusters=k, random_state=0, n_init=3).fit(data)
+    recoloreada = kmeans.cluster_centers_[kmeans.predict(data)].reshape(china.shape)
+
+    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+    ax[0].imshow(china); ax[0].set_title("Original"); ax[0].axis("off")
+    ax[1].imshow(recoloreada); ax[1].set_title(f"{k} colores"); ax[1].axis("off")
+    plt.show()
+  `}
+/>
+
+<Quiz
+  id="kmeans-falla"
+  options={[
+    "Clientes con edad e ingresos, en 4 grupos de tamaño parecido",
+    "Puntos GPS de viajes que dibujan las calles de una ciudad (formas alargadas)",
+    "Colores de los píxeles de una foto",
+    "Documentos representados con embeddings normalizados",
+  ]}
+  answer={1}
+  explanation="Las calles forman grupos alargados y conectados, no 'nubes' alrededor de un centro. K-means las cortaría en trozos redondos. Para eso se usa un método por densidad como DBSCAN."
+>
+¿En cuál de estos casos es más probable que k-means dé grupos sin sentido?
+</Quiz>
+
+<Callout kind="real">
+- Con muchos datos, `MiniBatchKMeans` entrena con lotes pequeños y es mucho más rápido con resultados casi iguales.
+- K-means también es un truco de **ingeniería de características**: la distancia de cada punto a cada centroide, o su cluster, puede ser una columna nueva para un modelo supervisado.
+- Para "segmentar clientes" en la vida real se suele combinar con un buen preprocesado: escalar, reducir variables muy correlacionadas y, a veces, transformar las asimétricas (logaritmo del gasto).
+</Callout>
+
+## Para llevar
+
+- K-means alterna asignar al centroide más cercano y mover el centroide a la media.
+- Converge a un mínimo local: usa k-means++ y varias inicializaciones (`n_init`).
+- Elige k con el codo, la silueta o el negocio.
+- Asume grupos esféricos y parecidos; con formas raras o atípicos, usa otro método.

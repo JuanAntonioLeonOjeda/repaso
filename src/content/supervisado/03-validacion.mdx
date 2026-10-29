@@ -1,0 +1,173 @@
+Un modelo que acierta el 100% de los datos con los que se entrenó no demuestra nada: puede haberlos **memorizado**. Lo que importa es cómo se comporta con datos que **nunca ha visto**. Validar es simular honestamente ese momento.
+
+## Sobreajuste y subajuste
+
+- **Subajuste (underfitting)**: el modelo es demasiado simple y falla incluso en entrenamiento. Error de train alto, error de test alto.
+- **Sobreajuste (overfitting)**: el modelo es tan flexible que aprende el ruido. Error de train bajísimo, error de test alto.
+- **Buen ajuste**: los dos errores son bajos y parecidos.
+
+<OverfittingSim />
+
+<Callout kind="idea">
+La distancia entre el error de entrenamiento y el de test es la señal más útil que tienes. Si es grande, simplifica el modelo, regulariza o consigue más datos. Si los dos son altos, el modelo se queda corto: dale más capacidad o mejores atributos.
+</Callout>
+
+## Tres conjuntos, tres trabajos
+
+| Conjunto | Para qué | Cuándo se usa |
+|---|---|---|
+| **Entrenamiento** | ajustar los parámetros del modelo (pesos, coeficientes, cortes) | todo el rato |
+| **Validación** | elegir entre modelos e hiperparámetros | durante el desarrollo |
+| **Test** | estimar el rendimiento final, sin sesgo | **una vez**, al final |
+
+En tus notebooks esto aparece como **partición externa** (separar el test) y **partición interna** (dividir lo que queda en train y validación, o hacer validación cruzada).
+
+<Callout kind="warn" title="El test es sagrado">
+Si miras el resultado en test, cambias algo y vuelves a mirar, el test se ha convertido en validación y tu estimación final ya no es fiable. En un trabajo real a veces ni siquiera tienes acceso al test: lo guarda otro equipo, o es "el mes que viene".
+</Callout>
+
+## Hold-out
+
+Partir una vez en dos trozos (típicamente 80/20 o 70/30). Rápido, pero la nota depende mucho de **qué** ejemplos cayeron en test, sobre todo con pocos datos.
+
+```python
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+```
+
+- `random_state` fija la aleatoriedad: resultados reproducibles.
+- `stratify=y` mantiene la proporción de clases en ambos trozos. **Úsalo siempre en clasificación**, especialmente si hay clases poco frecuentes.
+
+## Validación cruzada (k-fold)
+
+Se parte el entrenamiento en $K$ bolsas. Se entrena $K$ veces, cada vez validando en una bolsa distinta y entrenando con las demás. El resultado es la **media ± desviación** de las $K$ notas: más estable y además te dice cuánto varía.
+
+<KFoldSim />
+
+<CodeExercise
+  id="cross-val"
+  title="Validación cruzada con un Pipeline"
+  starter={`
+    from sklearn import datasets
+    from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.svm import SVC
+
+    X, y = datasets.load_iris(return_X_y=True)
+
+    # 1) Partición externa: aparta un 20% para test, estratificado
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=___, random_state=42, stratify=___
+    )
+
+    # 2) El escalado va DENTRO del pipeline: se ajusta en cada bolsa
+    modelo = make_pipeline(StandardScaler(), SVC(C=0.5))
+
+    # 3) Validación cruzada interna con 5 bolsas, solo sobre train
+    cv = StratifiedKFold(n_splits=___, shuffle=True, random_state=42)
+    scores = cross_val_score(modelo, ___, ___, cv=cv)
+    print("Accuracy por bolsa:", scores.round(3))
+    print(f"Media: {scores.mean():.3f} ± {scores.std():.3f}")
+  `}
+  solution={`
+    from sklearn import datasets
+    from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.svm import SVC
+
+    X, y = datasets.load_iris(return_X_y=True)
+
+    # 1) Partición externa: aparta un 20% para test, estratificado
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+
+    # 2) El escalado va DENTRO del pipeline: se ajusta en cada bolsa
+    modelo = make_pipeline(StandardScaler(), SVC(C=0.5))
+
+    # 3) Validación cruzada interna con 5 bolsas, solo sobre train
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    scores = cross_val_score(modelo, X_train, y_train, cv=cv)
+    print("Accuracy por bolsa:", scores.round(3))
+    print(f"Media: {scores.mean():.3f} ± {scores.std():.3f}")
+  `}
+  hints={[
+    "test_size es una proporción entre 0 y 1.",
+    "Para estratificar, pasa las etiquetas.",
+    "La validación cruzada se hace solo con los datos de entrenamiento: el test no se toca.",
+  ]}
+  check={`
+    assert len(X_test) == 30, "Con un 20% de 150 deberían quedar 30 muestras de test"
+    assert len(scores) == 5, "Deberías tener 5 notas, una por bolsa"
+    assert scores.mean() > 0.85, "Con este modelo la accuracy media debería superar 0,85"
+  `}
+>
+Combina lo de `Programa7.HoldOut` y `Programa9.ValidacionCruzada2`, pero a la manera profesional: con un `Pipeline` para que el escalado no filtre información entre bolsas.
+</CodeExercise>
+
+### Variantes que te vas a encontrar
+
+- **StratifiedKFold**: k-fold respetando la proporción de clases (el que usa `cross_val_score` por defecto en clasificación).
+- **GroupKFold**: cuando hay grupos que no se pueden separar. En tu caso del glaucoma hay **dos imágenes por paciente** (`_1.png` y `_2.png`): si un ojo cae en train y el otro en test, el modelo "reconoce al paciente" y la nota se infla. Se agrupa por paciente.
+- **TimeSeriesSplit**: con datos temporales **nunca** se baraja: se entrena con el pasado y se valida con el futuro.
+- **Leave-One-Out**: $K = n$. Solo para datasets diminutos.
+
+<Quiz
+  id="time-series"
+  options={[
+    "KFold con shuffle=True para que las bolsas sean variadas",
+    "StratifiedKFold para mantener la proporción de días con mucha demanda",
+    "TimeSeriesSplit: entrenar con el pasado y validar con fechas posteriores",
+    "Leave-One-Out, porque usa casi todos los datos para entrenar",
+  ]}
+  answer={2}
+  explanation="Si barajas, el modelo entrena con datos de marzo y valida con datos de febrero: está viendo el futuro. En producción solo tendrá el pasado. TimeSeriesSplit respeta el orden temporal y da una estimación realista."
+>
+Tienes tres años de demanda eléctrica por horas y quieres predecir la de mañana. ¿Cómo validas?
+</Quiz>
+
+## Ajustar hiperparámetros sin hacer trampa
+
+Los **parámetros** los aprende el modelo (los pesos). Los **hiperparámetros** los eliges tú antes de entrenar (`C` de una SVM, `k` de kNN, profundidad de un árbol). Para elegirlos se prueban combinaciones y se queda la mejor **en validación**:
+
+```python
+from sklearn.model_selection import GridSearchCV
+
+param_grid = {"svc__C": [0.1, 1, 10], "svc__gamma": ["scale", 0.1, 0.01]}
+busqueda = GridSearchCV(make_pipeline(StandardScaler(), SVC()), param_grid, cv=5)
+busqueda.fit(X_train, y_train)        # CV interna para cada combinación
+print(busqueda.best_params_)
+print(busqueda.score(X_test, y_test)) # una única evaluación final
+```
+
+Fíjate en el nombre `svc__C`: en un pipeline, el hiperparámetro se nombra `paso__parámetro`.
+
+**Validación anidada**: si además quieres una estimación sin sesgo de *todo el proceso* (incluida la búsqueda), metes el `GridSearchCV` dentro de otro `cross_val_score`: un bucle interno elige hiperparámetros, el externo evalúa. Es lo que muestra el esquema de "validación cruzada anidada" de los materiales.
+
+<Callout kind="real">
+- `GridSearchCV` prueba todas las combinaciones: explota rápido. Con más de 2–3 hiperparámetros se usa `RandomizedSearchCV` o librerías como **Optuna** (búsqueda bayesiana), que encuentran buenos valores con muchas menos pruebas.
+- Tras elegir hiperparámetros, se reentrena con **todo** el entrenamiento (train + validación) y se evalúa una vez en test. Es lo que hacen las celdas finales de tus prácticas ("entrenamos un modelo definitivo con todos los datos de train").
+- Y antes de nada: entrena un **modelo tonto** (`DummyClassifier`, que predice siempre la clase mayoritaria). Es tu línea base. Si tu modelo no la supera con claridad, algo va mal.
+</Callout>
+
+<Predict
+  id="cuantos-modelos"
+  answer="45"
+  explanation="La rejilla tiene 3 × 3 = 9 combinaciones, y cada una se entrena 5 veces (una por bolsa): 45 entrenamientos. Además, GridSearchCV reentrena una vez más con la mejor combinación sobre todo el train (refit=True), así que en realidad son 46."
+  hints={["Primero cuenta cuántas combinaciones hay en la rejilla.", "Cada combinación se evalúa con validación cruzada de 5 bolsas."]}
+>
+Con la rejilla del ejemplo de arriba (3 valores de `C` × 3 de `gamma`) y `cv=5`, ¿cuántos modelos se entrenan durante la búsqueda (sin contar el reentrenamiento final)?
+</Predict>
+
+## Para llevar
+
+- Lo que importa es el error en datos no vistos. La brecha train/test diagnostica el sobreajuste.
+- Train para ajustar, validación para elegir, test para una única medición final.
+- Estratifica en clasificación; agrupa si hay grupos; respeta el tiempo en series temporales.
+- Todo el preprocesado va dentro de un `Pipeline` para que la validación cruzada sea honesta.
+- Empieza siempre por un modelo base trivial.

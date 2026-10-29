@@ -1,0 +1,115 @@
+¿Y si no sabes cuántos grupos hay? El clustering jerárquico no te da *una* partición, sino **todas**: una jerarquía de grupos dentro de grupos que puedes cortar al nivel que quieras. Su resultado se dibuja como un árbol: el **dendrograma**.
+
+## Aglomerativo: de abajo arriba
+
+1. Empieza con cada punto en su propio cluster.
+2. Busca los **dos clusters más cercanos** y únelos.
+3. Repite hasta que todo sea un único cluster.
+
+El dendrograma registra cada unión a la altura de la distancia a la que ocurrió. Cortarlo con una línea horizontal da los clusters.
+
+<DendrogramSim />
+
+### ¿Qué es la distancia entre dos grupos? (criterio de enlace)
+
+| Enlace | Distancia entre grupos | Efecto |
+|---|---|---|
+| **Mínimo** (*single*) | la de los dos puntos más cercanos | encadena: crea grupos alargados, sensible al ruido |
+| **Máximo** (*complete*) | la de los dos puntos más lejanos | grupos compactos, sensible a atípicos |
+| **Media** (*average*) | la media de todas las distancias entre pares | término medio |
+| **Ward** | lo que aumenta la varianza interna al unirlos | grupos compactos y de tamaño parecido: el más usado |
+
+<Quiz
+  id="single-link"
+  options={[
+    "Ward",
+    "Enlace máximo (complete)",
+    "Enlace mínimo (single)",
+    "Da igual: todos dan el mismo resultado",
+  ]}
+  answer={2}
+  explanation="El enlace mínimo une dos grupos en cuanto tienen un par de puntos cerca, así que puede seguir una 'cadena' de puntos y reconstruir formas alargadas o curvas. Su defecto es el mismo: un puente de ruido entre dos grupos los une."
+>
+Tus datos son dos espirales entrelazadas. ¿Qué criterio de enlace tiene más posibilidades de separarlas?
+</Quiz>
+
+### Divisivo: de arriba abajo
+
+El camino contrario: todo empieza en un grupo y se divide recursivamente (por ejemplo, aplicando k-means con k = 2 en cada paso, o el método de Macnaughton-Smith). Es más lento y se usa menos.
+
+## Ventajas e inconvenientes
+
+- ✅ No exige fijar $k$ de antemano; el dendrograma es una gran herramienta **exploratoria**.
+- ✅ Funciona con cualquier distancia (incluso una matriz de distancias precalculada).
+- ❌ Lento: necesita la matriz de distancias completa, $O(n^2)$ de memoria y hasta $O(n^3)$ de tiempo. Con más de unas decenas de miles de puntos no es viable.
+- ❌ Las uniones son definitivas: un error al principio no se corrige.
+
+## En código: clientes de un centro comercial
+
+<Callout kind="practice" title="De tus prácticas (T2.2)">
+El notebook usa el dataset de clientes de un centro comercial (`mall-customers.csv`): ingresos anuales y "spending score" (cuánto gastan, de 1 a 100). Con Ward y 5 clusters aparecen segmentos muy claros: ingresos altos y gasto alto, ingresos altos y gasto bajo, etc.
+</Callout>
+
+<CodeExercise
+  id="mall"
+  title="Segmenta a los clientes"
+  files={["mall-customers.csv"]}
+  starter={`
+    import pandas as pd
+    from sklearn.cluster import AgglomerativeClustering
+
+    clientes = pd.read_csv("mall-customers.csv")
+    X = clientes[["Annual Income (k$)", "Spending Score (1-100)"]].values
+
+    modelo = AgglomerativeClustering(n_clusters=___, linkage=___)
+    clientes["segmento"] = modelo.fit_predict(X)
+
+    # Describe cada segmento con la media de sus variables
+    resumen = clientes.groupby("segmento")[["Annual Income (k$)", "Spending Score (1-100)"]].mean().round(1)
+    resumen["clientes"] = clientes["segmento"].value_counts()
+    print(resumen.sort_values("Annual Income (k$)"))
+  `}
+  solution={`
+    import pandas as pd
+    from sklearn.cluster import AgglomerativeClustering
+
+    clientes = pd.read_csv("mall-customers.csv")
+    X = clientes[["Annual Income (k$)", "Spending Score (1-100)"]].values
+
+    modelo = AgglomerativeClustering(n_clusters=5, linkage="ward")
+    clientes["segmento"] = modelo.fit_predict(X)
+
+    # Describe cada segmento con la media de sus variables
+    resumen = clientes.groupby("segmento")[["Annual Income (k$)", "Spending Score (1-100)"]].mean().round(1)
+    resumen["clientes"] = clientes["segmento"].value_counts()
+    print(resumen.sort_values("Annual Income (k$)"))
+  `}
+  hints={["Son 5 segmentos.", "El criterio de enlace que minimiza la varianza interna se llama 'ward'."]}
+  check={`
+    assert clientes["segmento"].nunique() == 5, "Deberían salir 5 segmentos"
+    alto = resumen[(resumen["Annual Income (k$)"] > 70) & (resumen["Spending Score (1-100)"] > 70)]
+    assert len(alto) == 1, "Debería aparecer un segmento de ingresos altos y gasto alto"
+  `}
+>
+Agrupa a los clientes por ingresos y gasto con Ward en 5 segmentos, y descríbelos. ¿Cuál es el segmento al que dirigirías una campaña de productos premium?
+</CodeExercise>
+
+<Callout kind="real">
+El paso más valioso del ejercicio es el último: **describir cada segmento** con medias (o medianas) y ponerle un nombre ("ahorradores con dinero", "jóvenes impulsivos"). Eso es lo que se presenta. Y aquí no hemos escalado porque las dos variables están en rangos parecidos (≈ 15–140 y 1–100); con variables en escalas distintas, estandariza antes.
+</Callout>
+
+<Predict
+  id="uniones"
+  answer="99"
+  explanation="Cada unión reduce en uno el número de clusters. Para pasar de 100 clusters (uno por punto) a 1 hacen falta 99 uniones. El dendrograma de n puntos tiene siempre n − 1 nodos internos."
+  hints={["Cada unión junta dos clusters en uno: el número total baja en 1."]}
+>
+Aplicas clustering aglomerativo a 100 puntos hasta el final. ¿Cuántas uniones registra el dendrograma?
+</Predict>
+
+## Para llevar
+
+- Aglomerativo: une siempre los dos grupos más cercanos; el dendrograma guarda la historia.
+- El criterio de enlace cambia el resultado: Ward para grupos compactos, mínimo para formas alargadas.
+- Muy útil para explorar y cuando no sabes k; no escala a datasets grandes.
+- Tras agrupar, describe y nombra cada segmento.

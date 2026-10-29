@@ -1,0 +1,210 @@
+Las imágenes tienen estructura espacial; el texto, el audio o las series temporales tienen **orden**. "El perro muerde al hombre" y "el hombre muerde al perro" tienen las mismas palabras. Esta lección recorre cómo convertir texto en números y cómo pasamos de las redes recurrentes a los transformers, la arquitectura detrás de los LLM.
+
+## De texto a números
+
+1. **Tokenizar**: partir el texto en unidades (palabras, o mejor **subpalabras**: "repasando" → "repas" + "ando", con BPE o WordPiece, para que no haya palabras desconocidas).
+2. **Indexar**: cada token recibe un número de un vocabulario.
+3. **Representar**:
+   - **One-hot**: un vector del tamaño del vocabulario con un 1. Enorme (vocabularios de 50.000), disperso y **sin noción de parecido**: "perro" está igual de lejos de "gato" que de "hipoteca".
+   - **Bolsa de palabras / TF-IDF**: cuenta palabras por documento (pierde el orden). Sigue siendo una línea base excelente para clasificar textos.
+   - **Embeddings**: un vector **denso** y pequeño (50–1.000 dimensiones) por token, **aprendido**, en el que palabras con significado parecido quedan cerca.
+
+## Word2Vec: el significado sale del contexto
+
+"Conocerás una palabra por las compañías que frecuenta". Word2Vec aprende embeddings con una tarea auxiliar sobre texto sin etiquetar:
+
+- **Skip-gram**: dada una palabra, predecir las de su alrededor (ventana de ±2: "Artificial Intelligence **is** pretty cool" → predecir "Artificial", "Intelligence", "pretty", "cool" desde "is").
+- **CBOW** (*Continuous Bag of Words*): al revés, predecir la palabra central a partir del contexto.
+
+Los pesos de la capa oculta de esa red son los embeddings. Y aparecen propiedades geométricas famosas: $\vec{rey} - \vec{hombre} + \vec{mujer} \approx \vec{reina}$.
+
+<CodeExercise
+  id="analogias"
+  title="Analogías con embeddings"
+  starter={`
+    import numpy as np
+
+    # Embeddings de juguete (dimensiones ≈ realeza, género, es persona, es fruta)
+    E = {
+        "rey":     np.array([0.9,  0.8, 1.0, 0.0]),
+        "reina":   np.array([0.9, -0.8, 1.0, 0.0]),
+        "hombre":  np.array([0.1,  0.8, 1.0, 0.0]),
+        "mujer":   np.array([0.1, -0.8, 1.0, 0.0]),
+        "príncipe":np.array([0.7,  0.8, 1.0, 0.1]),
+        "manzana": np.array([0.0,  0.0, 0.0, 1.0]),
+    }
+
+    def coseno(a, b):
+        return a @ b / (np.linalg.norm(a) * np.linalg.___(b))
+
+    objetivo = E["rey"] - E["hombre"] + E[___]
+    candidatas = [p for p in E if p not in ("rey", "hombre", "mujer")]
+    respuesta = max(candidatas, key=lambda p: coseno(E[p], objetivo))
+    print("rey − hombre + mujer ≈", respuesta)
+  `}
+  solution={`
+    import numpy as np
+
+    # Embeddings de juguete (dimensiones ≈ realeza, género, es persona, es fruta)
+    E = {
+        "rey":     np.array([0.9,  0.8, 1.0, 0.0]),
+        "reina":   np.array([0.9, -0.8, 1.0, 0.0]),
+        "hombre":  np.array([0.1,  0.8, 1.0, 0.0]),
+        "mujer":   np.array([0.1, -0.8, 1.0, 0.0]),
+        "príncipe":np.array([0.7,  0.8, 1.0, 0.1]),
+        "manzana": np.array([0.0,  0.0, 0.0, 1.0]),
+    }
+
+    def coseno(a, b):
+        return a @ b / (np.linalg.norm(a) * np.linalg.norm(b))
+
+    objetivo = E["rey"] - E["hombre"] + E["mujer"]
+    candidatas = [p for p in E if p not in ("rey", "hombre", "mujer")]
+    respuesta = max(candidatas, key=lambda p: coseno(E[p], objetivo))
+    print("rey − hombre + mujer ≈", respuesta)
+  `}
+  hints={["La norma de un vector: np.linalg.norm.", "La analogía es: rey es a hombre lo que ___ es a mujer."]}
+  check={`
+    assert respuesta == "reina", "La palabra más cercana debería ser 'reina'"
+  `}
+>
+Con unos embeddings de juguete (en los reales, las dimensiones no tienen nombre), resuelve la analogía clásica con aritmética de vectores y similitud del coseno.
+</CodeExercise>
+
+En Keras, una capa `Embedding(input_dim=tamaño_vocabulario, output_dim=dimensión)` es una tabla de búsqueda entrenable: se aprende junto con el resto de la red para la tarea concreta.
+
+<Predict
+  id="params-embedding"
+  answer={["640000", "640.000", "640,000"]}
+  explanation="Una fila de 64 números por cada una de las 10.000 palabras: 10.000 × 64 = 640.000 parámetros. Una capa de embedding no tiene sesgos."
+  hints={["Es una tabla: una fila por palabra del vocabulario, una columna por dimensión."]}
+>
+¿Cuántos parámetros tiene `Embedding(input_dim=10000, output_dim=64)`?
+</Predict>
+
+## Redes recurrentes (RNN)
+
+Un MLP no tiene memoria entre entradas. Una **RNN** procesa la secuencia paso a paso y mantiene un **estado oculto** $h_t$ que resume lo visto hasta ahora:
+
+$$h_t = \tanh(W_x x_t + W_h h_{t-1} + b)$$
+
+Es la misma red (los mismos pesos) aplicada en cada paso, pasándose el estado a sí misma. Para entrenarla se "desenrolla" en el tiempo y se aplica backprop (*backpropagation through time*).
+
+El problema: al multiplicar repetidamente por $W_h$ y por derivadas de tanh, el gradiente **se desvanece** (o explota) a lo largo de muchos pasos. Una RNN simple olvida lo que pasó hace 20 palabras.
+
+## LSTM: memoria con puertas
+
+La **LSTM** añade una **celda de estado** $C_t$, una "cinta transportadora" que recorre la secuencia con pocas modificaciones, y tres **puertas** (sigmoides entre 0 y 1 que deciden cuánto dejar pasar):
+
+1. **Puerta de olvido** $f_t$: qué parte de $C_{t-1}$ se borra.
+2. **Puerta de entrada** $i_t$ (con un candidato $\tilde{C}_t$): qué información nueva se escribe.
+3. Actualización: $C_t = f_t \odot C_{t-1} + i_t \odot \tilde{C}_t$. Como es una **suma**, el gradiente fluye sin desvanecerse.
+4. **Puerta de salida** $o_t$: qué parte de la celda se expone como salida: $h_t = o_t \odot \tanh(C_t)$.
+
+La **GRU** es una versión simplificada (dos puertas) con resultados parecidos.
+
+```python
+from tensorflow.keras import layers, models
+
+model = models.Sequential([
+    layers.Embedding(input_dim=10000, output_dim=64),
+    layers.LSTM(64),                       # devuelve solo el último estado oculto
+    layers.Dense(1, activation="sigmoid"), # p. ej., reseña positiva o negativa
+])
+```
+
+<Callout kind="practice" title="Lo que necesitas saber de las LSTM en Keras (de tus apuntes)">
+- Hay que entrenar (o cargar) una capa de **Embedding** adecuada al problema.
+- Las secuencias de un lote deben tener la misma longitud: se rellenan (*padding*) o recortan.
+- `return_sequences=True` devuelve el estado de **cada** paso (necesario para apilar LSTM o para etiquetar cada palabra); sin él, solo el último.
+- `Bidirectional(LSTM(...))` lee la secuencia en los dos sentidos.
+</Callout>
+
+## Transformers: atención en vez de recurrencia
+
+Las LSTM procesan palabra a palabra: no se pueden paralelizar y siguen sufriendo con dependencias muy largas. En 2017, *"Attention is all you need"* propuso eliminar la recurrencia y usar solo **autoatención**: cada palabra mira **a la vez** a todas las demás y decide cuánto le importa cada una.
+
+Cada token genera tres vectores (mediante tres matrices aprendidas): **query** (qué busco), **key** (qué ofrezco) y **value** (qué información aporto). La atención es:
+
+$$\text{Atención}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V$$
+
+<AttentionSim />
+
+Como la atención no sabe de orden, se suma a cada embedding una **codificación posicional**. Se usan varias "cabezas" de atención en paralelo (*multi-head*), cada una especializada en un tipo de relación, y se apilan bloques de atención + MLP con conexiones residuales y normalización.
+
+<CodeExercise
+  id="atencion"
+  title="Atención de producto escalar con numpy"
+  starter={`
+    import numpy as np
+
+    def softmax(x, axis=-1):
+        e = np.exp(x - x.max(axis=axis, keepdims=True))
+        return e / e.sum(axis=axis, keepdims=True)
+
+    def atencion(Q, K, V):
+        d_k = Q.shape[-1]
+        puntuaciones = Q @ K.___ / np.sqrt(d_k)      # (n_tokens, n_tokens)
+        pesos = softmax(puntuaciones, axis=___)     # cada fila suma 1
+        return pesos @ V, pesos
+
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(5, 8))                       # 5 tokens con embeddings de 8 dimensiones
+    Wq, Wk, Wv = (rng.normal(size=(8, 4)) for _ in range(3))
+    salida, pesos = atencion(X @ Wq, X @ Wk, X @ Wv)
+    print("Forma de la salida:", salida.shape)
+    print("Pesos del token 0:", pesos[0].round(2), "suma:", pesos[0].sum().round(3))
+  `}
+  solution={`
+    import numpy as np
+
+    def softmax(x, axis=-1):
+        e = np.exp(x - x.max(axis=axis, keepdims=True))
+        return e / e.sum(axis=axis, keepdims=True)
+
+    def atencion(Q, K, V):
+        d_k = Q.shape[-1]
+        puntuaciones = Q @ K.T / np.sqrt(d_k)      # (n_tokens, n_tokens)
+        pesos = softmax(puntuaciones, axis=-1)     # cada fila suma 1
+        return pesos @ V, pesos
+
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(5, 8))                       # 5 tokens con embeddings de 8 dimensiones
+    Wq, Wk, Wv = (rng.normal(size=(8, 4)) for _ in range(3))
+    salida, pesos = atencion(X @ Wq, X @ Wk, X @ Wv)
+    print("Forma de la salida:", salida.shape)
+    print("Pesos del token 0:", pesos[0].round(2), "suma:", pesos[0].sum().round(3))
+  `}
+  hints={["Para comparar cada query con cada key se multiplica Q por K traspuesta (.T).", "El softmax se aplica por filas: el último eje."]}
+  check={`
+    assert salida.shape == (5, 4), "Una salida de dimensión 4 por cada uno de los 5 tokens"
+    assert np.allclose(pesos.sum(axis=1), 1), "Los pesos de atención de cada token deben sumar 1"
+  `}
+>
+Implementa la ecuación de la atención. Son literalmente tres líneas: el corazón de GPT, BERT y compañía.
+</CodeExercise>
+
+<Callout kind="real">
+Hoy, para casi cualquier tarea de texto, se parte de un **transformer preentrenado**: modelos tipo **BERT** (codificadores: clasificación, extracción de entidades, embeddings para búsqueda semántica) o tipo **GPT** (decodificadores: generación; los LLM). Con la librería **transformers** de Hugging Face se carga y ajusta uno en pocas líneas. Las LSTM siguen teniendo sitio en series temporales y dispositivos pequeños, y TF-IDF + regresión logística sigue siendo una línea base que conviene probar siempre.
+</Callout>
+
+<Quiz
+  id="por-que-transformer"
+  options={[
+    "Porque tienen menos parámetros que una LSTM",
+    "Porque procesan todos los tokens en paralelo y cualquier token puede atender directamente a cualquier otro, por lejos que esté",
+    "Porque no necesitan embeddings",
+    "Porque no se pueden sobreajustar",
+  ]}
+  answer={1}
+  explanation="La recurrencia obliga a procesar en serie y a 'transportar' la información paso a paso, perdiéndola por el camino. La atención conecta cualquier par de posiciones en un solo paso y aprovecha el paralelismo de las GPU, lo que permitió entrenar modelos gigantes."
+>
+¿Cuál es la ventaja principal de los transformers sobre las LSTM?
+</Quiz>
+
+## Para llevar
+
+- Texto → tokens (subpalabras) → índices → embeddings densos aprendidos.
+- Word2Vec (skip-gram / CBOW) aprende significado del contexto; los embeddings permiten aritmética semántica.
+- RNN: estado oculto que se pasa paso a paso; sufre desvanecimiento del gradiente. LSTM/GRU lo mitigan con puertas y una celda aditiva.
+- Transformers: autoatención softmax(QKᵀ/√d)V, en paralelo y con codificación posicional. La base de los LLM.

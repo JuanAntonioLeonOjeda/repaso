@@ -1,0 +1,163 @@
+Tienes 50 columnas, pero muchas dicen casi lo mismo (altura y peso, ingresos y gasto…). Reducir la dimensionalidad es **cambiar de ejes** para describir los datos con menos números sin perder lo importante. Sirve para visualizar, para quitar ruido, para acelerar modelos y para combatir la maldición de la dimensionalidad.
+
+## PCA: análisis de componentes principales
+
+PCA busca **nuevos ejes** (las componentes principales) con dos propiedades:
+
+1. La **primera** componente es la dirección en la que los datos tienen **más varianza** (más "información").
+2. Cada componente siguiente es **perpendicular** a las anteriores y recoge la máxima varianza restante.
+
+Cada componente es una combinación lineal de las variables originales. Al quedarte con las $q$ primeras, proyectas los datos a $q$ dimensiones perdiendo lo mínimo.
+
+<PcaSim />
+
+### Cómo se calcula (y por qué salen vectores propios)
+
+1. **Centra** los datos (resta la media de cada columna) y, si las variables tienen unidades distintas, **estandarízalas**. Si no, la variable con números más grandes dominará la primera componente solo por su escala.
+2. Calcula la **matriz de covarianzas** $\Sigma$.
+3. Sus **vectores propios** son las direcciones de las componentes y sus **valores propios**, la varianza que recoge cada una.
+4. Proyecta: $Z = X_{\text{centrado}} \cdot V_q$.
+
+La proporción de varianza explicada de la componente $j$ es $\lambda_j / \sum_i \lambda_i$.
+
+<CodeExercise
+  id="pca-a-mano"
+  title="PCA desde cero (y comparado con sklearn)"
+  starter={`
+    import numpy as np
+    from sklearn.decomposition import PCA
+
+    rng = np.random.default_rng(0)
+    base = rng.normal(size=(200, 1))
+    X = np.hstack([base * 3 + rng.normal(scale=0.3, size=(200, 1)),
+                   base * -1 + rng.normal(scale=0.3, size=(200, 1)),
+                   rng.normal(scale=0.5, size=(200, 1))])
+
+    # 1) Centrar
+    Xc = X - X.___(axis=0)
+    # 2) Matriz de covarianzas (variables en columnas -> rowvar=False)
+    cov = np.cov(Xc, rowvar=False)
+    # 3) Valores y vectores propios, ordenados de mayor a menor
+    valores, vectores = np.linalg.eigh(cov)
+    orden = np.argsort(valores)[::-1]
+    valores, vectores = valores[orden], vectores[:, orden]
+    # 4) Varianza explicada de cada componente
+    var_explicada = valores / valores.___()
+
+    print("Varianza explicada (a mano):", var_explicada.round(3))
+    print("Varianza explicada (sklearn):", PCA().fit(X).explained_variance_ratio_.round(3))
+  `}
+  solution={`
+    import numpy as np
+    from sklearn.decomposition import PCA
+
+    rng = np.random.default_rng(0)
+    base = rng.normal(size=(200, 1))
+    X = np.hstack([base * 3 + rng.normal(scale=0.3, size=(200, 1)),
+                   base * -1 + rng.normal(scale=0.3, size=(200, 1)),
+                   rng.normal(scale=0.5, size=(200, 1))])
+
+    # 1) Centrar
+    Xc = X - X.mean(axis=0)
+    # 2) Matriz de covarianzas (variables en columnas -> rowvar=False)
+    cov = np.cov(Xc, rowvar=False)
+    # 3) Valores y vectores propios, ordenados de mayor a menor
+    valores, vectores = np.linalg.eigh(cov)
+    orden = np.argsort(valores)[::-1]
+    valores, vectores = valores[orden], vectores[:, orden]
+    # 4) Varianza explicada de cada componente
+    var_explicada = valores / valores.sum()
+
+    print("Varianza explicada (a mano):", var_explicada.round(3))
+    print("Varianza explicada (sklearn):", PCA().fit(X).explained_variance_ratio_.round(3))
+  `}
+  hints={["Centrar es restar la media de cada columna.", "La proporción es cada valor propio dividido entre la suma de todos."]}
+  check={`
+    assert np.allclose(var_explicada, PCA().fit(X).explained_variance_ratio_), "Debería coincidir con sklearn"
+    assert var_explicada[0] > 0.9, "Las dos primeras columnas dependen de la misma variable: la PC1 debería explicar más del 90%"
+  `}
+>
+Reproduce el "PCA desde 0" del notebook T4.1. Las dos primeras columnas son casi la misma información (dependen de `base`), así que una sola componente debería explicar casi todo.
+</CodeExercise>
+
+### ¿Con cuántas componentes me quedo?
+
+- Las que acumulen un umbral de varianza (típicamente **90–95%**). En sklearn: `PCA(n_components=0.95)`.
+- El "codo" del gráfico de varianza explicada (*scree plot*).
+- Para visualizar: 2 o 3, sin más.
+
+<Callout kind="warn">
+PCA es **lineal** y busca varianza, no separación entre clases: la dirección con más varianza puede no ser la que distingue lo que te interesa. Y las componentes son mezclas de todas las variables, así que se pierde interpretabilidad ("PC2 = 0,4·edad − 0,7·ingresos + …"). Para visualizar estructura no lineal se usan **t-SNE** o **UMAP** (como en tu notebook de k-means con dígitos), que no conservan distancias globales pero sí vecindarios.
+</Callout>
+
+<Predict
+  id="pca-componentes"
+  answer="3"
+  explanation="Acumulando: 0,60 → 0,85 → 0,95. Con 3 componentes llegas al 95%. Las 7 restantes solo aportan un 5%: probablemente ruido."
+  hints={["Suma las proporciones en orden hasta llegar a 0,95."]}
+>
+Un PCA sobre 10 variables da estas proporciones de varianza explicada: 0,60 · 0,25 · 0,10 · 0,02 · 0,01 · … ¿Cuántas componentes necesitas para conservar el 95%?
+</Predict>
+
+## ICA: análisis de componentes independientes
+
+PCA busca direcciones **incorreladas** con máxima varianza. ICA busca algo más fuerte: **fuentes estadísticamente independientes** que, mezcladas, producen lo que observas.
+
+El ejemplo clásico es el **problema del cóctel**: varias personas hablan a la vez y varios micrófonos graban mezclas distintas. ICA recupera cada voz por separado. Formalmente, observamos $X = S A^\top$ (fuentes $S$ mezcladas por una matriz $A$ desconocida) y ICA estima una matriz $W$ tal que $S \approx X W^\top$.
+
+Su suposición clave: las fuentes son **independientes y no gaussianas** (si fueran gaussianas, cualquier rotación serviría y no habría solución única). Por eso maximiza la "no gaussianidad" (FastICA).
+
+<RunCode
+  title="Separar señales mezcladas con FastICA"
+  code={`
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from sklearn.decomposition import FastICA, PCA
+
+    t = np.linspace(0, 8, 2000)
+    s1 = np.sin(2 * t)                       # una sinusoide
+    s2 = np.sign(np.sin(3 * t))              # una onda cuadrada
+    s3 = ((t * 1.7) % 2) - 1                 # un diente de sierra
+    S = np.c_[s1, s2, s3]
+    S += 0.1 * np.random.default_rng(0).normal(size=S.shape)
+
+    A = np.array([[1, 1, 1], [0.5, 2, 1.0], [1.5, 1.0, 2.0]])   # mezcla
+    X = S @ A.T                                                  # lo que graban los "micrófonos"
+
+    S_ica = FastICA(n_components=3, random_state=0).fit_transform(X)
+    S_pca = PCA(n_components=3).fit_transform(X)
+
+    fig, axes = plt.subplots(4, 1, figsize=(9, 7), sharex=True)
+    for ax, data, title in zip(axes, [S, X, S_ica, S_pca],
+                               ["Fuentes reales", "Mezclas observadas", "ICA recupera", "PCA (no separa)"]):
+        ax.plot(t[:600], data[:600]); ax.set_title(title, fontsize=10)
+    plt.tight_layout(); plt.show()
+  `}
+/>
+
+Fíjate: ICA recupera las tres formas (aunque **con el orden y la escala cambiados**: es una ambigüedad inevitable). PCA solo las descorrelaciona, sin separarlas.
+
+<Callout kind="real">
+ICA se usa sobre todo en **señales**: limpiar electroencefalogramas (separar el parpadeo de la actividad cerebral), separar fuentes de audio, imagen médica funcional. PCA, en cambio, está en todas partes: preprocesado antes de un modelo, compresión, visualización, detección de anomalías (lo que se reconstruye mal con pocas componentes es raro) y como paso interno de muchos métodos.
+</Callout>
+
+<Quiz
+  id="pca-escala"
+  options={[
+    "PCA ha descubierto que los ingresos son lo más importante",
+    "Has olvidado estandarizar: los ingresos tienen una varianza enorme solo por estar en euros",
+    "Las otras variables son ruido y se pueden eliminar",
+    "Hay que usar ICA en vez de PCA",
+  ]}
+  answer={1}
+  explanation="Sin estandarizar, la varianza de 'ingresos' (miles de euros al cuadrado) es muchísimo mayor que la de 'edad' o 'nº de hijos', y PCA se limita a reproducir esa columna. Con StandardScaler antes, todas parten de varianza 1."
+>
+Haces PCA sobre una tabla de clientes con edad, número de hijos e ingresos anuales (en €). La PC1 explica el 99,9% y coincide casi exactamente con "ingresos". ¿Qué pasa?
+</Quiz>
+
+## Para llevar
+
+- PCA: nuevos ejes perpendiculares ordenados por varianza = vectores propios de la covarianza.
+- Centra y estandariza antes. Quédate con las componentes que expliquen ~95%.
+- PCA es lineal y no sabe de clases; t-SNE/UMAP para visualizar estructura no lineal.
+- ICA separa fuentes independientes y no gaussianas (el cóctel); recupera las señales salvo orden y escala.

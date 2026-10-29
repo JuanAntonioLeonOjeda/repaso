@@ -1,0 +1,118 @@
+/**
+ * Every user-facing string of the app chrome. Lesson text lives in the MDX files.
+ */
+export const es = {
+  app: {
+    name: "Repaso",
+    skipToContent: "Saltar al contenido",
+  },
+  shell: {
+    home: "Asignaturas",
+    themeToLight: "Cambiar a tema claro",
+    themeToDark: "Cambiar a tema oscuro",
+    footer:
+      "Proyecto personal para repasar el máster. Funciona en local, sin cuentas ni servidores.",
+  },
+  home: {
+    title: "Repaso",
+    lead: "Lo que el máster contó en diapositivas, contado como lo contaría un compañero: con ejemplos, simulaciones que puedes tocar y ejercicios con Python de verdad.",
+    subjectsHeading: "Asignaturas",
+    lessons: (n: number): string => `${n} lecciones`,
+    progress: (done: number, total: number): string => `${done} de ${total} completadas`,
+    continueLabel: "Seguir por donde ibas",
+    howTitle: "Cómo está montado",
+    howItems: [
+      {
+        title: "Resúmenes sin jerga",
+        text: "Cada lección va al grano: qué es, por qué existe y cómo se usa en un trabajo real.",
+      },
+      {
+        title: "Simulaciones",
+        text: "Mueve parámetros, apaga neuronas, cambia la temperatura… y mira qué pasa.",
+      },
+      {
+        title: "Ejercicios en amarillo",
+        text: "Lo subrayado en amarillo es tu turno: Python real en el navegador, con pista y solución.",
+      },
+    ],
+  },
+  subject: {
+    lessonsHeading: "Lecciones",
+    basedOn: "Basado en",
+    minutes: (n: number): string => `${n} min`,
+    completed: "Completada",
+    start: "Empezar",
+    notFound: "Esa asignatura no existe.",
+  },
+  lesson: {
+    onThisPage: "En esta lección",
+    previous: "Anterior",
+    next: "Siguiente",
+    markDone: "Marcar como completada",
+    markUndone: "Completada · deshacer",
+    loading: "Cargando lección…",
+    notFound: "Esa lección no existe.",
+    sources: "Material original",
+    backToSubject: "Volver a la asignatura",
+    exercisesSolved: (done: number, total: number): string =>
+      `Ejercicios resueltos: ${done}/${total}`,
+  },
+  exercise: {
+    yourTurn: "Tu turno",
+    hint: "Pista",
+    nextHint: "Otra pista",
+    noMoreHints: "No hay más pistas",
+    showSolution: "Ver solución",
+    hideSolution: "Ocultar solución",
+    loadSolution: "Cargar solución en el editor",
+    reset: "Restaurar código inicial",
+    run: "Ejecutar",
+    running: "Ejecutando…",
+    check: "Comprobar",
+    stop: "Parar",
+    solved: "¡Resuelto!",
+    tryAgain: "Todavía no. Revisa y vuelve a intentarlo.",
+    answerLabel: "Tu respuesta",
+    output: "Salida",
+    noOutput: "(sin salida)",
+    editorLabel: "Editor de código Python",
+    quizCheck: "Comprobar respuesta",
+    quizCorrect: "Correcto.",
+    quizWrong: "No es esa.",
+    predictTitle: "¿Qué sale?",
+    pythonLoading: "Preparando Python en el navegador (la primera vez tarda unos segundos)…",
+    pythonPackages: "Instalando paquetes…",
+    pythonError:
+      "No se pudo cargar Python. ¿Hay conexión a internet? Pyodide se descarga de un CDN.",
+    checkFailed: "La comprobación no pasa",
+    runtimeError: "Error al ejecutar",
+    example: "Ejemplo ejecutable",
+    exampleHint: "Puedes editarlo y volver a ejecutarlo.",
+    figure: (n: number): string => `Figura ${n} generada por el código`,
+    solutionLabel: "Solución",
+  },
+  callout: {
+    real: "En el trabajo real",
+    warn: "Ojo",
+    idea: "La intuición",
+    practice: "De tus prácticas",
+    note: "Nota",
+  },
+  sim: {
+    badge: "Simulación",
+    reset: "Reiniciar",
+    play: "Reproducir",
+    pause: "Pausar",
+    step: "Paso",
+    loading: "Cargando simulación…",
+    failed: "La simulación no se pudo cargar.",
+  },
+  notFound: {
+    title: "Página no encontrada",
+    back: "Volver al inicio",
+  },
+  error: {
+    title: "Algo ha fallado",
+    reload: "Recargar",
+  },
+} as const;

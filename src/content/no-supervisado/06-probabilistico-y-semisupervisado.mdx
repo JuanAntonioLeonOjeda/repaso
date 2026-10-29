@@ -1,0 +1,175 @@
+Hasta ahora cada punto pertenecía a un grupo y punto. Los modelos probabilísticos dicen algo más útil: "este punto es **un 80% del grupo A y un 20% del B**". Y la misma herramienta que los entrena, el algoritmo **EM**, sirve para aprovechar datos **sin etiquetar** cuando tienes pocos etiquetados.
+
+## Mezcla de gaussianas (GMM)
+
+Suponemos que los datos salen de $K$ distribuciones normales mezcladas, cada una con su media $\mu_k$, su covarianza $\Sigma_k$ (forma y orientación) y su peso $\pi_k$ (qué proporción de datos genera):
+
+$$p(x) = \sum_{k=1}^{K} \pi_k \, \mathcal{N}(x \mid \mu_k, \Sigma_k)$$
+
+El problema: no sabemos qué gaussiana generó cada punto (es una **variable oculta**). Si lo supiéramos, estimar cada gaussiana sería trivial; si conociéramos las gaussianas, calcular de dónde viene cada punto también. EM aprovecha justo eso:
+
+- **Paso E (expectation)**: con los parámetros actuales, calcula para cada punto la **responsabilidad** de cada gaussiana: $r_{ik} = P(k \mid x_i)$.
+- **Paso M (maximization)**: reestima cada gaussiana con todos los puntos, **ponderados** por su responsabilidad.
+
+Cada iteración sube (o mantiene) la verosimilitud. Igual que k-means, converge a un óptimo local y depende de la inicialización.
+
+<GmmEmSim />
+
+<Callout kind="idea" title="K-means es un caso particular">
+Si obligas a que todas las gaussianas sean esféricas e iguales y conviertes las responsabilidades en "todo o nada", el paso E es "asignar al centro más cercano" y el paso M es "mover el centro a la media". Eso es k-means. GMM lo generaliza: grupos **elípticos**, de **tamaños distintos** y con **asignación blanda**.
+</Callout>
+
+### En sklearn
+
+```python
+from sklearn.mixture import GaussianMixture
+
+gmm = GaussianMixture(n_components=3, covariance_type="full", random_state=0).fit(X)
+etiquetas = gmm.predict(X)          # el grupo más probable
+probs = gmm.predict_proba(X)        # la pertenencia a cada grupo
+```
+
+- `covariance_type`: `"full"` (cada grupo su elipse libre), `"diag"`, `"tied"` (todas comparten forma), `"spherical"`. Menos libertad = menos parámetros = menos sobreajuste.
+- Para elegir el número de componentes se usan **BIC** o **AIC** (verosimilitud penalizada por número de parámetros): el menor gana.
+
+<CodeExercise
+  id="gmm-bic"
+  title="Elige el número de gaussianas con BIC"
+  starter={`
+    import numpy as np
+    from sklearn.datasets import make_blobs
+    from sklearn.mixture import GaussianMixture
+
+    X, _ = make_blobs(n_samples=600, centers=3, cluster_std=[0.6, 1.2, 0.8], random_state=3)
+    X = X @ np.array([[0.8, -0.6], [0.4, 1.2]])   # elipses inclinadas
+
+    bics = {}
+    for k in range(1, 8):
+        gmm = GaussianMixture(n_components=k, covariance_type="full", random_state=0).fit(X)
+        bics[k] = gmm.___(X)
+        print(k, round(bics[k], 1))
+
+    mejor_k = ___(bics, key=bics.get)
+    print("Mejor número de componentes:", mejor_k)
+  `}
+  solution={`
+    import numpy as np
+    from sklearn.datasets import make_blobs
+    from sklearn.mixture import GaussianMixture
+
+    X, _ = make_blobs(n_samples=600, centers=3, cluster_std=[0.6, 1.2, 0.8], random_state=3)
+    X = X @ np.array([[0.8, -0.6], [0.4, 1.2]])   # elipses inclinadas
+
+    bics = {}
+    for k in range(1, 8):
+        gmm = GaussianMixture(n_components=k, covariance_type="full", random_state=0).fit(X)
+        bics[k] = gmm.bic(X)
+        print(k, round(bics[k], 1))
+
+    mejor_k = min(bics, key=bics.get)
+    print("Mejor número de componentes:", mejor_k)
+  `}
+  hints={["El método se llama igual que el criterio, en minúsculas.", "Con BIC, cuanto más bajo, mejor."]}
+  check={`
+    assert mejor_k == 3, "Los datos tienen 3 grupos: BIC debería elegir 3"
+  `}
+>
+Como en el notebook T2.5 (que lo hace con AIC sobre las lunas y los dígitos), deja que el BIC decida cuántas componentes hacen falta.
+</CodeExercise>
+
+<Callout kind="real">
+Un GMM no es solo un clustering: es un **modelo de densidad**. Puedes preguntarle lo probable que es un punto (`score_samples`) —detección de anomalías: lo improbable es raro— o **generar datos nuevos** (`sample`). El notebook T2.5 genera dígitos manuscritos nuevos así, y es la idea germinal de los modelos generativos que verás en deep learning.
+</Callout>
+
+## Aprendizaje semisupervisado
+
+Etiquetar es caro (un radiólogo, un abogado, horas de anotación); los datos sin etiquetar, baratos. El aprendizaje **semisupervisado** usa unos pocos ejemplos etiquetados y muchos sin etiquetar.
+
+### Naive Bayes + EM
+
+**Naive Bayes** clasifica con el teorema de Bayes suponiendo (de forma "ingenua") que los atributos son independientes dada la clase:
+
+$$P(C \mid x_1, \dots, x_n) \propto P(C) \prod_j P(x_j \mid C)$$
+
+Entrenarlo es contar frecuencias, rapidísimo, y funciona sorprendentemente bien con texto. La versión semisupervisada (la del tema y del notebook T3, con el corpus *20 Newsgroups*):
+
+1. Entrena Naive Bayes con los pocos documentos etiquetados.
+2. **E**: predice probabilidades de clase para los no etiquetados.
+3. **M**: reentrena con todos, usando esas probabilidades como pesos.
+4. Repite hasta que se estabilice.
+
+### Propagación de etiquetas
+
+Construye un grafo de similitud entre todos los puntos (como en el clustering espectral) y deja que las etiquetas conocidas "se difundan" a sus vecinos: `LabelPropagation` y `LabelSpreading` en sklearn. Supone que puntos cercanos comparten etiqueta.
+
+<CodeExercise
+  id="label-spreading"
+  title="Diez etiquetas para 1.800 dígitos"
+  starter={`
+    import numpy as np
+    from sklearn.datasets import load_digits
+    from sklearn.semi_supervised import LabelSpreading
+    from sklearn.svm import SVC
+
+    X, y = load_digits(return_X_y=True)
+    rng = np.random.default_rng(0)
+
+    # Solo conocemos la etiqueta de 50 dígitos; el resto se marca con -1 (desconocida)
+    conocidos = rng.choice(len(y), size=50, replace=False)
+    y_parcial = np.full_like(y, ___)
+    y_parcial[conocidos] = y[conocidos]
+
+    # 1) Supervisado con solo esos 50
+    svc = SVC().fit(X[conocidos], y[conocidos])
+    acc_sup = (svc.predict(X) == y).mean()
+
+    # 2) Semisupervisado: usa también los no etiquetados
+    ls = LabelSpreading(kernel="knn", n_neighbors=7).fit(X, ___)
+    acc_semi = (ls.transduction_ == y).mean()
+
+    print(f"Solo 50 etiquetas:        {acc_sup:.3f}")
+    print(f"50 etiquetas + el resto:  {acc_semi:.3f}")
+  `}
+  solution={`
+    import numpy as np
+    from sklearn.datasets import load_digits
+    from sklearn.semi_supervised import LabelSpreading
+    from sklearn.svm import SVC
+
+    X, y = load_digits(return_X_y=True)
+    rng = np.random.default_rng(0)
+
+    # Solo conocemos la etiqueta de 50 dígitos; el resto se marca con -1 (desconocida)
+    conocidos = rng.choice(len(y), size=50, replace=False)
+    y_parcial = np.full_like(y, -1)
+    y_parcial[conocidos] = y[conocidos]
+
+    # 1) Supervisado con solo esos 50
+    svc = SVC().fit(X[conocidos], y[conocidos])
+    acc_sup = (svc.predict(X) == y).mean()
+
+    # 2) Semisupervisado: usa también los no etiquetados
+    ls = LabelSpreading(kernel="knn", n_neighbors=7).fit(X, y_parcial)
+    acc_semi = (ls.transduction_ == y).mean()
+
+    print(f"Solo 50 etiquetas:        {acc_sup:.3f}")
+    print(f"50 etiquetas + el resto:  {acc_semi:.3f}")
+  `}
+  hints={["En sklearn, una etiqueta desconocida se marca con −1.", "LabelSpreading se entrena con todos los X y con las etiquetas parciales."]}
+  check={`
+    assert (y_parcial == -1).sum() == len(y) - 50, "Todas menos 50 etiquetas deberían ser −1"
+    assert acc_semi > acc_sup, "Usar los datos sin etiquetar debería mejorar el resultado"
+  `}
+>
+Simula un caso real: solo tienes etiquetados 50 de 1.797 dígitos. Compara un clasificador entrenado con esos 50 con la propagación de etiquetas, que usa también los 1.747 restantes.
+</CodeExercise>
+
+<Callout kind="real">
+Hoy, el semisupervisado se hace a menudo con **pseudo-etiquetado** (*self-training*: el modelo etiqueta los no etiquetados de los que está muy seguro y se reentrena; `SelfTrainingClassifier` en sklearn) y, sobre todo, con **aprendizaje autosupervisado**: preentrenar una red con millones de datos sin etiquetas (prediciendo palabras ocultas, como BERT, o comparando versiones de una misma imagen, como SimCLR/DINO) y después ajustarla con pocas etiquetas. Es la base de los modelos fundacionales.
+</Callout>
+
+## Para llevar
+
+- GMM: los datos son una mezcla de gaussianas; asignación blanda, grupos elípticos, número de componentes con BIC/AIC.
+- EM alterna "estimar lo oculto" (E) y "reajustar parámetros" (M). K-means es su versión dura.
+- Semisupervisado: pocas etiquetas + muchos datos sin etiquetar (NB+EM, propagación de etiquetas, pseudo-etiquetado).

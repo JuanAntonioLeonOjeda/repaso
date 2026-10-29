@@ -1,0 +1,174 @@
+Toca juntar las piezas en el flujo completo que hiciste en clase con MNIST: **preparar datos → definir arquitectura → compilar → entrenar → diagnosticar → evaluar**. Lo vamos a recorrer línea a línea explicando el *porqué* de cada paso, y lo vas a reproducir con scikit-learn (que sí funciona aquí, en el navegador).
+
+## 1. Cargar e inspeccionar
+
+```python
+import tensorflow as tf
+
+(X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
+print(X_train.shape)  # (60000, 28, 28)  -> 60.000 imágenes de 28×28 píxeles
+print(y_train[:10])   # [5 0 4 1 9 2 1 3 1 4] -> etiquetas como enteros
+```
+
+Mira siempre algunas imágenes con sus etiquetas (la función `display_digit` del notebook) y la distribución de clases. Errores de etiquetado o datos raros se ven a simple vista.
+
+## 2. Acondicionar los datos
+
+```python
+from tensorflow.keras.utils import to_categorical
+from sklearn.model_selection import train_test_split
+
+X_train_n, X_test_n = X_train / 255, X_test / 255           # píxeles a [0, 1]
+y_train_ohe = to_categorical(y_train, num_classes=10)       # 5 -> [0,0,0,0,0,1,0,0,0,0]
+X_tr, X_val, y_tr, y_val = train_test_split(X_train_n, y_train_ohe, test_size=0.15, random_state=42)
+```
+
+- **Dividir entre 255**: las redes entrenan mucho mejor con entradas pequeñas y centradas. Con valores 0–255 los gradientes son enormes al principio.
+- **One-hot**: porque usaremos softmax + entropía cruzada categórica. (Alternativa: dejar los enteros y usar `sparse_categorical_crossentropy`).
+- **Validación separada del test**: el test de MNIST no se toca hasta el final.
+
+## 3. Arquitectura
+
+```python
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Flatten
+
+model = Sequential([
+    Flatten(input_shape=(28, 28)),      # 28×28 -> vector de 784
+    Dense(512, activation="relu"),      # capa oculta
+    Dense(10, activation="softmax"),    # una probabilidad por dígito
+])
+model.summary()                         # 407.050 parámetros
+```
+
+<Callout kind="idea" title="API secuencial y API funcional">
+`Sequential` sirve para pilas de capas sin bifurcaciones. Para modelos con varias entradas/salidas, ramas o conexiones residuales se usa la **API funcional** (`inputs = Input(...)`; `x = Dense(...)(inputs)`; `Model(inputs, outputs)`), que es la que usa tu práctica de visión para la CNN y el transfer learning.
+</Callout>
+
+## 4. Compilar y entrenar
+
+```python
+from tensorflow.keras.optimizers import SGD
+
+model.compile(loss="categorical_crossentropy", optimizer=SGD(learning_rate=0.005), metrics=["accuracy"])
+H = model.fit(X_tr, y_tr, validation_data=(X_val, y_val), epochs=50, batch_size=128)
+```
+
+- `compile` fija la pérdida, el optimizador y las métricas que se mostrarán.
+- `batch_size=128` con 51.000 imágenes de entrenamiento da $\lceil 51000/128 \rceil = 399$ pasos por época: el "399/399" del log de tu notebook.
+- `H.history` guarda pérdida y accuracy por época para dibujar las curvas.
+
+<Predict
+  id="pasos-por-epoca"
+  answer="469"
+  explanation="60.000 / 128 = 468,75 → 469 lotes (el último, incompleto, con 96 imágenes). Cada lote es una actualización de pesos, así que en 10 épocas habría 4.690 actualizaciones."
+  hints={["Divide el número de ejemplos entre el tamaño del lote y redondea hacia arriba."]}
+>
+Si entrenas con las 60.000 imágenes completas (sin separar validación) y `batch_size=128`, ¿cuántos pasos (actualizaciones de pesos) hay por época?
+</Predict>
+
+## 5. Diagnosticar y evaluar
+
+Dibuja las curvas de aprendizaje (lección anterior) y, al final, evalúa una sola vez en test:
+
+```python
+from sklearn.metrics import classification_report
+
+predicciones = model.predict(X_test_n, batch_size=128)
+print(classification_report(y_test, predicciones.argmax(axis=1)))
+```
+
+`argmax` convierte las 10 probabilidades de cada imagen en la clase predicha. El informe da precisión, recall y F1 **por dígito**: ¿confunde los 4 con los 9? Ahí es donde se aprende algo del modelo.
+
+## Ahora tú: el mismo flujo, aquí
+
+Pyodide no tiene TensorFlow, pero scikit-learn trae un MLP (`MLPClassifier`) que sigue exactamente el mismo flujo. Usaremos los dígitos de sklearn (8×8 en vez de 28×28).
+
+<CodeExercise
+  id="mlp-digitos"
+  title="Un MLP para dígitos, de principio a fin"
+  starter={`
+    from sklearn.datasets import load_digits
+    from sklearn.model_selection import train_test_split
+    from sklearn.neural_network import MLPClassifier
+    from sklearn.metrics import classification_report
+
+    X, y = load_digits(return_X_y=True)        # 1.797 imágenes de 8×8, píxeles de 0 a 16
+    X = X / ___                                 # 1) normaliza a [0, 1]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    # 2) Arquitectura: una capa oculta de 128 neuronas ReLU; Adam; early stopping con 10% de validación
+    mlp = MLPClassifier(hidden_layer_sizes=(___,), activation=___, solver="adam",
+                        learning_rate_init=1e-3, early_stopping=True, validation_fraction=0.1,
+                        max_iter=500, random_state=0)
+    mlp.fit(X_train, y_train)                   # 3) entrenar
+
+    print("Épocas hasta parar:", mlp.n_iter_)
+    acc_test = mlp.score(X_test, y_test)         # 4) evaluar UNA vez en test
+    print(f"Accuracy en test: {acc_test:.3f}")
+    print(classification_report(y_test, mlp.predict(X_test)))
+  `}
+  solution={`
+    from sklearn.datasets import load_digits
+    from sklearn.model_selection import train_test_split
+    from sklearn.neural_network import MLPClassifier
+    from sklearn.metrics import classification_report
+
+    X, y = load_digits(return_X_y=True)        # 1.797 imágenes de 8×8, píxeles de 0 a 16
+    X = X / 16                                 # 1) normaliza a [0, 1]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    # 2) Arquitectura: una capa oculta de 128 neuronas ReLU; Adam; early stopping con 10% de validación
+    mlp = MLPClassifier(hidden_layer_sizes=(128,), activation="relu", solver="adam",
+                        learning_rate_init=1e-3, early_stopping=True, validation_fraction=0.1,
+                        max_iter=500, random_state=0)
+    mlp.fit(X_train, y_train)                   # 3) entrenar
+
+    print("Épocas hasta parar:", mlp.n_iter_)
+    acc_test = mlp.score(X_test, y_test)         # 4) evaluar UNA vez en test
+    print(f"Accuracy en test: {acc_test:.3f}")
+    print(classification_report(y_test, mlp.predict(X_test)))
+  `}
+  hints={[
+    "En este dataset los píxeles van de 0 a 16 (no de 0 a 255).",
+    "hidden_layer_sizes es una tupla con el tamaño de cada capa oculta: (128,) es una sola capa.",
+    "La activación se indica con su nombre en minúsculas.",
+  ]}
+  check={`
+    assert X.max() == 1.0, "Tras normalizar, el máximo debería ser 1"
+    assert mlp.hidden_layer_sizes == (128,), "Usa una capa oculta de 128 neuronas"
+    assert acc_test > 0.93, "Deberías superar el 93% en test"
+  `}
+>
+Reproduce el flujo de la práctica: normalizar, definir la red, entrenar con early stopping y evaluar en test. Después experimenta: ¿qué pasa con `(32,)`, con `(256, 128)` o con `activation="logistic"`?
+</CodeExercise>
+
+<Callout kind="real" title="Cómo se trabaja en la vida real">
+- **PyTorch** domina en investigación y en muchas empresas; **Keras 3** es multibackend (TensorFlow, JAX o PyTorch por debajo). Los conceptos son idénticos; cambia la sintaxis.
+- Se fija la semilla, se guardan los **checkpoints** (`ModelCheckpoint`), se registran los experimentos (TensorBoard, MLflow o Weights & Biases) y se guarda el modelo con su preprocesado.
+- Antes de entrenar a lo grande, el truco de los profesionales: **intenta sobreajustar un lote pequeño**. Si la red no consigue pérdida ≈ 0 con 50 ejemplos, hay un bug (etiquetas mal, pérdida equivocada, datos sin normalizar).
+- Para tablas pequeñas como la del glaucoma de Supervisado, una red casi nunca gana a gradient boosting. Las redes brillan con imágenes, texto, audio… y muchos datos.
+</Callout>
+
+<Quiz
+  id="loss-sparse"
+  options={[
+    "categorical_crossentropy",
+    "sparse_categorical_crossentropy",
+    "binary_crossentropy",
+    "mean_squared_error",
+  ]}
+  answer={1}
+  explanation="La versión 'sparse' espera etiquetas enteras y hace el one-hot implícitamente. categorical_crossentropy espera el vector one-hot; binary_crossentropy es para salidas sigmoides independientes."
+>
+Tus etiquetas son enteros del 0 al 9 (sin `to_categorical`) y la última capa es `Dense(10, activation="softmax")`. ¿Qué pérdida usas?
+</Quiz>
+
+## Para llevar
+
+- Flujo: cargar e inspeccionar → normalizar y codificar etiquetas → separar validación → arquitectura → compilar → entrenar → curvas → evaluar en test.
+- Normaliza las entradas; empareja salida y pérdida; `argmax` para pasar de probabilidades a clase.
+- Pasos por época = ⌈ejemplos / batch_size⌉.
+- Antes de escalar, comprueba que puedes sobreajustar un lote pequeño.

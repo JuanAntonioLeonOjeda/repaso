@@ -1,0 +1,195 @@
+Para problemas grandes y NP-difíciles (rutas, horarios, asignaciones) los métodos exactos no terminan nunca. Las **metaheurísticas** renuncian a garantizar el óptimo a cambio de encontrar **muy buenas soluciones en un tiempo razonable**. Son estrategias generales, aplicables a casi cualquier problema si sabes representar una solución y evaluarla.
+
+## Exactos frente a heurísticos
+
+| Exactos | Heurísticos |
+|---|---|
+| garantizan el óptimo | dan una buena solución, sin garantía |
+| tiempo que crece (a menudo exponencialmente) con el tamaño | tiempo controlable |
+| para problemas pequeños o con estructura (PL) | para problemas grandes y "feos" |
+
+Toda metaheurística equilibra dos fuerzas:
+
+- **Intensificación** (explotación): buscar a fondo alrededor de las buenas soluciones encontradas.
+- **Diversificación** (exploración): visitar zonas nuevas del espacio para no quedarse atrapado en un óptimo local.
+
+<Callout kind="idea" title="No hay almuerzo gratis">
+El teorema *No Free Lunch* (Wolpert y Macready, 1997) dice que, promediado sobre **todos** los problemas posibles, ningún algoritmo de búsqueda es mejor que otro. Traducción práctica: no existe la mejor metaheurística; la buena es la que aprovecha la estructura de **tu** problema (buena representación, buenos vecinos, buena solución inicial).
+</Callout>
+
+## Búsqueda aleatoria
+
+Generar soluciones al azar y quedarse con la mejor. Parece ingenuo, pero es una línea base útil y se puede razonar sobre ella: si hay $m$ soluciones equiprobables y una es la óptima, la probabilidad de encontrarla en $n$ intentos es
+
+$$p = 1 - \left(1 - \frac{1}{m}\right)^n$$
+
+<Predict
+  id="busqueda-aleatoria"
+  answer={["0.632", "0,632", "0.63", "0,63", "63%", "63.2%"]}
+  tolerance={0.005}
+  explanation="p = 1 − (1 − 1/1000)^1000 ≈ 1 − e^(−1) ≈ 0,632. Haciendo tantos intentos como soluciones hay, solo hay un 63% de probabilidad de dar con el óptimo (por las repeticiones). Con m = 20!/2 rutas de un TSP de 20 ciudades, la búsqueda aleatoria no tiene ninguna posibilidad."
+  hints={["Sustituye m = 1.000 y n = 1.000 en la fórmula.", "(1 − 1/m)^m ≈ e^(−1) ≈ 0,368"]}
+>
+Hay $m = 1.000$ soluciones posibles y una es la óptima. Con $n = 1.000$ intentos aleatorios, ¿qué probabilidad hay de encontrarla?
+</Predict>
+
+## Búsqueda local
+
+Partir de una solución y moverse repetidamente a una **solución vecina** mejor, hasta que ningún vecino mejore (óptimo local). Los ingredientes:
+
+- **Representación**: para el viajante, una permutación de las ciudades `(1 2 4 3 8 5 7 6)`.
+- **Función objetivo**: la longitud de la ruta.
+- **Operador de vecindad**: cómo se genera un vecino. Para permutaciones (los del tema):
+  1. **Inserción**: sacar un elemento y meterlo en otra posición.
+  2. **Intercambio** (*swap*): intercambiar dos elementos.
+  3. **Inversión** de una sublista (*2-opt*): en el TSP elimina un cruce de la ruta. Suele ser el mejor.
+  4. **Barajar** una sublista.
+
+<CodeExercise
+  id="dos-opt"
+  title="Operadores de vecindad para permutaciones"
+  starter={`
+    def swap(ruta, i, j):
+        r = list(ruta)
+        r[i], r[j] = r[j], r[i]
+        return r
+
+    def dos_opt(ruta, i, j):
+        """Invierte el tramo entre las posiciones i y j (ambas incluidas)."""
+        return ruta[:i] + ruta[i:j + 1][::___] + ruta[___:]
+
+    def insercion(ruta, i, j):
+        """Saca el elemento de la posición i y lo inserta en la posición j."""
+        r = list(ruta)
+        elemento = r.pop(___)
+        r.insert(j, elemento)
+        return r
+
+    ruta = [1, 2, 4, 3, 8, 5, 7, 6]
+    print("swap(2, 5):     ", swap(ruta, 2, 5))
+    print("2-opt(2, 5):    ", dos_opt(ruta, 2, 5))
+    print("inserción(2, 5):", insercion(ruta, 2, 5))
+  `}
+  solution={`
+    def swap(ruta, i, j):
+        r = list(ruta)
+        r[i], r[j] = r[j], r[i]
+        return r
+
+    def dos_opt(ruta, i, j):
+        """Invierte el tramo entre las posiciones i y j (ambas incluidas)."""
+        return ruta[:i] + ruta[i:j + 1][::-1] + ruta[j + 1:]
+
+    def insercion(ruta, i, j):
+        """Saca el elemento de la posición i y lo inserta en la posición j."""
+        r = list(ruta)
+        elemento = r.pop(i)
+        r.insert(j, elemento)
+        return r
+
+    ruta = [1, 2, 4, 3, 8, 5, 7, 6]
+    print("swap(2, 5):     ", swap(ruta, 2, 5))
+    print("2-opt(2, 5):    ", dos_opt(ruta, 2, 5))
+    print("inserción(2, 5):", insercion(ruta, 2, 5))
+  `}
+  hints={["Para invertir una lista: [::-1].", "Lo que va después del tramo empieza en j + 1.", "Se saca el elemento de la posición i."]}
+  check={`
+    assert swap(ruta, 2, 5) == [1, 2, 5, 3, 8, 4, 7, 6]
+    assert dos_opt(ruta, 2, 5) == [1, 2, 5, 8, 3, 4, 7, 6], "2-opt invierte el tramo [4, 3, 8, 5]"
+    assert insercion(ruta, 2, 5) == [1, 2, 3, 8, 5, 4, 7, 6]
+    assert sorted(dos_opt(ruta, 0, 7)) == sorted(ruta), "Un vecino debe seguir siendo una permutación"
+  `}
+>
+Implementa los operadores del tema sobre la ruta del ejemplo de las diapositivas.
+</CodeExercise>
+
+El problema de la búsqueda local es que se **atasca en óptimos locales** (como la función de Rastrigin de las diapositivas, llena de valles). Tres formas de escapar: cambiar la estructura de vecindad (búsqueda de vecindad variable), **permitir movimientos a peores soluciones** (tabú, recocido) o reiniciar desde otros puntos (GRASP, multiarranque).
+
+## Búsqueda tabú
+
+Búsqueda local con **memoria**: en cada paso se mueve al **mejor vecino aunque sea peor** que la solución actual, pero prohíbe (marca como *tabú*) durante unas iteraciones los movimientos o soluciones recientes, para no volver atrás y entrar en ciclos. Un **criterio de aspiración** permite saltarse el tabú si el movimiento lleva a la mejor solución vista.
+
+## Recocido simulado (simulated annealing)
+
+Inspirado en el enfriamiento lento de los metales. En cada paso se prueba un vecino aleatorio:
+
+- Si es **mejor**, se acepta siempre.
+- Si es **peor** (empeora en $\Delta > 0$), se acepta con probabilidad $p = e^{-\Delta / T}$.
+
+La **temperatura** $T$ empieza alta (se aceptan muchos empeoramientos: exploración) y baja poco a poco ($T \leftarrow \alpha T$, con $\alpha$ cerca de 1): al final solo se aceptan mejoras (intensificación).
+
+<AnnealingSim />
+
+<CodeExercise
+  id="metropolis"
+  title="El criterio de aceptación del recocido"
+  starter={`
+    import math, random
+
+    def aceptar(delta, T):
+        """delta = coste_nuevo − coste_actual (minimización)."""
+        if delta < 0:
+            return True                       # mejora: siempre
+        return random.random() < math.exp(___)
+
+    random.seed(0)
+    for T in [100, 10, 1]:
+        aceptadas = sum(aceptar(5, T) for _ in range(10000))
+        print(f"T = {T:>3}: acepta empeorar 5 unidades el {aceptadas / 100:.1f}% de las veces")
+  `}
+  solution={`
+    import math, random
+
+    def aceptar(delta, T):
+        """delta = coste_nuevo − coste_actual (minimización)."""
+        if delta < 0:
+            return True                       # mejora: siempre
+        return random.random() < math.exp(-delta / T)
+
+    random.seed(0)
+    for T in [100, 10, 1]:
+        aceptadas = sum(aceptar(5, T) for _ in range(10000))
+        print(f"T = {T:>3}: acepta empeorar 5 unidades el {aceptadas / 100:.1f}% de las veces")
+  `}
+  hints={["La probabilidad es e elevado a (−Δ / T)."]}
+  check={`
+    random.seed(1)
+    tasa = sum(aceptar(5, 10) for _ in range(20000)) / 20000
+    assert abs(tasa - math.exp(-0.5)) < 0.02, "Con Δ = 5 y T = 10 debería aceptar ≈ 61% de las veces"
+    assert aceptar(-1, 0.001), "Una mejora se acepta siempre"
+  `}
+>
+Implementa la regla de Metropolis y mira cómo cae la probabilidad de aceptar un empeoramiento al enfriar.
+</CodeExercise>
+
+## Otras metaheurísticas del tema
+
+- **GRASP**: repetir muchas veces (1) construir una solución con un voraz **aleatorizado** (elegir al azar entre los mejores candidatos de una lista restringida) y (2) mejorarla con búsqueda local. Quedarse con la mejor.
+- **Colonia de hormigas (ACO)**: muchas "hormigas" construyen rutas eligiendo el siguiente paso con probabilidad proporcional a la **feromona** del camino y a lo corto que es. Las buenas rutas depositan más feromona, que además se **evapora**: la colonia converge a buenos caminos. Muy natural para problemas de rutas.
+- **Poblacionales**: algoritmos genéticos (siguiente lección), enjambre de partículas (PSO).
+
+<Callout kind="real">
+En la industria, para rutas y planificación se suele usar **OR-Tools** (que combina búsqueda local guiada, recocido y búsqueda tabú con *constraint programming*) o solvers comerciales, y bibliotecas como **Optuna** o **Hyperopt** usan ideas similares para buscar hiperparámetros de modelos. Programar una metaheurística a mano tiene sentido para problemas muy específicos (como los del trabajo práctico: doblaje, calendario de La Liga, tribunales de TFM), y la clave suele estar en **la representación y los vecinos**, no en el algoritmo.
+</Callout>
+
+<Quiz
+  id="temperatura"
+  options={[
+    "Solo acepta mejoras desde el principio y se comporta como búsqueda local",
+    "Acepta casi cualquier empeoramiento durante mucho tiempo y se parece a una búsqueda aleatoria",
+    "Converge más rápido al óptimo global",
+    "No cambia nada: la temperatura no influye",
+  ]}
+  answer={1}
+  explanation="Con T enorme, e^(−Δ/T) ≈ 1: se acepta casi todo, y el algoritmo deambula sin rumbo (diversificación pura) hasta que la temperatura baja lo suficiente. Con T₀ muy baja pasa lo contrario: búsqueda local pura. T₀ se elige para aceptar al principio, por ejemplo, ~80% de los empeoramientos típicos."
+>
+¿Qué pasa si en el recocido simulado pones una temperatura inicial altísima?
+</Quiz>
+
+## Para llevar
+
+- Metaheurísticas: buenas soluciones en tiempo razonable, sin garantía de óptimo. Equilibrio intensificación/diversificación.
+- Búsqueda local: representación + objetivo + operador de vecindad (swap, inserción, 2-opt). Se atasca en óptimos locales.
+- Tabú: moverse al mejor vecino aunque empeore, con memoria para no volver atrás.
+- Recocido: aceptar empeoramientos con probabilidad $e^{-\Delta/T}$, enfriando poco a poco.
+- GRASP (voraz aleatorizado + local), ACO (feromonas). No hay una mejor para todo (No Free Lunch).

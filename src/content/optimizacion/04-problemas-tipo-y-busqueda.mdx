@@ -1,0 +1,212 @@
+Muchísimos problemas reales son, por debajo, uno de unos pocos **problemas tipo**. Reconocerlo es medio camino: te dice qué técnica usar y qué librería ya lo resuelve. Esta lección repasa los del temario y cómo se buscan soluciones en grafos.
+
+## Programación lineal (PL)
+
+Maximizar o minimizar una función **lineal** sujeta a restricciones **lineales**, con variables continuas:
+
+$$\max \; c^\top x \quad \text{s.a.} \quad A x \leq b, \; x \geq 0$$
+
+Ejemplo clásico: una fábrica hace mesas y sillas; cada producto da un beneficio y consume horas de carpintería y de pintura, que son limitadas. ¿Cuánto fabricar de cada uno?
+
+La región factible es un poliedro y el óptimo está **en un vértice**. El **método símplex** salta de vértice en vértice mejorando; en la práctica es rapidísimo, y hay solvers que resuelven problemas con millones de variables.
+
+<CodeExercise
+  id="linprog"
+  title="Mesas y sillas con scipy"
+  starter={`
+    from scipy.optimize import linprog
+
+    # Beneficio: mesa 30 €, silla 20 €. linprog MINIMIZA, así que se cambia el signo.
+    c = [-30, -20]
+    # Restricciones (≤): carpintería 2h/mesa + 1h/silla ≤ 100h; pintura 1h/mesa + 1h/silla ≤ 80h
+    A_ub = [[2, 1],
+            [___, ___]]
+    b_ub = [100, ___]
+
+    res = linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=[(0, None), (0, None)])
+    mesas, sillas = res.x
+    print(f"Mesas: {mesas:.0f}, sillas: {sillas:.0f}, beneficio: {-res.fun:.0f} €")
+  `}
+  solution={`
+    from scipy.optimize import linprog
+
+    # Beneficio: mesa 30 €, silla 20 €. linprog MINIMIZA, así que se cambia el signo.
+    c = [-30, -20]
+    # Restricciones (≤): carpintería 2h/mesa + 1h/silla ≤ 100h; pintura 1h/mesa + 1h/silla ≤ 80h
+    A_ub = [[2, 1],
+            [1, 1]]
+    b_ub = [100, 80]
+
+    res = linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=[(0, None), (0, None)])
+    mesas, sillas = res.x
+    print(f"Mesas: {mesas:.0f}, sillas: {sillas:.0f}, beneficio: {-res.fun:.0f} €")
+  `}
+  hints={["La segunda restricción es la de pintura: 1 hora por mesa y 1 por silla.", "El límite de pintura son 80 horas."]}
+  check={`
+    assert abs(mesas - 20) < 1e-6 and abs(sillas - 60) < 1e-6, "El óptimo es 20 mesas y 60 sillas"
+    assert abs(-res.fun - 1800) < 1e-6, "Beneficio máximo: 1.800 €"
+  `}
+>
+Plantea y resuelve el problema. Fíjate en el truco del signo: casi todos los solvers minimizan.
+</CodeExercise>
+
+### Programación lineal entera (PLE)
+
+Si las variables tienen que ser **enteras** (no puedes fabricar 20,4 mesas, ni asignar media persona a un turno), el problema se vuelve NP-difícil. Se resuelve con **ramificación y poda** sobre relajaciones lineales (y planos de corte). Variables binarias (0/1) permiten modelar decisiones sí/no: abrir o no un almacén, asignar o no una tarea.
+
+<Callout kind="real">
+La programación lineal y entera es probablemente la técnica de optimización **más usada en la industria**: rutas de reparto, turnos de personal, mezclas de producción, asignación de presupuesto, planificación de vuelos. En Python se modela con **PuLP**, **Pyomo** u **OR-Tools** (de Google, gratuito y muy potente), y se resuelve con solvers como HiGHS, CBC o Gurobi (comercial). Antes de escribir una metaheurística, comprueba si tu problema cabe en un modelo lineal entero: un solver puede darte el óptimo demostrado.
+</Callout>
+
+## Problemas tipo combinatorios
+
+- **Problema del viajante (TSP)**: visitar $n$ ciudades una vez y volver al inicio con la ruta más corta. $(n-1)!/2$ rutas posibles. Es el problema estrella de las metaheurísticas (lecciones 6 y 7). Variantes reales: rutas de reparto con varios vehículos y ventanas horarias (VRP).
+- **Problema de la mochila (KP)**: elegir objetos con peso y valor que quepan en una mochila de capacidad $W$ maximizando el valor. Selección de proyectos con presupuesto, carga de contenedores… Se resuelve con programación dinámica en $O(n \cdot W)$.
+- **Asignación**: asignar $n$ tareas a $n$ agentes con coste mínimo (el húngaro lo resuelve en $O(n^3)$).
+- Otros: coloreado de grafos (horarios sin conflictos), *bin packing*, *set cover*, *scheduling*.
+
+<KnapsackSim />
+
+<CodeExercise
+  id="mochila"
+  title="La mochila con programación dinámica"
+  starter={`
+    def mochila(pesos, valores, capacidad):
+        n = len(pesos)
+        # dp[i][w] = mejor valor con los i primeros objetos y capacidad w
+        dp = [[0] * (capacidad + 1) for _ in range(n + 1)]
+        for i in range(1, n + 1):
+            p, v = pesos[i - 1], valores[i - 1]
+            for w in range(capacidad + 1):
+                dp[i][w] = dp[i - 1][w]                         # no coger el objeto i
+                if p <= w:
+                    dp[i][w] = max(dp[i][w], dp[i - 1][___] + ___)   # cogerlo
+        return dp[n][capacidad]
+
+    pesos = [3, 2, 1, 4, 1]
+    valores = [20, 15, 4, 18, 7]
+    print("Valor máximo con capacidad 7:", mochila(pesos, valores, 7))
+  `}
+  solution={`
+    def mochila(pesos, valores, capacidad):
+        n = len(pesos)
+        # dp[i][w] = mejor valor con los i primeros objetos y capacidad w
+        dp = [[0] * (capacidad + 1) for _ in range(n + 1)]
+        for i in range(1, n + 1):
+            p, v = pesos[i - 1], valores[i - 1]
+            for w in range(capacidad + 1):
+                dp[i][w] = dp[i - 1][w]                         # no coger el objeto i
+                if p <= w:
+                    dp[i][w] = max(dp[i][w], dp[i - 1][w - p] + v)   # cogerlo
+        return dp[n][capacidad]
+
+    pesos = [3, 2, 1, 4, 1]
+    valores = [20, 15, 4, 18, 7]
+    print("Valor máximo con capacidad 7:", mochila(pesos, valores, 7))
+  `}
+  hints={["Si coges el objeto, la capacidad que queda para los anteriores es w − p.", "Y sumas su valor v."]}
+  check={`
+    assert mochila(pesos, valores, 7) == 46, "Con capacidad 7 el mejor valor es 46 (portátil + cámara + libro + botiquín)"
+    assert mochila([5], [10], 4) == 0, "Si el objeto no cabe, el valor es 0"
+  `}
+>
+Implementa la recurrencia de la simulación: para cada celda, el máximo entre no coger el objeto y cogerlo.
+</CodeExercise>
+
+## Búsqueda en grafos
+
+Muchos problemas se modelan como un **árbol o grafo de estados**: cada nodo es una solución parcial y cada arista, una decisión.
+
+- **Búsqueda en anchura (BFS)**: explora por niveles (con una cola). Encuentra el camino con **menos pasos**. Mucha memoria.
+- **Búsqueda en profundidad (DFS)**: baja por una rama hasta el fondo antes de probar otra (con una pila o recursión). Poca memoria. Es lo que hace la vuelta atrás.
+
+<CodeExercise
+  id="bfs"
+  title="Camino más corto (en saltos) con BFS"
+  starter={`
+    from collections import deque
+
+    grafo = {
+        "A": ["B", "C"], "B": ["D"], "C": ["D", "E"],
+        "D": ["F"], "E": ["F"], "F": [],
+    }
+
+    def bfs(grafo, inicio, meta):
+        cola = deque([[inicio]])          # cada elemento es un camino
+        visitados = {inicio}
+        while cola:
+            camino = cola.___()           # sacar por el principio: FIFO
+            nodo = camino[-1]
+            if nodo == meta:
+                return camino
+            for vecino in grafo[nodo]:
+                if vecino not in visitados:
+                    visitados.add(vecino)
+                    cola.append(camino + [___])
+        return None
+
+    print(bfs(grafo, "A", "F"))
+  `}
+  solution={`
+    from collections import deque
+
+    grafo = {
+        "A": ["B", "C"], "B": ["D"], "C": ["D", "E"],
+        "D": ["F"], "E": ["F"], "F": [],
+    }
+
+    def bfs(grafo, inicio, meta):
+        cola = deque([[inicio]])          # cada elemento es un camino
+        visitados = {inicio}
+        while cola:
+            camino = cola.popleft()           # sacar por el principio: FIFO
+            nodo = camino[-1]
+            if nodo == meta:
+                return camino
+            for vecino in grafo[nodo]:
+                if vecino not in visitados:
+                    visitados.add(vecino)
+                    cola.append(camino + [vecino])
+        return None
+
+    print(bfs(grafo, "A", "F"))
+  `}
+  hints={["Una cola saca por el principio: popleft().", "El nuevo camino es el actual más el vecino."]}
+  check={`
+    assert bfs(grafo, "A", "F") == ["A", "B", "D", "F"], "BFS encuentra primero un camino de 3 saltos: A → B → D → F"
+    assert bfs(grafo, "F", "A") is None, "No hay camino de F a A"
+  `}
+>
+Completa la búsqueda en anchura. Cambiando `popleft()` por `pop()` (sacar por el final) se convierte en una búsqueda en profundidad.
+</CodeExercise>
+
+### Ramificación y poda (branch and bound)
+
+Para problemas de **optimización** sobre un árbol de decisiones (no solo encontrar una solución, sino la mejor):
+
+1. **Ramificar**: dividir el problema en subproblemas (fijar una decisión).
+2. **Acotar**: calcular para cada nodo una **cota** optimista del mejor valor alcanzable desde él (por ejemplo, resolviendo la relajación lineal, o con una estimación fácil).
+3. **Podar**: si la cota de un nodo es peor que la mejor solución completa ya encontrada, se descarta toda esa rama.
+
+El ejemplo de la actividad guiada es la **asignación de tareas** a agentes con una matriz de costes: la cota de un nodo es el coste de lo ya asignado más, para cada tarea pendiente, el coste mínimo posible (ignorando conflictos). Con buenas cotas se poda casi todo el árbol.
+
+<Quiz
+  id="poda"
+  options={[
+    "Explorarla igualmente por si acaso",
+    "Podarla: ninguna solución de esa rama puede mejorar la que ya tienes",
+    "Usarla como nueva mejor solución",
+    "Cambiar a búsqueda en anchura",
+  ]}
+  answer={1}
+  explanation="La cota es optimista: lo mejor que podría pasar en esa rama es costar 47. Si ya tienes una solución de 42, nada de esa rama puede mejorarla. Podar ramas enteras es lo que hace viable la búsqueda exhaustiva."
+>
+Minimizas el coste de una asignación. Ya tienes una solución completa de coste 42. Un nodo del árbol tiene una cota inferior (optimista) de 47. ¿Qué haces con su rama?
+</Quiz>
+
+## Para llevar
+
+- PL: objetivo y restricciones lineales, óptimo en un vértice, símplex. PLE: variables enteras, NP-difícil, ramificación y poda. En la industria: PuLP, OR-Tools, HiGHS.
+- Problemas tipo: viajante, mochila, asignación, coloreado… Reconocer el tipo es elegir la herramienta.
+- BFS (por niveles, menos saltos) y DFS (en profundidad, poca memoria).
+- Ramificación y poda: cotas optimistas para descartar ramas que no pueden mejorar.

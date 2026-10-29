@@ -1,0 +1,9 @@
+# One service: the static web app. Open http://localhost:${REPASO_PORT:-3100}
+name: repaso
+
+services:
+  web:
+    build: .
+    ports:
+      - "${REPASO_PORT:-3100}:8080"
+    restart: unless-stopped

@@ -1,0 +1,132 @@
+Antes de meter redes neuronales hay que entender la idea que hay debajo de DQN: aprender **cuánto vale cada acción en cada estado** y actuar eligiendo la mejor. Con estados y acciones pocos, eso cabe en una tabla: es el **Q-learning**.
+
+## Procesos de decisión de Markov (MDP)
+
+Formalmente, un problema de refuerzo es un MDP: estados $S$, acciones $A$, transiciones $P(s' \mid s, a)$, recompensas $R(s, a)$ y un factor de descuento $\gamma$. La propiedad de Markov: **el futuro solo depende del estado actual**, no de cómo llegaste a él. (Por eso en Atari se apilan 4 fotogramas: uno solo no es "markoviano", no dice la velocidad de la pelota).
+
+## Retorno y descuento
+
+El **retorno** es la suma de recompensas futuras, descontadas:
+
+$$G_t = r_t + \gamma \, r_{t+1} + \gamma^2 r_{t+2} + \dots$$
+
+- $\gamma = 0$: solo importa la recompensa inmediata (miope).
+- $\gamma \to 1$: el futuro pesa casi tanto como el presente (previsor). Valores típicos: 0,9–0,99.
+- Además de modelar "más vale pájaro en mano", el descuento hace que la suma sea finita en tareas sin final.
+
+<Predict
+  id="retorno"
+  answer={["8.1", "8,1"]}
+  tolerance={0.001}
+  explanation="G = 0 + 0,9 · 0 + 0,9² · 10 = 0,81 · 10 = 8,1. La meta vale 10, pero como está a dos pasos de distancia, 'desde aquí' vale 8,1."
+  hints={["Las dos primeras recompensas son 0.", "La tercera se multiplica por γ²."]}
+>
+Con $\gamma = 0{,}9$, un agente recibe las recompensas 0, 0 y 10 (y el episodio termina). ¿Cuál es su retorno $G_0$?
+</Predict>
+
+## Funciones de valor
+
+- $V^\pi(s)$: el retorno esperado si empiezas en $s$ y sigues la política $\pi$. "¿Cómo de bueno es estar aquí?"
+- $Q^\pi(s, a)$: el retorno esperado si en $s$ haces $a$ y luego sigues $\pi$. "¿Cómo de bueno es hacer esto aquí?"
+
+Si conoces la $Q$ óptima, $Q^*$, la política óptima es trivial: en cada estado, **la acción con mayor $Q$**. Y $Q^*$ cumple la **ecuación de Bellman**: el valor de una acción es la recompensa inmediata más el valor (descontado) de lo mejor que puedes hacer después:
+
+$$Q^*(s, a) = \mathbb{E}\left[r + \gamma \max_{a'} Q^*(s', a')\right]$$
+
+## Q-learning
+
+No conocemos las transiciones, pero podemos **probar** y corregir. Tras cada paso $(s, a, r, s')$:
+
+$$Q(s, a) \leftarrow Q(s, a) + \alpha \Big[\underbrace{r + \gamma \max_{a'} Q(s', a')}_{\text{objetivo (TD target)}} - Q(s, a)\Big]$$
+
+El término entre corchetes es el **error de diferencia temporal (TD)**: lo que esperabas frente a lo que acabas de ver (recompensa real + tu estimación del futuro). $\alpha$ es el learning rate. Las acciones se eligen con ε-greedy. Q-learning es **off-policy**: aprende la política óptima (el `max`) aunque actúe explorando.
+
+<GridWorldSim />
+
+<Callout kind="idea">
+Fíjate en cómo se propaga el valor: al principio solo las casillas junto a la meta se colorean; episodio a episodio, el valor "se filtra" hacia atrás hasta la salida. Es Bellman en acción: el valor de una casilla depende del de sus vecinas.
+</Callout>
+
+<Predict
+  id="actualizacion-q"
+  answer={["3.65", "3,65"]}
+  tolerance={0.005}
+  explanation="Objetivo TD = r + γ · máx Q(s′) = −0,1 + 0,9 · 6 = 5,3. Error TD = 5,3 − 2 = 3,3. Nuevo Q = 2 + 0,5 · 3,3 = 3,65. El valor se mueve la mitad del camino hacia el objetivo, porque α = 0,5."
+  hints={["Objetivo TD = r + γ · máx_a′ Q(s′, a′).", "Nuevo Q = Q + α · (objetivo − Q)."]}
+>
+$Q(s, a) = 2$. El agente hace $a$, recibe $r = -0{,}1$ y llega a $s'$, donde el mejor valor es $\max_{a'} Q(s', a') = 6$. Con $\alpha = 0{,}5$ y $\gamma = 0{,}9$, ¿cuál es el nuevo $Q(s, a)$?
+</Predict>
+
+<CodeExercise
+  id="q-learning"
+  title="Q-learning en el pasillo"
+  starter={`
+    import numpy as np
+
+    N_ESTADOS, META = 6, 5
+    def step(s, a):                       # 0 = izquierda, 1 = derecha
+        s2 = max(0, s + (1 if a == 1 else -1))
+        return s2, (10 if s2 == META else -1), s2 == META
+
+    rng = np.random.default_rng(0)
+    Q = np.zeros((N_ESTADOS, 2))
+    alpha, gamma, epsilon = 0.5, 0.9, 0.2
+
+    for episodio in range(300):
+        s, terminado = 0, False
+        while not terminado:
+            a = rng.integers(2) if rng.random() < epsilon else int(np.argmax(Q[s]))
+            s2, r, terminado = step(s, a)
+            objetivo = r if terminado else r + gamma * ___
+            Q[s, a] += alpha * (___ - Q[s, a])
+            s = s2
+
+    politica = ["←→"[int(np.argmax(Q[s]))] for s in range(META)]
+    print("Política aprendida:", " ".join(politica))
+    print("Q:", Q.round(2))
+  `}
+  solution={`
+    import numpy as np
+
+    N_ESTADOS, META = 6, 5
+    def step(s, a):                       # 0 = izquierda, 1 = derecha
+        s2 = max(0, s + (1 if a == 1 else -1))
+        return s2, (10 if s2 == META else -1), s2 == META
+
+    rng = np.random.default_rng(0)
+    Q = np.zeros((N_ESTADOS, 2))
+    alpha, gamma, epsilon = 0.5, 0.9, 0.2
+
+    for episodio in range(300):
+        s, terminado = 0, False
+        while not terminado:
+            a = rng.integers(2) if rng.random() < epsilon else int(np.argmax(Q[s]))
+            s2, r, terminado = step(s, a)
+            objetivo = r if terminado else r + gamma * np.max(Q[s2])
+            Q[s, a] += alpha * (objetivo - Q[s, a])
+            s = s2
+
+    politica = ["←→"[int(np.argmax(Q[s]))] for s in range(META)]
+    print("Política aprendida:", " ".join(politica))
+    print("Q:", Q.round(2))
+  `}
+  hints={["El futuro se estima con el mejor valor Q del estado siguiente.", "El error TD es objetivo − Q[s, a]."]}
+  check={`
+    assert all(np.argmax(Q[s]) == 1 for s in range(META)), "En todas las casillas la mejor acción debería ser ir a la derecha"
+    assert abs(Q[4, 1] - 10) < 0.5, "Desde la casilla 4, ir a la derecha llega a la meta: Q ≈ 10"
+  `}
+>
+Implementa la actualización de Q-learning sobre el pasillo de la lección anterior. Si funciona, la política aprendida es "→" en todas las casillas y $Q(4, \rightarrow) \approx 10$.
+</CodeExercise>
+
+<Callout kind="warn" title="El límite de la tabla">
+Una tabla necesita una fila por estado. En el GridWorld hay 30; en el ajedrez, ~10⁴³; en Breakout (84×84 píxeles en gris, 4 fotogramas), un número astronómico. No solo no cabe: tampoco **generaliza** (aprender que una casilla es mala no te dice nada de la de al lado). Por eso, en la siguiente lección, la tabla se sustituye por una **red neuronal** que aproxima $Q(s, a)$: DQN.
+</Callout>
+
+## Para llevar
+
+- MDP: estados, acciones, transiciones, recompensas y γ, con la propiedad de Markov.
+- Retorno descontado $G_t$; $V(s)$ y $Q(s,a)$ estiman el retorno esperado.
+- Bellman: valor = recompensa + γ · valor de lo mejor que viene después.
+- Q-learning: $Q \leftarrow Q + \alpha\,[r + \gamma \max Q(s') - Q]$, con ε-greedy. Off-policy.
+- Las tablas no escalan ni generalizan: de ahí DQN.

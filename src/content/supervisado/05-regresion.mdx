@@ -1,0 +1,187 @@
+Dos algoritmos de regresión que conviene dominar porque representan dos filosofías opuestas: la **regresión lineal** (un modelo global con una fórmula) y **k vecinos más cercanos** (sin fórmula: "dime a quién te pareces y te diré cuánto vales").
+
+## Regresión lineal múltiple (OLS)
+
+El modelo supone que la salida es una suma ponderada de los atributos:
+
+$$\hat{y} = w_0 + w_1 x_1 + w_2 x_2 + \dots + w_p x_p$$
+
+**Mínimos cuadrados ordinarios (OLS)** busca los pesos $w$ que minimizan la suma de los errores al cuadrado. Tiene solución exacta (las ecuaciones normales, $w = (X^\top X)^{-1} X^\top y$), aunque con muchos datos se resuelve por descenso del gradiente.
+
+<LinearRegressionSim />
+
+### Leer los coeficientes
+
+La gran ventaja de la regresión lineal es que **se puede explicar**: $w_j$ es cuánto cambia la predicción si $x_j$ sube una unidad y lo demás no cambia. "Cada metro cuadrado extra suma 2.100 € al precio".
+
+<Callout kind="warn">
+Solo puedes comparar coeficientes entre sí si los atributos están en la **misma escala** (estandarizados). Un coeficiente pequeño en una variable medida en euros puede pesar más que uno grande en una medida en miles de euros. Y si dos atributos están muy correlacionados (*multicolinealidad*), sus coeficientes se vuelven inestables y difíciles de interpretar.
+</Callout>
+
+### R²: cuánto explica el modelo
+
+$$R^2 = 1 - \frac{\sum (y_i - \hat y_i)^2}{\sum (y_i - \bar y)^2}$$
+
+Compara tu modelo con el más tonto posible (predecir siempre la media). $R^2 = 1$: perfecto; $R^2 = 0$: igual que la media; **puede ser negativo** en test si el modelo es peor que la media.
+
+### Ventajas e inconvenientes
+
+- ✅ Rapidísima, interpretable, difícil de sobreajustar con pocos atributos, una base excelente.
+- ❌ Solo capta relaciones lineales (aunque puedes añadir términos como $x^2$ o $x_1 x_2$), sensible a atípicos (por el cuadrado) y a la multicolinealidad.
+
+## Regularización: Ridge y Lasso
+
+Cuando hay muchos atributos, OLS tiende a sobreajustar con coeficientes enormes. La regularización añade una penalización por tamaño de los pesos:
+
+- **Ridge (L2)**: minimiza $\text{error} + \alpha \sum w_j^2$. Encoge todos los pesos hacia 0, pero no los anula. Ayuda mucho con multicolinealidad.
+- **Lasso (L1)**: minimiza $\text{error} + \alpha \sum \lvert w_j \rvert$. Puede poner pesos **exactamente a 0**: hace selección de atributos.
+- **ElasticNet**: mezcla de ambas.
+
+El hiperparámetro $\alpha$ controla la fuerza: $\alpha = 0$ es OLS; $\alpha$ muy grande aplasta todo a 0 (subajuste). Se elige con validación cruzada (`RidgeCV`, `LassoCV`).
+
+<CodeExercise
+  id="lasso"
+  title="Lasso apaga atributos"
+  starter={`
+    import numpy as np
+    from sklearn.datasets import load_diabetes
+    from sklearn.linear_model import LinearRegression, Lasso
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    X, y = load_diabetes(return_X_y=True)
+
+    ols = make_pipeline(StandardScaler(), LinearRegression()).fit(X, y)
+    lasso = make_pipeline(StandardScaler(), Lasso(alpha=___)).fit(X, y)
+
+    coef_ols = ols[-1].coef_
+    coef_lasso = lasso[-1].___
+
+    print("OLS:  ", np.round(coef_ols, 1))
+    print("Lasso:", np.round(coef_lasso, 1))
+    n_ceros = int(np.sum(coef_lasso == 0))
+    print("Atributos eliminados por Lasso:", n_ceros)
+  `}
+  solution={`
+    import numpy as np
+    from sklearn.datasets import load_diabetes
+    from sklearn.linear_model import LinearRegression, Lasso
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    X, y = load_diabetes(return_X_y=True)
+
+    ols = make_pipeline(StandardScaler(), LinearRegression()).fit(X, y)
+    lasso = make_pipeline(StandardScaler(), Lasso(alpha=5)).fit(X, y)
+
+    coef_ols = ols[-1].coef_
+    coef_lasso = lasso[-1].coef_
+
+    print("OLS:  ", np.round(coef_ols, 1))
+    print("Lasso:", np.round(coef_lasso, 1))
+    n_ceros = int(np.sum(coef_lasso == 0))
+    print("Atributos eliminados por Lasso:", n_ceros)
+  `}
+  hints={[
+    "Prueba con un alpha de un solo dígito, por ejemplo 5, y luego juega con él.",
+    "Los coeficientes de los modelos lineales de sklearn están en el atributo coef_.",
+  ]}
+  check={`
+    assert 2 <= n_ceros <= 9, "Con alpha en torno a 5 Lasso debería anular varios atributos (no todos)"
+  `}
+>
+Con el dataset de diabetes (el de tu `Programa10`), compara los coeficientes de OLS y de Lasso. Elige un `alpha` que anule unos cuantos atributos pero no todos. `ols[-1]` es el último paso del pipeline (el modelo).
+</CodeExercise>
+
+## k vecinos más cercanos (kNN)
+
+La idea más sencilla posible: para predecir un ejemplo nuevo, busca los $k$ ejemplos de entrenamiento más parecidos y **promedia** su valor (regresión) o **vota** su clase (clasificación).
+
+- **Entrenar** = guardar los datos. No hay nada que aprender.
+- **Predecir** = calcular distancias a todos los ejemplos. Lento con muchos datos.
+
+La distancia más usada es la **de Minkowski**: $d(a,b) = \left(\sum \lvert a_j - b_j \rvert^q\right)^{1/q}$. Con $q = 2$ es la euclídea; con $q = 1$, la Manhattan.
+
+<KnnSim />
+
+Los tres factores que deciden si kNN funciona:
+
+1. **El valor de k**. Pequeño → frontera nerviosa, sobreajuste. Grande → frontera demasiado suave. Se elige por validación cruzada (y en clasificación binaria, impar para evitar empates).
+2. **La escala de los atributos**. Sin escalar, el atributo con valores más grandes decide él solo la distancia. Activa "olvidar escalar x" en la simulación.
+3. **Los atributos irrelevantes**. Cada columna inútil suma ruido a la distancia. Con muchas dimensiones, además, todas las distancias se parecen (*maldición de la dimensionalidad*).
+
+<CodeExercise
+  id="knn-escalado"
+  title="kNN con y sin escalar"
+  files={["winequality-red.csv"]}
+  starter={`
+    import pandas as pd
+    from sklearn.model_selection import cross_val_score
+    from sklearn.neighbors import KNeighborsRegressor
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    df = pd.read_csv("winequality-red.csv", sep=";")
+    X = df.drop(columns="quality")
+    y = df["quality"]
+
+    sin_escalar = KNeighborsRegressor(n_neighbors=15)
+    con_escalar = make_pipeline(___, KNeighborsRegressor(n_neighbors=15))
+
+    mae_sin = -cross_val_score(sin_escalar, X, y, cv=5, scoring="neg_mean_absolute_error").mean()
+    mae_con = -cross_val_score(con_escalar, X, y, cv=5, scoring="neg_mean_absolute_error").mean()
+    print(f"MAE sin escalar: {mae_sin:.3f}")
+    print(f"MAE con escalar: {mae_con:.3f}")
+  `}
+  solution={`
+    import pandas as pd
+    from sklearn.model_selection import cross_val_score
+    from sklearn.neighbors import KNeighborsRegressor
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    df = pd.read_csv("winequality-red.csv", sep=";")
+    X = df.drop(columns="quality")
+    y = df["quality"]
+
+    sin_escalar = KNeighborsRegressor(n_neighbors=15)
+    con_escalar = make_pipeline(StandardScaler(), KNeighborsRegressor(n_neighbors=15))
+
+    mae_sin = -cross_val_score(sin_escalar, X, y, cv=5, scoring="neg_mean_absolute_error").mean()
+    mae_con = -cross_val_score(con_escalar, X, y, cv=5, scoring="neg_mean_absolute_error").mean()
+    print(f"MAE sin escalar: {mae_sin:.3f}")
+    print(f"MAE con escalar: {mae_con:.3f}")
+  `}
+  hints={["Mete un estandarizador como primer paso del pipeline."]}
+  check={`
+    assert mae_con < mae_sin, "Escalando, el MAE debería bajar: el dióxido de azufre total (decenas) ya no domina la distancia"
+  `}
+>
+Predice la calidad del vino (de 3 a 8) con kNN. Las columnas tienen escalas muy distintas (densidad ≈ 1; dióxido de azufre total ≈ 40). Compara el error con y sin estandarizar. Ojo: sklearn devuelve el MAE en negativo (`neg_...`) porque siempre maximiza.
+</CodeExercise>
+
+<Callout kind="real">
+kNN casi no se usa tal cual en producción para tablas grandes (predecir es lento y no generaliza tan bien como un ensemble de árboles). Pero su idea está en todas partes: **búsqueda por similitud**. Los sistemas de recomendación y la búsqueda semántica con *embeddings* (RAG con LLMs) son kNN sobre vectores, acelerado con índices aproximados como FAISS o HNSW.
+</Callout>
+
+<Quiz
+  id="ridge-lasso"
+  options={[
+    "Ridge, porque encoge todos los coeficientes por igual",
+    "Lasso, porque puede poner coeficientes exactamente a cero",
+    "OLS sin regularizar, porque es el más interpretable",
+    "kNN, porque no tiene coeficientes",
+  ]}
+  answer={1}
+  explanation="La penalización L1 de Lasso tiene 'esquinas' que hacen que muchos coeficientes acaben exactamente en 0: deja un modelo con pocas variables, fácil de explicar. Ridge las encoge pero las mantiene todas."
+>
+Tienes 300 atributos candidatos y negocio quiere un modelo lineal que use **pocos** de ellos para poder explicarlo. ¿Qué usas?
+</Quiz>
+
+## Para llevar
+
+- Regresión lineal: rápida, interpretable, la primera línea base. Coeficientes comparables solo con atributos escalados.
+- R² compara con predecir la media; en test puede ser negativo.
+- Ridge encoge, Lasso además selecciona; α se elige por validación cruzada.
+- kNN: sin entrenamiento, depende de k, de la escala y de la relevancia de los atributos.
+- La idea de kNN vive hoy en la búsqueda por similitud con embeddings.

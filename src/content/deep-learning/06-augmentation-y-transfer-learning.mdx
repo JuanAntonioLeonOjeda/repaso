@@ -1,0 +1,168 @@
+Dos técnicas que en un trabajo real usarás muchísimo más que diseñar una red desde cero: **data augmentation** (multiplicar tus datos con variaciones creíbles) y **transfer learning** (aprovechar una red que otro ya entrenó con millones de imágenes).
+
+## Data augmentation
+
+Si tu modelo ve la misma foto de un gato 50 veces, acaba memorizándola. Si cada vez la ve un poco girada, recortada, más clara o volteada, aprende "gato" en vez de "esa foto". Es regularización gratis.
+
+Transformaciones habituales (las mismas transformaciones geométricas y de intensidad de la lección de extracción de características):
+
+- Volteo horizontal (no vertical si el mundo tiene "arriba": ¡un 6 volteado es un 9!).
+- Rotaciones y traslaciones pequeñas, zoom, recortes aleatorios.
+- Brillo, contraste, color.
+- Más agresivas: *cutout* (tapar trozos), *mixup*/*cutmix* (mezclar imágenes y etiquetas).
+
+<Callout kind="warn" title="Aumentar con sentido">
+Cada transformación tiene que producir algo **que podría existir** con la misma etiqueta. Voltear radiografías de tórax cambia el lado del corazón; rotar 180° dígitos convierte 6 en 9; cambiar el color de una fruta en un clasificador de madurez cambia la respuesta. Y la augmentation **solo se aplica al entrenamiento**, nunca a validación ni a test.
+</Callout>
+
+<Callout kind="practice" title="De tus prácticas">
+La práctica usa `ImageDataGenerator` (con `rotation_range`, `width_shift_range`, `horizontal_flip`…) y los apuntes explican `flow_from_dataframe`, que lee imágenes del disco a partir de un DataFrame con rutas y etiquetas (justo el formato del CSV del caso del glaucoma). Hoy `ImageDataGenerator` está **obsoleto**: en Keras 3 se usan capas de preprocesado dentro del modelo y `image_dataset_from_directory` / `tf.data`; en PyTorch, `torchvision.transforms` o la librería **Albumentations**.
+</Callout>
+
+```python
+from tensorflow import keras
+from tensorflow.keras import layers
+
+augment = keras.Sequential([
+    layers.RandomFlip("horizontal"),
+    layers.RandomRotation(0.05),       # ±5% de vuelta (±18°)
+    layers.RandomZoom(0.1),
+])
+# Estas capas solo actúan en entrenamiento: en predict() dejan pasar la imagen tal cual.
+inputs = keras.Input((224, 224, 3))
+x = augment(inputs)
+```
+
+<CodeExercise
+  id="augment"
+  title="Augmentation con numpy"
+  starter={`
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+
+    def augment(img, rng):
+        """img: array (alto, ancho). Devuelve una variación aleatoria del mismo tamaño."""
+        # 1) Volteo horizontal con probabilidad 0,5
+        if rng.random() < 0.5:
+            img = img[:, ___]
+        # 2) Recorte aleatorio de 24×24 y relleno (padding) de vuelta a 28×28
+        top, left = rng.integers(0, 5, size=2)
+        recorte = img[top:top + 24, left:left + ___]
+        img = np.pad(recorte, 2)
+        # 3) Brillo: multiplica por un factor entre 0,8 y 1,2 y recorta a [0, 1]
+        img = np.clip(img * rng.uniform(0.8, 1.2), ___, ___)
+        return img
+
+    imagen = rng.random((28, 28))
+    variaciones = [augment(imagen, rng) for _ in range(8)]
+    print([v.shape for v in variaciones[:3]], "· todas distintas:", len({v.tobytes() for v in variaciones}) == 8)
+  `}
+  solution={`
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+
+    def augment(img, rng):
+        """img: array (alto, ancho). Devuelve una variación aleatoria del mismo tamaño."""
+        # 1) Volteo horizontal con probabilidad 0,5
+        if rng.random() < 0.5:
+            img = img[:, ::-1]
+        # 2) Recorte aleatorio de 24×24 y relleno (padding) de vuelta a 28×28
+        top, left = rng.integers(0, 5, size=2)
+        recorte = img[top:top + 24, left:left + 24]
+        img = np.pad(recorte, 2)
+        # 3) Brillo: multiplica por un factor entre 0,8 y 1,2 y recorta a [0, 1]
+        img = np.clip(img * rng.uniform(0.8, 1.2), 0, 1)
+        return img
+
+    imagen = rng.random((28, 28))
+    variaciones = [augment(imagen, rng) for _ in range(8)]
+    print([v.shape for v in variaciones[:3]], "· todas distintas:", len({v.tobytes() for v in variaciones}) == 8)
+  `}
+  hints={["Para invertir el orden de las columnas: ::-1 en el segundo eje.", "El recorte es cuadrado: 24 también en columnas.", "np.clip(x, mínimo, máximo)."]}
+  check={`
+    assert all(v.shape == (28, 28) for v in variaciones), "Todas las variaciones deben medir 28×28"
+    assert all(v.min() >= 0 and v.max() <= 1 for v in variaciones), "Los valores deben quedar en [0, 1]"
+    test = np.arange(28 * 28, dtype=float).reshape(28, 28) / 784
+    assert np.allclose(test[:, ::-1][0], test[0][::-1])
+  `}
+>
+Implementa un pequeño pipeline de augmentation para imágenes en escala de grises: volteo, recorte aleatorio con padding y cambio de brillo.
+</CodeExercise>
+
+## Transfer learning
+
+Entrenar una CNN grande desde cero necesita cientos de miles de imágenes y días de GPU. Pero las primeras capas de cualquier red entrenada con **ImageNet** (1,2 millones de fotos, 1.000 clases) ya saben detectar bordes, texturas y formas: eso sirve para casi cualquier problema de imagen. **Transfer learning** es reutilizar esa red como punto de partida.
+
+<TransferDiagram />
+
+### Dos estrategias
+
+1. **Extracción de características**: congelas la base convolucional preentrenada (`trainable = False`), le quitas la cabeza original y entrenas solo una cabeza nueva para tus clases. Rápido, funciona con pocos datos.
+2. **Fine-tuning**: después del paso 1, **descongelas** las últimas capas de la base y sigues entrenando todo con un **learning rate muy bajo** (por ejemplo 1e-5), para ajustar los filtros más específicos a tus imágenes sin destrozar lo aprendido.
+
+```python
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.applications import VGG16
+
+base = VGG16(weights="imagenet", include_top=False, input_shape=(224, 224, 3))
+base.trainable = False                               # 1) congelar
+
+inputs = keras.Input((224, 224, 3))
+x = keras.applications.vgg16.preprocess_input(inputs)  # ¡el mismo preprocesado que en ImageNet!
+x = base(x, training=False)
+x = layers.GlobalAveragePooling2D()(x)
+x = layers.Dropout(0.3)(x)
+outputs = layers.Dense(n_clases, activation="softmax")(x)
+model = keras.Model(inputs, outputs)
+model.compile(optimizer=keras.optimizers.Adam(1e-3), loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+model.fit(train_ds, validation_data=val_ds, epochs=10)
+
+base.trainable = True                                 # 2) fine-tuning
+for layer in base.layers[:-4]:
+    layer.trainable = False                           # solo las últimas capas
+model.compile(optimizer=keras.optimizers.Adam(1e-5), loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+model.fit(train_ds, validation_data=val_ds, epochs=10)
+```
+
+<Callout kind="warn">
+Dos fallos clásicos: (1) olvidar el **preprocesado** propio del modelo (VGG espera las imágenes como en su entrenamiento; cada `keras.applications` trae su `preprocess_input`) y (2) hacer fine-tuning **desde el principio** con la cabeza aleatoria y un lr alto: los gradientes enormes de la cabeza sin entrenar destrozan los pesos preentrenados. Primero cabeza, luego fine-tuning suave. Recuerda **recompilar** tras cambiar `trainable`.
+</Callout>
+
+<Quiz
+  id="estrategia-transfer"
+  options={[
+    "Entrenar una CNN desde cero, para que se adapte bien a las imágenes médicas",
+    "Base preentrenada congelada + cabeza nueva, con augmentation; fine-tuning de las últimas capas solo si sobra margen",
+    "Fine-tuning de toda la red desde el principio con lr = 1e-2",
+    "Un MLP sobre los píxeles",
+  ]}
+  answer={1}
+  explanation="Con 189 imágenes, entrenar desde cero sobreajustaría sin remedio. Una base preentrenada congelada da buenas características con muy pocos datos; augmentation reduce el sobreajuste de la cabeza; y el fine-tuning, con lr muy bajo y solo al final, puede ganar algún punto más. Ojo además con dividir por paciente."
+>
+Tienes 189 imágenes OCTA (el caso del glaucoma): dos clases y dos imágenes por paciente. ¿Qué estrategia eliges?
+</Quiz>
+
+<Predict
+  id="congelada"
+  answer={["5130", "5.130", "5,130"]}
+  explanation="Con la base congelada solo se entrena la cabeza: GlobalAveragePooling no tiene parámetros y la densa tiene 512 · 10 + 10 = 5.130. Los ~14,7 millones de VGG16 siguen ahí, pero como no entrenables."
+  hints={["La salida de la base de VGG16 tiene 512 canales; GlobalAveragePooling deja un vector de 512.", "Solo cuenta la capa densa final: 512 × 10 + 10."]}
+>
+Con VGG16 congelada (`include_top=False`, 512 canales de salida) → `GlobalAveragePooling2D` → `Dense(10)`, ¿cuántos parámetros **entrenables** tiene el modelo?
+</Predict>
+
+<Callout kind="real" title="En el día a día">
+- Los modelos preentrenados se descargan de `keras.applications`, `torchvision.models` o, sobre todo, de **Hugging Face** y la librería **timm**. Hoy se parte de ResNet, EfficientNet, ConvNeXt o ViT/DINOv2 más que de VGG (que es pesada y antigua).
+- Con muy pocos datos, a menudo basta con **extraer embeddings** de un modelo preentrenado y entrenar una regresión logística encima. Es rápido, barato y sorprendentemente fuerte.
+- El mismo patrón (preentrenar a lo grande, ajustar con pocos datos) es el que se usa con modelos de lenguaje: el *fine-tuning* de un LLM o de BERT es transfer learning.
+</Callout>
+
+## Para llevar
+
+- Augmentation = variaciones creíbles con la misma etiqueta, solo en entrenamiento. Es regularización muy potente.
+- Transfer learning: reutiliza una base preentrenada (con su preprocesado).
+- Primero base congelada + cabeza nueva; después, si hace falta, fine-tuning de las últimas capas con lr muy bajo.
+- Con pocos datos, embeddings de un modelo preentrenado + clasificador sencillo.

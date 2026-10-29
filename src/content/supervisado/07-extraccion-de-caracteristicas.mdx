@@ -1,0 +1,194 @@
+Los algoritmos clásicos necesitan una **tabla de números**. Pero los datos del mundo llegan como imágenes, señales o texto. *Extraer características* es convertirlos en columnas con sentido. Es lo que hace el flujo de tus scripts del caso del glaucoma: imágenes OCTA → descriptores → tabla → selección → modelo.
+
+<Callout kind="idea">
+Esta lección es la frontera entre el ML clásico y el deep learning. Todo lo que verás aquí (filtros de bordes, histogramas de gradientes, texturas) lo diseñaba una persona a mano. Una red convolucional **aprende** sus propios filtros. Entender los manuales te ayuda a entender qué aprenden las redes.
+</Callout>
+
+## Estadísticos: resumir una variable
+
+Para variables **cuantitativas**:
+
+- **Tendencia central**: media (sensible a extremos), mediana (robusta), moda.
+- **Dispersión**: varianza $\sigma^2$, desviación típica $\sigma$, rango, rango intercuartílico.
+- **Forma**: asimetría (*skewness*: ¿cola a la derecha o a la izquierda?) y curtosis (¿colas pesadas?).
+
+Para variables **cualitativas**: tablas de frecuencia (absoluta y relativa) y la moda.
+
+Estos estadísticos son características en sí mismos: de la señal de un sensor durante un minuto se extraen su media, su desviación, su máximo… y esas son las columnas de la tabla.
+
+<CodeExercise
+  id="estadisticos"
+  title="Una señal convertida en características"
+  starter={`
+    import numpy as np
+    from scipy import stats
+
+    # Vibración de un motor durante 1 s (1000 muestras), con algunos picos
+    rng = np.random.default_rng(1)
+    senal = rng.normal(0, 1, 1000)
+    senal[::97] += 8
+
+    caracteristicas = {
+        "media": np.mean(senal),
+        "mediana": np.___(senal),
+        "desviacion": np.___(senal),
+        "max_abs": np.max(np.abs(senal)),
+        "asimetria": stats.skew(senal),
+        "curtosis": stats.___(senal),
+    }
+    for nombre, valor in caracteristicas.items():
+        print(f"{nombre:>10}: {valor:7.3f}")
+  `}
+  solution={`
+    import numpy as np
+    from scipy import stats
+
+    # Vibración de un motor durante 1 s (1000 muestras), con algunos picos
+    rng = np.random.default_rng(1)
+    senal = rng.normal(0, 1, 1000)
+    senal[::97] += 8
+
+    caracteristicas = {
+        "media": np.mean(senal),
+        "mediana": np.median(senal),
+        "desviacion": np.std(senal),
+        "max_abs": np.max(np.abs(senal)),
+        "asimetria": stats.skew(senal),
+        "curtosis": stats.kurtosis(senal),
+    }
+    for nombre, valor in caracteristicas.items():
+        print(f"{nombre:>10}: {valor:7.3f}")
+  `}
+  hints={["En numpy: median y std.", "En scipy.stats, la curtosis se llama kurtosis."]}
+  check={`
+    assert abs(caracteristicas["mediana"] - np.median(senal)) < 1e-12
+    assert caracteristicas["curtosis"] > 3, "Los picos dan colas pesadas: la curtosis (en exceso) debería ser alta"
+  `}
+>
+En mantenimiento predictivo se resume cada ventana de una señal con unos cuantos estadísticos. Fíjate en cómo los picos (posibles fallos) disparan la curtosis aunque apenas muevan la mediana.
+</CodeExercise>
+
+## Imágenes como datos
+
+Una imagen en escala de grises es una matriz de intensidades (0 = negro, 255 = blanco); en color, tres matrices (R, G, B): una imagen de 256×256 en color es un array de forma `(256, 256, 3)`.
+
+### Procesado básico
+
+- **Intensidad**: brillo (sumar una constante), contraste (multiplicar), negativo, ecualización del histograma (repartir mejor los niveles de gris).
+- **Espacios de color**: RGB, HSV (separa el color —tono— de la luminosidad: ideal para segmentar por color), escala de grises.
+- **Geométricas**: traslación, recorte, rotación, perspectiva, volteo. Son exactamente las que se usan como *data augmentation* en deep learning.
+
+### Segmentación: separar objeto y fondo
+
+- **Umbralización**: píxel > umbral → objeto. El **método de Otsu** elige el umbral automáticamente: el que hace que las dos clases (fondo y objeto) tengan la menor varianza interna. Funciona muy bien si el histograma tiene dos montañas.
+- **Detección de bordes**: el operador de **Sobel** calcula el gradiente de intensidad en x e y con dos filtros 3×3; **Canny** lo refina (suavizado gaussiano, supresión de no máximos, doble umbral con histéresis).
+
+<ConvolutionSim />
+
+Los filtros de Sobel de la simulación son exactamente los del tema. Una convolución de una CNN hace la misma operación… pero los 9 números los aprende.
+
+## Descriptores de forma y de textura
+
+Una vez segmentado el objeto, se describen:
+
+- **Geométricos**: área, perímetro, extensión (área / área de la caja que lo encierra), solidez, excentricidad, circularidad…
+- **Textura**:
+  - **Matriz de coocurrencia (GLCM)**: cuenta con qué frecuencia un nivel de gris $i$ es vecino de un nivel $j$. De ella salen contraste, homogeneidad, energía, correlación.
+  - **HOG** (histograma de gradientes orientados): divide la imagen en celdas de 8×8, calcula en cada una un histograma de 9 orientaciones del gradiente y normaliza por bloques. Fue el estándar para detectar peatones antes de las CNN.
+  - **SIFT / SURF**: puntos de interés invariantes a escala y rotación, con un descriptor alrededor de cada uno. Base de la unión de panorámicas y el reconocimiento de objetos clásico.
+  - **LBP** (patrones binarios locales): cada píxel se compara con sus 8 vecinos; el resultado es un número de 8 bits que codifica la textura local.
+
+### LBP a mano
+
+Recorre los 8 vecinos en sentido horario empezando por la esquina superior izquierda. Escribe **1** si el vecino es **mayor o igual** que el centro y **0** si es menor. Esos 8 bits, leídos como número binario, son el código LBP del píxel.
+
+<Predict
+  id="lbp"
+  answer={["241", "11110001"]}
+  explanation="Vecinos en orden horario desde arriba a la izquierda: 6, 8, 9, 7, 2, 1, 3, 5. Comparados con el centro (5): 1, 1, 1, 1, 0, 0, 0, 1 → 11110001 en binario = 128 + 64 + 32 + 16 + 1 = 241."
+  hints={[
+    "El orden es: arriba-izquierda, arriba, arriba-derecha, derecha, abajo-derecha, abajo, abajo-izquierda, izquierda.",
+    "Los bits son 1,1,1,1,0,0,0,1. Ahora conviértelo a decimal.",
+  ]}
+>
+¿Cuál es el código LBP del píxel central?
+
+```text
+6  8  9
+5 [5] 7
+3  1  2
+```
+</Predict>
+
+<CodeExercise
+  id="lbp-codigo"
+  title="LBP en Python"
+  starter={`
+    import numpy as np
+
+    def lbp_pixel(patch):
+        """Código LBP del píxel central de un parche 3×3."""
+        centro = patch[1, 1]
+        # Vecinos en sentido horario desde arriba a la izquierda
+        vecinos = [patch[0, 0], patch[0, 1], patch[0, 2], patch[1, 2],
+                   patch[2, 2], patch[2, 1], patch[2, 0], patch[1, 0]]
+        bits = [1 if v ___ centro else 0 for v in vecinos]
+        # El primer vecino es el bit más significativo (2^7)
+        return sum(b * 2 ** (___ - i) for i, b in enumerate(bits))
+
+    patch = np.array([[6, 8, 9],
+                      [5, 5, 7],
+                      [3, 1, 2]])
+    print(lbp_pixel(patch))
+  `}
+  solution={`
+    import numpy as np
+
+    def lbp_pixel(patch):
+        """Código LBP del píxel central de un parche 3×3."""
+        centro = patch[1, 1]
+        # Vecinos en sentido horario desde arriba a la izquierda
+        vecinos = [patch[0, 0], patch[0, 1], patch[0, 2], patch[1, 2],
+                   patch[2, 2], patch[2, 1], patch[2, 0], patch[1, 0]]
+        bits = [1 if v >= centro else 0 for v in vecinos]
+        # El primer vecino es el bit más significativo (2^7)
+        return sum(b * 2 ** (7 - i) for i, b in enumerate(bits))
+
+    patch = np.array([[6, 8, 9],
+                      [5, 5, 7],
+                      [3, 1, 2]])
+    print(lbp_pixel(patch))
+  `}
+  hints={["«Mayor o igual» en Python es >=.", "Si el primer bit (i = 0) vale 2^7, el exponente es 7 − i."]}
+  check={`
+    assert lbp_pixel(patch) == 241, "El resultado debería ser 241"
+    assert lbp_pixel(np.ones((3, 3))) == 255, "Una zona plana da todos los vecinos iguales al centro: 255"
+  `}
+>
+Implementa lo que acabas de calcular a mano. Una imagen entera se describe luego con el **histograma** de los códigos LBP de todos sus píxeles.
+</CodeExercise>
+
+<Callout kind="real">
+¿Se sigue haciendo esto? Para imágenes "naturales" (fotos, médicas), casi todo se resuelve hoy con CNN o transformers preentrenados, a menudo usando la red solo como **extractor de características** (*embeddings*) y un clasificador sencillo encima. Pero la extracción manual sigue viva donde hay pocos datos, hace falta interpretabilidad o se trabaja en dispositivos pequeños: inspección industrial, señales de sensores (vibraciones, ECG), audio clásico (MFCC) y series temporales (librerías como `tsfresh` generan cientos de estadísticos automáticamente).
+</Callout>
+
+<Quiz
+  id="hsv"
+  options={[
+    "Umbralizar el canal R de RGB",
+    "Convertir a HSV y umbralizar el tono (H)",
+    "Ecualizar el histograma",
+    "Aplicar un filtro de Sobel",
+  ]}
+  answer={1}
+  explanation="En HSV el color (tono) está separado de la iluminación (valor). Umbralizar en RGB falla en cuanto cambia la luz, porque las tres componentes cambian a la vez."
+>
+Quieres segmentar frutas rojas en una cinta transportadora con iluminación variable. ¿Qué haces?
+</Quiz>
+
+## Para llevar
+
+- Extraer características = convertir datos brutos en columnas con significado.
+- Estadísticos (media, mediana, desviación, asimetría, curtosis) resumen señales y variables.
+- En imagen: preprocesar → segmentar (Otsu, bordes) → describir forma y textura (GLCM, HOG, LBP, SIFT).
+- Las CNN aprenden estos filtros solas; los descriptores manuales siguen siendo útiles con pocos datos o hardware limitado.

@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm lint:*)",
+      "Bash(pnpm typecheck:*)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm format:*)",
+      "Bash(python scripts/check_exercises.py:*)",
+      "Bash(docker compose up -d --build:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)"
+    ],
+    "deny": ["Read(./.env)", "Read(./.env.*)", "Bash(git push --force:*)", "Bash(git push -f:*)"]
+  }
+}

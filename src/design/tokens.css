@@ -1,0 +1,167 @@
+/*
+ * Design tokens. Components never use raw colours or sizes: only these names.
+ *
+ * Colour has meaning here:
+ * - each subject owns one hue (`--subject-*`), used for its tiles, headers and sims;
+ * - the highlighter yellow (`--color-task*`) marks only what the learner has to do
+ *   (exercises), never decoration.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Paper and ink */
+  --color-bg: #f4f6f9;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #eceff4;
+  --color-ink: #162033;
+  --color-ink-soft: #3b4659;
+  --color-muted: #5b667a;
+  --color-line: #d9dee7;
+  --color-line-strong: #b9c1ce;
+
+  /* Interaction */
+  --color-focus: #2f6fed;
+  --color-link: #2754c5;
+
+  /* The highlighter: "your turn" */
+  --color-task: #ffe25c;
+  --color-task-soft: #fff6c7;
+  --color-task-ink: #4a3b00;
+
+  /* Feedback */
+  --color-ok: #127a4a;
+  --color-ok-soft: #ddf3e7;
+  --color-bad: #b42335;
+  --color-bad-soft: #fbe3e6;
+  --color-warn: #8a5a00;
+  --color-warn-soft: #fdf0d5;
+
+  /* Callouts */
+  --color-real: #22577a;
+  --color-real-soft: #e2eef6;
+  --color-idea: #6b3fa0;
+  --color-idea-soft: #efe7f8;
+
+  /* Subjects (text-safe on surface) and their tints */
+  --subject-supervisado: #2f55c9;
+  --subject-supervisado-soft: #e4eafb;
+  --subject-no-supervisado: #7a3fd0;
+  --subject-no-supervisado-soft: #efe6fb;
+  --subject-deep-learning: #c42a63;
+  --subject-deep-learning-soft: #fbe4ed;
+  --subject-refuerzo: #b35c00;
+  --subject-refuerzo-soft: #fbecdc;
+  --subject-optimizacion: #0f7a5a;
+  --subject-optimizacion-soft: #dcf2ea;
+  --subject-razonamiento: #0b7489;
+  --subject-razonamiento-soft: #dbf0f4;
+
+  /* Categorical palette for plots (clusters, classes, series) */
+  --plot-1: #2f6fed;
+  --plot-2: #e8590c;
+  --plot-3: #0ca678;
+  --plot-4: #ae3ec9;
+  --plot-5: #f08c00;
+  --plot-6: #1098ad;
+  --plot-7: #d6336c;
+  --plot-8: #5c7cfa;
+  --plot-noise: #9aa3b2;
+  --plot-grid: #e3e7ee;
+  --plot-axis: #8a94a6;
+
+  /* Type */
+  --font-display: "Bricolage Grotesque Variable", "Figtree Variable", system-ui, sans-serif;
+  --font-body: "Figtree Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --text-xs: 0.78rem;
+  --text-sm: 0.88rem;
+  --text-base: 1.0625rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.6rem;
+  --text-2xl: 2.15rem;
+  --text-3xl: 3rem;
+  --text-hero: clamp(3rem, 9vw, 6.5rem);
+
+  --leading-tight: 1.15;
+  --leading-body: 1.65;
+
+  /* Space (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4.5rem;
+
+  /* Shape: small radius for controls, larger for the few containers that carry content */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 18px;
+  --shadow-raised: 0 1px 2px rgb(22 32 51 / 6%), 0 8px 24px rgb(22 32 51 / 6%);
+
+  --measure: 72ch;
+  --header-height: 60px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg: #0e1320;
+  --color-surface: #151c2b;
+  --color-surface-sunken: #10172a;
+  --color-ink: #e8edf6;
+  --color-ink-soft: #c5cddb;
+  --color-muted: #9aa6ba;
+  --color-line: #273149;
+  --color-line-strong: #3a4766;
+
+  --color-focus: #7aa5ff;
+  --color-link: #8fb2ff;
+
+  --color-task: #e9c93a;
+  --color-task-soft: #322c12;
+  --color-task-ink: #fff3b0;
+
+  --color-ok: #4fd18b;
+  --color-ok-soft: #12301f;
+  --color-bad: #ff7b8b;
+  --color-bad-soft: #3a1820;
+  --color-warn: #f5bd4f;
+  --color-warn-soft: #342812;
+
+  --color-real: #8cc4e8;
+  --color-real-soft: #14283a;
+  --color-idea: #c8a5f5;
+  --color-idea-soft: #261c3a;
+
+  --subject-supervisado: #8ea9ff;
+  --subject-supervisado-soft: #1b2648;
+  --subject-no-supervisado: #c3a0ff;
+  --subject-no-supervisado-soft: #271c44;
+  --subject-deep-learning: #ff8db5;
+  --subject-deep-learning-soft: #3a1729;
+  --subject-refuerzo: #ffb46b;
+  --subject-refuerzo-soft: #36230f;
+  --subject-optimizacion: #5fd7aa;
+  --subject-optimizacion-soft: #0f2e25;
+  --subject-razonamiento: #6bd3e8;
+  --subject-razonamiento-soft: #0f2b33;
+
+  --plot-1: #6f9bff;
+  --plot-2: #ff8f4d;
+  --plot-3: #3fd9a6;
+  --plot-4: #d68cf0;
+  --plot-5: #ffc34d;
+  --plot-6: #4ccde0;
+  --plot-7: #ff7aa8;
+  --plot-8: #9db0ff;
+  --plot-noise: #6b768a;
+  --plot-grid: #222b40;
+  --plot-axis: #6f7a90;
+
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 25%);
+}

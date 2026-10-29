@@ -1,0 +1,148 @@
+Un algoritmo es una receta: una secuencia **finita** de pasos **bien definidos** que, a partir de unas entradas, produce una salida. Lo interesante no es si resuelve el problema, sino **cuánto le cuesta** hacerlo cuando el problema crece. Esa es la diferencia entre un programa que tarda un segundo y uno que tardaría más que la edad del universo.
+
+## Qué le pedimos a un algoritmo
+
+- **Correcto**: da la respuesta buena para cualquier entrada válida.
+- **Finito**: termina.
+- **Definido**: cada paso es inequívoco.
+- **Eficiente**: usa poco tiempo y poca memoria.
+
+Y antes de programar, **modelar**: traducir el problema real a uno formal (¿qué son las variables?, ¿qué quiero minimizar o maximizar?, ¿qué restricciones hay?). Un **algoritmo de optimización** busca, entre todas las soluciones posibles, la mejor según una función objetivo.
+
+## Complejidad: cómo crece el coste
+
+La **notación O grande** describe cómo crece el número de operaciones con el tamaño de la entrada $n$, ignorando constantes y términos menores. Lo que importa es la forma de la curva cuando $n$ es grande.
+
+| Orden | Nombre | Ejemplo |
+|---|---|---|
+| $O(1)$ | constante | acceder a un elemento de una lista por índice, buscar en un diccionario |
+| $O(\log n)$ | logarítmica | búsqueda binaria en una lista ordenada |
+| $O(n)$ | lineal | recorrer una lista, buscar el máximo |
+| $O(n \log n)$ | casi lineal | ordenar bien (mergesort, el `sorted` de Python) |
+| $O(n^2)$ | cuadrática | comparar todos los pares, ordenación por burbuja |
+| $O(2^n)$ | exponencial | probar todos los subconjuntos |
+| $O(n!)$ | factorial | probar todas las rutas del viajante |
+
+<ComplexitySim />
+
+<Predict
+  id="complejidad-bucles"
+  answer={["O(n^2)", "O(n²)", "n^2", "n²", "cuadratica", "cuadrática"]}
+  explanation="El bucle interior hace i iteraciones; en total 0 + 1 + … + (n − 1) = n(n − 1)/2 operaciones. Constantes fuera (½) y términos menores fuera (−n/2): O(n²). Es exactamente el patrón de 'comparar todos los pares'."
+  hints={["Cuenta cuántas veces se ejecuta la línea interior en total: 0 + 1 + 2 + … + (n − 1).", "Esa suma es n(n − 1)/2."]}
+>
+¿Cuál es la complejidad de este código?
+
+```python
+for i in range(n):
+    for j in range(i):
+        if datos[i] == datos[j]:
+            duplicados += 1
+```
+</Predict>
+
+<Callout kind="idea" title="Peor caso, caso medio y mejor caso">
+La misma función puede costar distinto según la entrada: buscar un elemento en una lista es $O(1)$ si está el primero y $O(n)$ si está el último o no está. Normalmente se da el **peor caso** (garantía) y a veces el **caso medio** (lo típico). Quicksort es $O(n \log n)$ de media pero $O(n^2)$ en el peor caso.
+</Callout>
+
+## Lo mismo, pero rápido: el poder de recordar
+
+Un ejemplo clásico de cómo un pequeño cambio de algoritmo convierte algo imposible en inmediato: Fibonacci.
+
+<CodeExercise
+  id="fibonacci"
+  title="De exponencial a lineal con memoización"
+  starter={`
+    from functools import lru_cache
+
+    llamadas = 0
+
+    def fib_ingenuo(n):
+        global llamadas
+        llamadas += 1
+        if n < 2:
+            return n
+        return fib_ingenuo(n - 1) + fib_ingenuo(n - 2)
+
+    @lru_cache(maxsize=None)          # guarda cada resultado ya calculado
+    def fib_memo(n):
+        if n < 2:
+            return n
+        return ___ + ___
+
+    def fib_iterativo(n):
+        a, b = 0, 1
+        for _ in range(n):
+            a, b = b, ___
+        return a
+
+    print("fib(25) ingenuo:", fib_ingenuo(25), "con", llamadas, "llamadas")
+    print("fib(25) memo:   ", fib_memo(25))
+    print("fib(200) iterativo:", fib_iterativo(200))
+  `}
+  solution={`
+    from functools import lru_cache
+
+    llamadas = 0
+
+    def fib_ingenuo(n):
+        global llamadas
+        llamadas += 1
+        if n < 2:
+            return n
+        return fib_ingenuo(n - 1) + fib_ingenuo(n - 2)
+
+    @lru_cache(maxsize=None)          # guarda cada resultado ya calculado
+    def fib_memo(n):
+        if n < 2:
+            return n
+        return fib_memo(n - 1) + fib_memo(n - 2)
+
+    def fib_iterativo(n):
+        a, b = 0, 1
+        for _ in range(n):
+            a, b = b, a + b
+        return a
+
+    print("fib(25) ingenuo:", fib_ingenuo(25), "con", llamadas, "llamadas")
+    print("fib(25) memo:   ", fib_memo(25))
+    print("fib(200) iterativo:", fib_iterativo(200))
+  `}
+  hints={["La versión con memoria se llama a sí misma igual que la ingenua.", "En la iterativa, el nuevo b es la suma de los dos anteriores."]}
+  check={`
+    assert fib_memo(25) == 75025 and fib_iterativo(25) == 75025
+    assert llamadas == 242785, "La versión ingenua hace 242.785 llamadas para n = 25"
+    assert fib_iterativo(90) == 2880067194370816120
+  `}
+>
+La versión ingenua recalcula los mismos valores una y otra vez: crece como $\approx 1{,}6^n$. Recordando los resultados (memoización) o calculando de abajo arriba, se vuelve $O(n)$. Esto es **programación dinámica**, que verás en la lección de técnicas de diseño.
+</CodeExercise>
+
+<Callout kind="real" title="Complejidad en el día a día">
+No hace falta calcular O de todo, pero sí reconocer patrones caros:
+- `if x in lista` dentro de un bucle es $O(n^2)$; con un `set` es $O(n)$. Es el arreglo de rendimiento más común en código Python real.
+- Un `apply` fila a fila en pandas sobre millones de filas: vectoriza con numpy.
+- Un JOIN sin índice en una base de datos: escaneo completo.
+- En ML: kNN predice en $O(n)$ por consulta; una SVM con kernel entrena en $O(n^2)$–$O(n^3)$. Por eso no escalan a millones de ejemplos.
+</Callout>
+
+<Quiz
+  id="np-hard"
+  options={[
+    "Con un ordenador 1.000 veces más rápido lo resolverás de forma exacta sin problema",
+    "Para tamaños grandes, buscar el óptimo exacto es inviable: se usan heurísticas que dan buenas soluciones en tiempo razonable",
+    "Basta con programarlo en C en vez de en Python",
+    "Significa que el problema no tiene solución",
+  ]}
+  answer={1}
+  explanation="Con un coste exponencial, multiplicar la velocidad por 1.000 solo te deja resolver unos pocos elementos más (2¹⁰ ≈ 1.000). Para problemas como el viajante o la planificación de horarios grandes se usan heurísticas y metaheurísticas: es el resto de la asignatura."
+>
+Tu problema (organizar los horarios de La Liga, como en el trabajo práctico) es NP-difícil y el mejor algoritmo exacto conocido es exponencial. ¿Qué implica?
+</Quiz>
+
+## Para llevar
+
+- Algoritmo: pasos finitos y definidos; correcto y eficiente. Primero modelar, luego resolver.
+- O grande describe cómo crece el coste; constantes y términos menores se ignoran.
+- La diferencia entre $O(n \log n)$, $O(n^2)$ y $O(2^n)$ es la diferencia entre factible e imposible.
+- Recordar resultados intermedios puede convertir lo exponencial en lineal.

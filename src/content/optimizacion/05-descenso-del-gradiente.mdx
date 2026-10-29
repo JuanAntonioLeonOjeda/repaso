@@ -1,0 +1,120 @@
+Cuando las variables son **continuas** y la función objetivo es **derivable**, hay un método universal: mirar hacia dónde baja la función y dar un paso en esa dirección. Es el **descenso del gradiente**, el mismo algoritmo con el que se entrenan todas las redes neuronales.
+
+## La idea
+
+El **gradiente** $\nabla f(x)$ es el vector de derivadas parciales: apunta en la dirección en la que $f$ **sube** más rápido. Para minimizar, damos pasos en la dirección contraria:
+
+$$x_{k+1} = x_k - \eta \, \nabla f(x_k)$$
+
+$\eta$ es el **tamaño de paso** (o *learning rate*). Se repite hasta que el gradiente sea casi cero (estamos en un punto plano) o se agote un número de iteraciones.
+
+<GradientDescentSim />
+
+Tres lecciones de la simulación:
+
+1. **η pequeño**: converge, pero muy despacio.
+2. **η grande**: rebota y puede **divergir**.
+3. El punto de llegada depende del **punto de partida**: el descenso del gradiente encuentra un mínimo **local**, no necesariamente el global. Solo en funciones **convexas** (con forma de cuenco) cualquier mínimo local es el global.
+
+<Predict
+  id="paso-gd"
+  answer={["2.4", "2,4"]}
+  tolerance={0.001}
+  explanation="f′(x) = 2(x − 1). En x = 3: f′(3) = 4. Nuevo x = 3 − 0,15 · 4 = 3 − 0,6 = 2,4. Se acerca al mínimo (x = 1)."
+  hints={["La derivada de (x − 1)² es 2(x − 1).", "x_nuevo = x − η · f′(x)"]}
+>
+Minimizas $f(x) = (x - 1)^2$ partiendo de $x_0 = 3$ con $\eta = 0{,}15$. ¿Cuánto vale $x_1$?
+</Predict>
+
+## En varias dimensiones
+
+<CodeExercise
+  id="gd-2d"
+  title="Descenso del gradiente en 2D"
+  starter={`
+    import numpy as np
+
+    # f(x, y) = (x - 2)^2 + 10 (y + 1)^2  -> mínimo en (2, -1)
+    def f(p):
+        x, y = p
+        return (x - 2) ** 2 + 10 * (y + 1) ** 2
+
+    def grad(p):
+        x, y = p
+        return np.array([2 * (x - 2), ___ * (y + 1)])
+
+    p = np.array([-3.0, 3.0])
+    eta = 0.05
+    for k in range(500):
+        g = grad(p)
+        if np.linalg.norm(g) < 1e-6:          # criterio de parada: gradiente casi nulo
+            break
+        p = p - ___ * g
+
+    print(f"Mínimo en ({p[0]:.4f}, {p[1]:.4f}) tras {k} iteraciones, f = {f(p):.2e}")
+  `}
+  solution={`
+    import numpy as np
+
+    # f(x, y) = (x - 2)^2 + 10 (y + 1)^2  -> mínimo en (2, -1)
+    def f(p):
+        x, y = p
+        return (x - 2) ** 2 + 10 * (y + 1) ** 2
+
+    def grad(p):
+        x, y = p
+        return np.array([2 * (x - 2), 20 * (y + 1)])
+
+    p = np.array([-3.0, 3.0])
+    eta = 0.05
+    for k in range(500):
+        g = grad(p)
+        if np.linalg.norm(g) < 1e-6:          # criterio de parada: gradiente casi nulo
+            break
+        p = p - eta * g
+
+    print(f"Mínimo en ({p[0]:.4f}, {p[1]:.4f}) tras {k} iteraciones, f = {f(p):.2e}")
+  `}
+  hints={["La derivada de 10(y + 1)² respecto a y es 20(y + 1).", "Se avanza en contra del gradiente, escalado por η."]}
+  check={`
+    assert np.allclose(p, [2, -1], atol=1e-4), "Debería llegar a (2, −1)"
+  `}
+>
+Implementa el gradiente y el bucle. Luego prueba con $\eta = 0{,}11$: la dirección $y$ (diez veces más empinada) empieza a oscilar y diverge, aunque en $x$ el paso sería pequeño. Es el problema del "valle alargado" que resuelven momentum y Adam (lo viste en Deep Learning).
+</CodeExercise>
+
+### ¿Y si no tengo la derivada?
+
+Se puede aproximar numéricamente con diferencias finitas: $f'(x) \approx \frac{f(x + h) - f(x - h)}{2h}$. Sirve para comprobar que una derivada calculada a mano está bien (*gradient checking*), pero es lento con muchas variables. Las librerías de deep learning calculan derivadas exactas automáticamente (**diferenciación automática**).
+
+## Variantes que te vas a encontrar
+
+- **Por lotes, estocástico y mini-batch**: cuando $f$ es una suma sobre muchos datos (el error de un modelo), calcular el gradiente con todos es caro; se estima con un subconjunto. Más ruido, pero muchos más pasos por segundo.
+- **Momentum, RMSProp, Adam**: adaptan dirección y tamaño de paso (ver Deep Learning).
+- **Búsqueda lineal**: elegir $\eta$ en cada paso para que la función baje lo suficiente.
+- **Métodos de segundo orden** (Newton, BFGS, L-BFGS): usan también la curvatura; muchos menos pasos, cada uno más caro. Es lo que usa por defecto `LogisticRegression` de sklearn (`lbfgs`) o `scipy.optimize.minimize`.
+
+<Callout kind="real">
+En la práctica no programas el descenso del gradiente a mano: usas `scipy.optimize.minimize` (con BFGS/L-BFGS) para problemas continuos pequeños y medianos, y los optimizadores de PyTorch/TensorFlow para modelos. Lo que sí tienes que saber es diagnosticarlo: si la pérdida diverge (baja η o normaliza las variables), si avanza muy despacio (sube η, usa momentum o Adam), o si se queda en un mínimo local (prueba varios puntos de partida).
+</Callout>
+
+<Quiz
+  id="convexa"
+  options={[
+    "Sí, siempre",
+    "Solo si la función es convexa; si no, puede acabar en un mínimo local que depende del punto de partida",
+    "Solo si η es muy pequeño",
+    "Nunca encuentra el mínimo exacto",
+  ]}
+  answer={1}
+  explanation="En funciones convexas (regresión lineal, logística, SVM) todo mínimo local es global. En no convexas (redes neuronales, el ejemplo de la simulación) no hay garantía; por suerte, en redes grandes los mínimos locales suelen ser casi tan buenos como el global."
+>
+¿El descenso del gradiente (con un η adecuado) garantiza encontrar el mínimo global?
+</Quiz>
+
+## Para llevar
+
+- $x \leftarrow x - \eta \nabla f(x)$: bajar en contra del gradiente, con paso η.
+- η demasiado grande diverge; demasiado pequeño no avanza; en direcciones con distinta curvatura, oscila.
+- Encuentra mínimos locales; en funciones convexas, el local es el global.
+- Variantes: estocástico, momentum, Adam, métodos de segundo orden (BFGS) en `scipy.optimize`.

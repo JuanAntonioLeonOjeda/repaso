@@ -1,0 +1,124 @@
+Todo lo anterior eran modelos **discriminativos**: dada una imagen, ¿qué es? Un modelo **generativo** hace lo contrario: aprende cómo son los datos para **crear ejemplos nuevos** que parezcan reales. Las GAN fueron, entre 2014 y 2021, la forma dominante de generar imágenes.
+
+## Dos redes que compiten
+
+Una GAN (*Generative Adversarial Network*) son dos redes entrenadas a la vez, una contra otra:
+
+- El **generador** $G$ ("el falsificador") recibe ruido aleatorio $z$ y produce una imagen $G(z)$.
+- El **discriminador** $D$ ("el policía") recibe imágenes reales y falsas y da la probabilidad de que sean reales.
+
+<GanDiagram />
+
+El discriminador intenta acertar; el generador intenta engañarle. Formalmente es un juego **minimax**:
+
+$$\min_G \max_D \; \mathbb{E}_{x \sim \text{datos}}[\log D(x)] + \mathbb{E}_{z}[\log(1 - D(G(z)))]$$
+
+En el equilibrio ideal, el generador produce la distribución real y el discriminador no puede distinguir: dice 0,5 a todo.
+
+<GanSim />
+
+## El bucle de entrenamiento
+
+Se alternan dos pasos en cada iteración:
+
+1. **Entrenar $D$**: un lote de imágenes reales (etiqueta 1) y uno de falsas generadas (etiqueta 0), con entropía cruzada binaria. $G$ está congelado.
+2. **Entrenar $G$**: generar un lote, pasarlo por $D$ y actualizar **solo $G$** para que $D$ lo clasifique como real (etiqueta 1). Usar la etiqueta "real" para las falsas es el truco práctico (*non-saturating loss*): da gradientes más fuertes al principio que minimizar $\log(1 - D(G(z)))$.
+
+<CodeExercise
+  id="perdidas-gan"
+  title="Las pérdidas de una GAN"
+  starter={`
+    import numpy as np
+
+    def bce(y_true, y_pred):
+        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        return -np.mean(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
+
+    # Salidas del discriminador (probabilidad de "real")
+    d_reales = np.array([0.9, 0.8, 0.95])   # sobre imágenes reales
+    d_falsas = np.array([0.2, 0.1, 0.3])    # sobre imágenes generadas
+
+    # Pérdida del discriminador: acertar en las reales (1) y en las falsas (0)
+    loss_D = bce(np.ones(3), d_reales) + bce(np.___(3), d_falsas)
+
+    # Pérdida del generador (non-saturating): que D crea que sus falsas son reales
+    loss_G = bce(np.___(3), d_falsas)
+
+    print(f"Pérdida D: {loss_D:.3f}   Pérdida G: {loss_G:.3f}")
+  `}
+  solution={`
+    import numpy as np
+
+    def bce(y_true, y_pred):
+        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        return -np.mean(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
+
+    # Salidas del discriminador (probabilidad de "real")
+    d_reales = np.array([0.9, 0.8, 0.95])   # sobre imágenes reales
+    d_falsas = np.array([0.2, 0.1, 0.3])    # sobre imágenes generadas
+
+    # Pérdida del discriminador: acertar en las reales (1) y en las falsas (0)
+    loss_D = bce(np.ones(3), d_reales) + bce(np.zeros(3), d_falsas)
+
+    # Pérdida del generador (non-saturating): que D crea que sus falsas son reales
+    loss_G = bce(np.ones(3), d_falsas)
+
+    print(f"Pérdida D: {loss_D:.3f}   Pérdida G: {loss_G:.3f}")
+  `}
+  hints={["Las imágenes falsas, para el discriminador, tienen etiqueta 0.", "El generador quiere que sus falsas se clasifiquen con etiqueta 1."]}
+  check={`
+    assert abs(loss_D - (bce(np.ones(3), d_reales) + bce(np.zeros(3), d_falsas))) < 1e-12
+    assert loss_G > loss_D, "Aquí el discriminador va ganando: la pérdida del generador es alta"
+  `}
+>
+Calcula las dos pérdidas a partir de lo que opina el discriminador. Con estas cifras, ¿quién va ganando?
+</CodeExercise>
+
+## Por qué es difícil entrenarlas
+
+- **Inestabilidad**: no se minimiza una pérdida, se busca un equilibrio entre dos jugadores. Las pérdidas oscilan y no indican bien la calidad.
+- **Mode collapse**: el generador descubre unas pocas imágenes que engañan al discriminador y produce solo esas (siempre el mismo dígito). Pruébalo en la simulación con dispersión mínima.
+- **Discriminador demasiado bueno**: si gana con facilidad, el gradiente para el generador desaparece.
+
+Remedios típicos: arquitecturas probadas (DCGAN: convoluciones, BatchNorm, LeakyReLU), *label smoothing*, otras pérdidas (Wasserstein GAN), normalización espectral, y evaluar con métricas como **FID** en vez de mirar las pérdidas.
+
+## Variantes del temario
+
+- **cGAN (GAN condicional)**: generador y discriminador reciben además una **etiqueta** $y$ (la clase, un texto…). Puedes pedir "genera un 7". **AC-GAN** hace que el discriminador además clasifique la clase.
+- **CycleGAN**: traducción imagen a imagen **sin pares** (caballos ↔ cebras, foto ↔ cuadro de Monet). Dos generadores ($G: X \to Y$, $F: Y \to X$), dos discriminadores, y la **pérdida de consistencia cíclica**: si traduces un caballo a cebra y de vuelta a caballo, tiene que salir el caballo original, $F(G(x)) \approx x$. Más una **pérdida de identidad** que evita cambios de color innecesarios.
+- **StyleGAN** (NVIDIA): el ruido pasa primero por una red de mapeo (8 capas densas) a un espacio latente "estilo" $w$, que se inyecta en cada capa del generador (AdaIN). Las capas tempranas controlan la pose y la forma; las tardías, los detalles finos. Las caras de *thispersondoesnotexist* vienen de aquí.
+
+<Quiz
+  id="cyclegan"
+  options={[
+    "Una cGAN, condicionada a la etiqueta 'satélite'",
+    "Una CycleGAN, con pérdida de consistencia cíclica",
+    "Una StyleGAN, con red de mapeo",
+    "Un autoencoder variacional",
+  ]}
+  answer={1}
+  explanation="No hay pares (la misma zona en mapa y en foto) y hay que traducir entre dos dominios: es el caso de uso de CycleGAN. La consistencia cíclica (mapa → foto → mapa ≈ mapa original) sustituye a los pares."
+>
+Quieres convertir mapas esquemáticos en fotos satélite realistas, pero solo tienes una colección de mapas y otra de fotos, **sin emparejar**. ¿Qué arquitectura?
+</Quiz>
+
+<Callout kind="real" title="¿Y hoy?">
+En generación de imágenes, las GAN han sido desplazadas por los **modelos de difusión** (Stable Diffusion, DALL·E, Midjourney): aprenden a quitar ruido poco a poco, se entrenan de forma mucho más estable y cubren mejor la diversidad de los datos. Las GAN siguen vivas donde importa la **velocidad** (una sola pasada para generar): superresolución en tiempo real, algunos filtros de vídeo y como "discriminador" auxiliar dentro de otros modelos. Y las ideas del temario (condicionar con etiquetas o texto, el espacio latente, la consistencia cíclica) se reutilizan en todos ellos.
+</Callout>
+
+<Predict
+  id="d-optimo"
+  answer={["0.5", "0,5", "1/2"]}
+  explanation="En el equilibrio, la distribución generada es igual a la real: para cualquier imagen, D* = p_real / (p_real + p_gen) = p / 2p = 0,5. El discriminador no puede hacer nada mejor que tirar una moneda."
+  hints={["El discriminador óptimo es D*(x) = p_real(x) / (p_real(x) + p_gen(x)).", "En el equilibrio, p_gen = p_real."]}
+>
+Si el generador alcanzase la perfección (genera exactamente la distribución de los datos reales), ¿qué probabilidad de "real" daría el discriminador óptimo a cualquier imagen?
+</Predict>
+
+## Para llevar
+
+- GAN = generador (falsifica) contra discriminador (detecta), en un juego minimax.
+- Se entrenan alternando: D con reales (1) y falsas (0); G para que D llame "reales" a sus falsas.
+- Problemas: inestabilidad y mode collapse.
+- cGAN condiciona con etiquetas; CycleGAN traduce sin pares con consistencia cíclica; StyleGAN controla estilos por capas.
+- Hoy la difusión domina la generación de imágenes, pero las ideas de las GAN siguen presentes.

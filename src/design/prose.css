@@ -1,0 +1,118 @@
+/*
+ * Long-form lesson text. Scoped to `.prose` so app chrome is unaffected.
+ * Vertical rhythm comes from `> * + *` instead of margins on every element.
+ */
+
+.prose {
+  max-width: var(--measure);
+  font-size: var(--text-base);
+  color: var(--color-ink-soft);
+}
+
+.prose > * + * {
+  margin-top: var(--space-4);
+}
+
+.prose h2 {
+  margin-top: var(--space-7);
+  font-size: var(--text-xl);
+  color: var(--color-ink);
+}
+
+.prose h3 {
+  margin-top: var(--space-6);
+  font-size: var(--text-lg);
+  color: var(--color-ink);
+}
+
+.prose h2 + *,
+.prose h3 + * {
+  margin-top: var(--space-3);
+}
+
+.prose strong {
+  color: var(--color-ink);
+  font-weight: 650;
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 1.3em;
+  margin-bottom: 0;
+}
+
+.prose li + li {
+  margin-top: var(--space-2);
+}
+
+.prose li > ul,
+.prose li > ol {
+  margin-top: var(--space-2);
+}
+
+.prose :not(pre) > code {
+  font-size: 0.88em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+.prose pre {
+  margin-left: 0;
+  margin-right: 0;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-line);
+  overflow-x: auto;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.prose blockquote {
+  margin: var(--space-5) 0;
+  padding-left: var(--space-4);
+  border-left: 3px solid var(--color-line-strong);
+  color: var(--color-muted);
+}
+
+/* Only markdown tables (direct children): tables inside sims keep their own layout. */
+.prose > table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  display: block;
+  overflow-x: auto;
+}
+
+.prose > table th,
+.prose > table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.prose > table th {
+  color: var(--color-ink);
+  font-weight: 650;
+  border-bottom-width: 2px;
+}
+
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--color-line);
+  margin: var(--space-7) 0;
+}
+
+.prose .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--space-2) 0;
+}
+
+.prose .katex {
+  font-size: 1.08em;
+  color: var(--color-ink);
+}

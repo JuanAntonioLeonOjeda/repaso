@@ -1,0 +1,177 @@
+Un repaso de los clasificadores del temario, de menos a más potentes, con lo que importa de cada uno: **cómo decide**, **qué hiperparámetros tocar** y **cuándo usarlo**. Spoiler del mundo real: en datos tabulares, los ensembles de árboles (sobre todo *gradient boosting*) ganan casi siempre.
+
+## Regresión logística
+
+A pesar del nombre, clasifica. Calcula una combinación lineal $z = w_0 + w_1x_1 + \dots$ (como la regresión lineal) y la pasa por la **sigmoide** para convertirla en probabilidad:
+
+$$P(y = 1 \mid x) = \sigma(z) = \frac{1}{1 + e^{-z}}$$
+
+Se entrena minimizando la **log-loss** (entropía cruzada), que castiga mucho estar muy seguro y equivocarse.
+
+<LogisticSim />
+
+- La **frontera de decisión** es lineal (una recta en 2D, un hiperplano en general).
+- Con más de dos clases se descompone: **uno contra el resto** (OvR, un clasificador por clase) o se usa directamente la versión multinomial (*softmax*).
+- Sus coeficientes se interpretan como cambios en el *log-odds*; $e^{w_j}$ es el factor por el que se multiplican las probabilidades relativas ("odds ratio"). Muy usada en banca y medicina por eso.
+
+<Callout kind="real">
+La regresión logística sigue en producción en muchísimos sitios: scoring de crédito (los reguladores exigen poder explicar la decisión), modelos de propensión de marketing y como línea base de cualquier clasificador. En sklearn está regularizada por defecto (`C=1.0`; `C` pequeño = más regularización).
+</Callout>
+
+## Árboles de decisión
+
+Un árbol es una cadena de preguntas "¿atributo ≤ umbral?". En cada nodo, el algoritmo (CART) prueba **todos** los cortes posibles y elige el que deja los grupos más **puros**. Para medir la pureza en clasificación se usa el **índice de Gini** (o la entropía):
+
+$$\text{Gini} = 1 - \sum_c p_c^2$$
+
+Vale 0 si todos los ejemplos del nodo son de la misma clase y es máximo cuando están mezclados a partes iguales. En regresión, el criterio es reducir la varianza.
+
+<GiniSplitSim />
+
+<Predict
+  id="gini"
+  answer={["0.48", "0,48", ".48"]}
+  tolerance={0.001}
+  explanation="Las proporciones son 6/10 = 0,6 y 4/10 = 0,4, así que Gini = 1 − (0,6² + 0,4²) = 1 − (0,36 + 0,16) = 0,48."
+  hints={["Calcula la proporción de cada clase en el nodo.", "1 − (p₁² + p₂²)"]}
+>
+Un nodo tiene 10 ejemplos: 6 de la clase A y 4 de la clase B. ¿Cuál es su índice de Gini?
+</Predict>
+
+- ✅ Interpretable (se puede dibujar), no necesita escalar, mezcla variables numéricas y categóricas, capta interacciones.
+- ❌ **Sobreajusta muchísimo** si lo dejas crecer: acaba con una hoja por ejemplo. Se controla con `max_depth`, `min_samples_leaf`, poda. Y es inestable: un cambio pequeño en los datos cambia el árbol entero.
+
+## Ensembles: muchos árboles mejor que uno
+
+### Bagging y Random Forest (en paralelo)
+
+1. Crea muchos conjuntos de entrenamiento remuestreando **con reemplazo** (*bootstrap*).
+2. Entrena un árbol profundo en cada uno, y además, en cada corte, deja elegir solo entre un **subconjunto aleatorio de atributos** (esto es lo que añade Random Forest al bagging).
+3. Para predecir, **votación** (clasificación) o media (regresión).
+
+Cada árbol sobreajusta a su manera; al promediar, los errores se compensan y **baja la varianza**. Funciona bien sin apenas ajustar hiperparámetros, por eso es la "primera opción seria" en tablas.
+
+### Boosting: AdaBoost y gradient boosting (en serie)
+
+Los modelos se entrenan **uno detrás de otro**, cada uno centrado en los errores del anterior.
+
+- **AdaBoost** (el de tus diapositivas) usa *stumps* (árboles de un solo corte). Tras cada uno, **sube el peso de los ejemplos mal clasificados** para que el siguiente se fije en ellos. Cada stump vota con una importancia que depende de su error $E$:
+  $$\alpha = \tfrac{1}{2}\ln\frac{1 - E}{E}$$
+- **Gradient boosting** (XGBoost, LightGBM, CatBoost) generaliza la idea: cada árbol nuevo predice el *residuo* (el gradiente de la pérdida) de lo acumulado.
+
+<Predict
+  id="adaboost"
+  answer={["0.255", "0,255", "0.26", "0,26"]}
+  tolerance={0.005}
+  explanation="α = ½ · ln((1 − 0,375) / 0,375) = ½ · ln(1,667) = ½ · 0,511 ≈ 0,255. Es el ejemplo del tema: un stump que falla 3 de 8 pacientes. Un stump con error 0,5 (azar) tendría importancia 0, y uno con error bajo, importancia alta."
+  hints={["Sustituye E = 0,375 en la fórmula de arriba.", "ln(0,625 / 0,375) = ln(1,667) ≈ 0,511"]}
+>
+Un stump de AdaBoost clasifica mal 3 de 8 ejemplos (error ponderado $E = 0{,}375$). ¿Cuál es su importancia $\alpha$?
+</Predict>
+
+<Callout kind="real" title="Lo que se usa de verdad en datos tabulares">
+En competiciones de Kaggle y en la mayoría de empresas, para datos en tabla el ganador habitual es **gradient boosting** (LightGBM, XGBoost, CatBoost), por delante incluso de las redes neuronales. Receta práctica: regresión logística como base → Random Forest → LightGBM con búsqueda de hiperparámetros (`learning_rate`, `num_leaves`/`max_depth`, `n_estimators` con *early stopping*). En sklearn tienes `HistGradientBoostingClassifier`, muy parecido a LightGBM.
+</Callout>
+
+## Máquinas de vectores soporte (SVM)
+
+Entre todas las fronteras que separan dos clases, la SVM elige la que deja **el margen más ancho**. Solo importan los puntos que tocan el margen: los **vectores soporte**.
+
+- **Margen blando** (`C`): permite algunos errores a cambio de un margen más ancho. `C` grande = pocos errores permitidos (riesgo de sobreajuste); `C` pequeño = margen ancho, más regularización.
+- **Kernel trick**: si los datos no se separan con una recta, se proyectan implícitamente a un espacio de más dimensiones donde sí. El más usado es el **RBF** (gaussiano), con su `gamma`: alto = cada punto influye solo muy cerca (frontera muy curva), bajo = frontera suave.
+- Necesita datos **escalados** y escala mal con muchos ejemplos (cientos de miles ya cuesta). Brillaba antes del deep learning y sigue siendo buena con pocos datos y muchas dimensiones (texto, bioinformática).
+
+## Compara tú mismo
+
+<CodeExercise
+  id="comparar-clasificadores"
+  title="Torneo de clasificadores con el vino"
+  files={["winequality-red.csv"]}
+  starter={`
+    import pandas as pd
+    from sklearn.model_selection import cross_val_score, StratifiedKFold
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.dummy import DummyClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
+
+    df = pd.read_csv("winequality-red.csv", sep=";")
+    X = df.drop(columns="quality")
+    y = (df["quality"] >= ___).astype(int)   # 1 = vino "bueno" (nota 7 u 8)
+
+    modelos = {
+        "base (clase mayoritaria)": DummyClassifier(strategy="most_frequent"),
+        "logística": make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)),
+        "random forest": RandomForestClassifier(n_estimators=200, random_state=0),
+        "gradient boosting": HistGradientBoostingClassifier(random_state=0),
+    }
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
+    resultados = {}
+    for nombre, modelo in modelos.items():
+        scores = cross_val_score(modelo, X, y, cv=cv, scoring=___)
+        resultados[nombre] = scores.mean()
+        print(f"{nombre:>25}: {scores.mean():.3f} ± {scores.std():.3f}")
+  `}
+  solution={`
+    import pandas as pd
+    from sklearn.model_selection import cross_val_score, StratifiedKFold
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.dummy import DummyClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
+
+    df = pd.read_csv("winequality-red.csv", sep=";")
+    X = df.drop(columns="quality")
+    y = (df["quality"] >= 7).astype(int)   # 1 = vino "bueno" (nota 7 u 8)
+
+    modelos = {
+        "base (clase mayoritaria)": DummyClassifier(strategy="most_frequent"),
+        "logística": make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)),
+        "random forest": RandomForestClassifier(n_estimators=200, random_state=0),
+        "gradient boosting": HistGradientBoostingClassifier(random_state=0),
+    }
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
+    resultados = {}
+    for nombre, modelo in modelos.items():
+        scores = cross_val_score(modelo, X, y, cv=cv, scoring="roc_auc")
+        resultados[nombre] = scores.mean()
+        print(f"{nombre:>25}: {scores.mean():.3f} ± {scores.std():.3f}")
+  `}
+  hints={[
+    "Los vinos 'buenos' son los de nota 7 u 8.",
+    "Solo el 14% de los vinos son buenos: la accuracy engañaría. Usa el área bajo la curva ROC ('roc_auc').",
+  ]}
+  check={`
+    assert y.mean() < 0.2, "Revisa el umbral: los vinos de nota 7 u 8 son en torno al 14%"
+    assert abs(resultados["base (clase mayoritaria)"] - 0.5) < 1e-9, "El modelo base debería dar AUC 0,5 (azar)"
+    assert resultados["random forest"] > resultados["logística"], "En este dataset el random forest debería ganar a la logística"
+  `}
+>
+Convierte la calidad en un problema binario (vino bueno o no) y compara varios clasificadores con validación cruzada. Como las clases están desbalanceadas, mide con AUC.
+</CodeExercise>
+
+<Quiz
+  id="cuando-que-modelo"
+  options={[
+    "Una SVM con kernel RBF, por su margen máximo",
+    "Una red neuronal profunda",
+    "Un árbol de decisión profundo sin podar",
+    "Regresión logística o un árbol poco profundo, que se pueden explicar",
+  ]}
+  answer={3}
+  explanation="Cuando la decisión debe justificarse (créditos, seguros, sanidad), se prefieren modelos interpretables. Si se usa uno complejo, se acompaña de técnicas de explicación como SHAP, pero lo más defendible ante un regulador es un modelo transparente."
+>
+Un banco necesita un modelo que decida si concede un préstamo y la ley obliga a explicar a cada cliente por qué se le denegó. ¿Por dónde empiezas?
+</Quiz>
+
+## Para llevar
+
+- Logística: lineal + sigmoide, probabilidades calibradas, interpretable. La base de cualquier clasificación.
+- Árbol: preguntas que maximizan la pureza (Gini). Interpretable pero sobreajusta.
+- Random Forest (bagging) baja la varianza promediando árboles; boosting baja el sesgo encadenándolos.
+- SVM: margen máximo + kernels; necesita escalar y no escala a millones de filas.
+- En tablas reales: gradient boosting suele ganar. Pero primero, siempre, una línea base.

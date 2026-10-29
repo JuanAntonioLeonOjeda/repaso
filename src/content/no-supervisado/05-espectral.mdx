@@ -1,0 +1,119 @@
+El clustering espectral tiene fama de difícil por el álgebra lineal, pero la idea es muy visual: **convierte los datos en un grafo y corta el grafo por donde menos conexiones haya**. Así encuentra grupos que no son "nubes", como dos anillos concéntricos.
+
+## De datos a grafo
+
+Cada punto es un nodo. Unimos dos nodos con una arista de peso $W_{ij}$ si se parecen. Formas habituales:
+
+- **ε-vecindario**: unir los que están a menos de ε.
+- **k vecinos más cercanos** (kNN): cada punto con sus $k$ más cercanos.
+- **Gaussiana (RBF)**: todos con todos, con peso $W_{ij} = e^{-\lVert x_i - x_j \rVert^2 / 2\sigma^2}$ (casi 0 para los lejanos).
+
+<KnnGraphSim />
+
+Si el grafo está bien construido, cada grupo real es un trozo muy conectado por dentro y poco conectado con los demás. **Cortar** el grafo en esos trozos es el clustering.
+
+## Cortar un grafo
+
+Cortar = quitar aristas para separar el grafo en partes. El **corte mínimo** (quitar las aristas de menor peso total) tiende a aislar un solo punto suelto, así que se usa el **corte normalizado** (*NCut*), que penaliza dejar partes pequeñas. Resolverlo exactamente es NP-difícil… pero tiene una **relajación** que se resuelve con vectores propios. Ahí entra el "espectral".
+
+## La receta
+
+1. Construye la matriz de afinidad $W$ (el grafo).
+2. Calcula la **matriz de grado** $D$: diagonal, con $D_{ii} = \sum_j W_{ij}$ (cuánto está conectado cada nodo).
+3. Calcula el **laplaciano** $L = D - W$ (o su versión normalizada $L_{sym} = I - D^{-1/2} W D^{-1/2}$).
+4. Saca los $k$ vectores propios de $L$ con **valores propios más pequeños**.
+5. Usa esos vectores como nuevas coordenadas de cada punto (una matriz $n \times k$) y aplica **k-means** sobre ellas.
+
+La propiedad mágica: **el número de valores propios iguales a 0 del laplaciano es el número de componentes conexas del grafo**, y sus vectores propios son "indicadores" de cada componente. Cuando los grupos están casi desconectados, los valores propios son casi 0 y k-means separa fácilmente esas nuevas coordenadas.
+
+<CodeExercise
+  id="laplaciano"
+  title="El laplaciano cuenta las piezas del grafo"
+  starter={`
+    import numpy as np
+
+    # Grafo de 6 nodos: un triángulo (0,1,2) y otro triángulo (3,4,5) sin conexión entre ellos
+    W = np.zeros((6, 6))
+    for i, j in [(0, 1), (1, 2), (0, 2), (3, 4), (4, 5), (3, 5)]:
+        W[i, j] = W[j, i] = 1
+
+    D = np.diag(W.sum(axis=___))
+    L = ___
+
+    valores, vectores = np.linalg.eigh(L)   # eigh: para matrices simétricas, ordenados
+    print("Valores propios:", valores.round(3))
+
+    n_componentes = int(np.sum(np.isclose(valores, 0)))
+    print("Componentes conexas:", n_componentes)
+  `}
+  solution={`
+    import numpy as np
+
+    # Grafo de 6 nodos: un triángulo (0,1,2) y otro triángulo (3,4,5) sin conexión entre ellos
+    W = np.zeros((6, 6))
+    for i, j in [(0, 1), (1, 2), (0, 2), (3, 4), (4, 5), (3, 5)]:
+        W[i, j] = W[j, i] = 1
+
+    D = np.diag(W.sum(axis=1))
+    L = D - W
+
+    valores, vectores = np.linalg.eigh(L)   # eigh: para matrices simétricas, ordenados
+    print("Valores propios:", valores.round(3))
+
+    n_componentes = int(np.sum(np.isclose(valores, 0)))
+    print("Componentes conexas:", n_componentes)
+  `}
+  hints={["El grado de un nodo es la suma de su fila.", "El laplaciano no normalizado es D − W."]}
+  check={`
+    assert np.allclose(L, D - W), "L debería ser D − W"
+    assert n_componentes == 2, "Hay dos triángulos separados: dos valores propios nulos"
+  `}
+>
+Construye el laplaciano de un grafo con dos piezas y comprueba que tiene exactamente dos valores propios nulos. Después, prueba a añadir una arista (2, 3) que una los triángulos: ¿qué le pasa al segundo valor propio?
+</CodeExercise>
+
+<RunCode
+  title="Anillos concéntricos: k-means frente a espectral"
+  code={`
+    from sklearn.datasets import make_circles
+    from sklearn.cluster import KMeans, SpectralClustering
+    from sklearn.metrics import adjusted_rand_score
+
+    X, y = make_circles(n_samples=600, noise=0.05, factor=0.5, random_state=0)
+
+    km = KMeans(n_clusters=2, n_init=10, random_state=0).fit_predict(X)
+    sc = SpectralClustering(n_clusters=2, affinity="nearest_neighbors",
+                            n_neighbors=10, random_state=0).fit_predict(X)
+
+    print("ARI k-means:   ", round(adjusted_rand_score(y, km), 3))
+    print("ARI espectral: ", round(adjusted_rand_score(y, sc), 3))
+  `}
+/>
+
+## Ventajas e inconvenientes
+
+- ✅ Encuentra clusters de forma arbitraria (no convexos) y tiene una base matemática sólida.
+- ✅ Funciona con cualquier noción de similitud, incluso si solo tienes un grafo (redes sociales, enlaces).
+- ❌ Hay que construir el grafo bien: el tipo de afinidad, $k$ o $\sigma$ lo cambian todo (como ves en la simulación).
+- ❌ Calcular vectores propios de una matriz $n \times n$ es caro: no escala a cientos de miles de puntos sin trucos.
+- ❌ Sigue necesitando $k$ (aunque el "salto" en los valores propios, el *eigengap*, ayuda a elegirlo).
+
+<Quiz
+  id="eigengap"
+  options={["2", "3", "4", "6"]}
+  answer={1}
+  explanation="Hay tres valores propios casi nulos y luego un salto grande (de 0,05 a 1,9). Ese 'eigengap' indica tres grupos casi desconectados en el grafo."
+>
+Los valores propios más pequeños del laplaciano de tus datos son: 0,00 · 0,02 · 0,05 · 1,90 · 2,10 · 2,40. ¿Cuántos clusters sugiere el *eigengap*?
+</Quiz>
+
+<Callout kind="real">
+El clustering espectral puro se usa menos en tablas grandes, pero sus ideas están por todas partes: **detección de comunidades** en grafos (algoritmos como Louvain/Leiden, más escalables), **segmentación de imágenes** y los métodos de reducción de dimensionalidad basados en grafos de vecinos, como **UMAP** y t-SNE, que hoy se usan a diario para visualizar embeddings.
+</Callout>
+
+## Para llevar
+
+- Datos → grafo de similitudes → cortar por donde haya menos conexiones.
+- Laplaciano $L = D - W$; sus vectores propios de menor valor dan coordenadas donde los grupos se separan.
+- Número de valores propios nulos = número de piezas del grafo; el eigengap sugiere k.
+- Potente con formas raras; caro y sensible a cómo construyes el grafo.

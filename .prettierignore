@@ -1,0 +1,8 @@
+dist
+coverage
+pnpm-lock.yaml
+Asignaturas
+public/datasets
+.claude/skills/ui-ux-pro-max
+.agents
+*.mdx

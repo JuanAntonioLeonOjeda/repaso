@@ -1,0 +1,121 @@
+Dos frentes para cerrar la asignatura: cómo actuar cuando las acciones son **números continuos** (girar un volante, mover un brazo) con **DDPG** y **PPO**, y qué cambia cuando el agente **aprende un modelo del mundo** y planifica con él.
+
+## DDPG: un DQN para acciones continuas
+
+DQN necesita $\max_a Q(s, a)$, imposible con infinitas acciones. **DDPG** (*Deep Deterministic Policy Gradient*) lo resuelve con un actor-crítico:
+
+- **Actor** $\mu_\theta(s)$: una red que da **directamente la acción** (determinista), por ejemplo con `tanh` para acotarla.
+- **Crítico** $Q_\phi(s, a)$: recibe estado **y acción** y estima su valor.
+- El actor se entrena para **subir por el crítico**: mover la acción en la dirección en la que $Q$ aumenta ($\nabla_a Q \cdot \nabla_\theta \mu$).
+
+Y toma prestados los trucos de DQN: **memoria de repetición** (es off-policy) y **redes objetivo** para actor y crítico, actualizadas con una mezcla suave en cada paso:
+
+$$\theta^- \leftarrow \tau \, \theta + (1 - \tau)\, \theta^-, \quad \tau \approx 0{,}005$$
+
+Como el actor es determinista, la exploración se hace **añadiendo ruido** a la acción (gaussiano, u Ornstein-Uhlenbeck en el paper original).
+
+<CodeExercise
+  id="soft-update"
+  title="Actualización suave de la red objetivo"
+  starter={`
+    import numpy as np
+
+    def soft_update(objetivo, online, tau):
+        """Mezcla los pesos: un poquito de la red online y casi todo de la objetivo."""
+        return [___ * w_on + (1 - ___) * w_obj for w_obj, w_on in zip(objetivo, online)]
+
+    online = [np.ones((2, 2)), np.ones(2)]
+    objetivo = [np.zeros((2, 2)), np.zeros(2)]
+    for paso in range(1000):
+        objetivo = soft_update(objetivo, online, tau=0.005)
+
+    print("Peso objetivo tras 1000 pasos:", objetivo[0][0, 0].round(3))
+  `}
+  solution={`
+    import numpy as np
+
+    def soft_update(objetivo, online, tau):
+        """Mezcla los pesos: un poquito de la red online y casi todo de la objetivo."""
+        return [tau * w_on + (1 - tau) * w_obj for w_obj, w_on in zip(objetivo, online)]
+
+    online = [np.ones((2, 2)), np.ones(2)]
+    objetivo = [np.zeros((2, 2)), np.zeros(2)]
+    for paso in range(1000):
+        objetivo = soft_update(objetivo, online, tau=0.005)
+
+    print("Peso objetivo tras 1000 pasos:", objetivo[0][0, 0].round(3))
+  `}
+  hints={["τ es la fracción que se toma de la red online."]}
+  check={`
+    assert abs(objetivo[0][0, 0] - (1 - 0.995 ** 1000)) < 1e-9, "Tras n pasos, el peso objetivo es 1 − (1 − τ)ⁿ"
+  `}
+>
+Es la variante "suave" del `target_model_update` de keras-rl (cuando vale menos que 1 se interpreta como τ). La red objetivo persigue a la online con retraso: estable pero sin quedarse congelada.
+</CodeExercise>
+
+<Callout kind="warn">
+DDPG es potente pero **frágil**: muy sensible a hiperparámetros y propenso a sobreestimar Q. Sus sucesores lo arreglan: **TD3** (dos críticos y quedarse con el mínimo, retrasar las actualizaciones del actor) y **SAC** (*Soft Actor-Critic*: política estocástica que maximiza recompensa + entropía; hoy el referente off-policy para control continuo).
+</Callout>
+
+## PPO: Proximal Policy Optimization
+
+El problema de Policy Gradient y A2C: un paso de gradiente demasiado grande puede **destrozar la política** (y con ella los datos que recogerá después: una mala política genera malas experiencias). **TRPO** limitaba el cambio con una restricción complicada; **PPO** (OpenAI, 2017) lo consigue con un truco simple: **recortar**.
+
+Sea $r_t(\theta) = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\text{viejo}}(a_t \mid s_t)}$ cuánto ha cambiado la probabilidad de la acción. El objetivo es:
+
+$$L^{\text{CLIP}} = \mathbb{E}\Big[\min\big(r_t \hat{A}_t,\; \text{clip}(r_t, 1-\varepsilon, 1+\varepsilon)\, \hat{A}_t\big)\Big]$$
+
+En palabras: mejora la política en la dirección de la ventaja, pero **en cuanto la probabilidad se ha movido más de un ±ε (20%), deja de dar premio** por seguir moviéndola. Como el gradiente se anula fuera de ese margen, se pueden hacer **varias épocas** sobre el mismo lote de experiencia sin pasarse.
+
+<PpoClipSim />
+
+<Predict
+  id="ppo-clip"
+  answer={["1.2", "1,2"]}
+  tolerance={0.001}
+  explanation="r·A = 1,5 · 1 = 1,5; clip(1,5, 0,8, 1,2) · A = 1,2. El mínimo es 1,2: más allá de 1+ε no hay premio extra, así que el gradiente respecto a θ es 0 y la acción deja de reforzarse."
+  hints={["Calcula r·A y clip(r, 1 − ε, 1 + ε)·A, y quédate con el menor."]}
+>
+Con $\varepsilon = 0{,}2$, una acción tiene ventaja $\hat{A} = 1$ y su ratio ha subido a $r = 1{,}5$. ¿Cuánto vale $L^{\text{CLIP}}$ para ella?
+</Predict>
+
+<Callout kind="real" title="PPO es el caballo de batalla">
+PPO es el algoritmo por defecto en casi todo: robótica en simulación, agentes de videojuegos (OpenAI Five en Dota 2), y el **RLHF** con el que se ajustaron ChatGPT y otros LLM (la política es el modelo de lenguaje; la recompensa, un modelo entrenado con preferencias humanas; el recorte evita que se aleje demasiado del modelo original). Es robusto, sencillo y funciona con acciones discretas y continuas. Si no sabes qué usar, empieza por PPO.
+</Callout>
+
+## Algoritmos basados en modelo
+
+Todo lo anterior es **libre de modelo**: el agente aprende qué hacer sin entender cómo funciona el mundo. Los métodos **basados en modelo** aprenden (o conocen) $P(s' \mid s, a)$ y $R(s, a)$ y **planifican** con ellos: "si hago esto, pasará aquello".
+
+- **Modelo conocido**: juegos de mesa. **AlphaGo/AlphaZero** combinan una red (política + valor) con **búsqueda en árbol de Monte Carlo (MCTS)**: antes de cada jugada simulan miles de continuaciones.
+- **Modelo aprendido**: **Dyna** (usar el modelo para generar experiencia "imaginada" y entrenar con ella), **World Models** y **Dreamer** (aprender un modelo del mundo en un espacio latente y entrenar la política "soñando" dentro de él), **MuZero** (aprende un modelo solo de lo que importa para planificar, sin conocer las reglas, y alcanza a AlphaZero en ajedrez, Go y Atari).
+
+| | Libre de modelo | Basado en modelo |
+|---|---|---|
+| Datos necesarios | muchísimos | muchos menos (reutiliza el modelo) |
+| Calidad final | alta si hay datos | limitada por los errores del modelo |
+| Complejidad | menor | mayor (aprender el modelo + planificar) |
+
+<Quiz
+  id="model-based"
+  options={[
+    "DQN con una memoria de repetición enorme",
+    "Un enfoque basado en modelo: aprender un modelo del mundo con los datos disponibles y entrenar/planificar sobre él (o un buen simulador)",
+    "REINFORCE sin línea base",
+    "PPO directamente sobre el robot real desde cero",
+  ]}
+  answer={1}
+  explanation="En el mundo real cada interacción es cara y lenta, y los métodos libres de modelo necesitan millones. Aprender un modelo (o construir un simulador y transferir) multiplica lo que se aprende de cada interacción real. Es la gran motivación del refuerzo basado en modelo."
+>
+Tu robot real solo puede hacer unos cientos de intentos al día (y cada caída lo puede romper). ¿Qué enfoque es más prometedor?
+</Quiz>
+
+<Callout kind="real">
+El gran reto del refuerzo en la industria es la distancia **simulación → realidad** (*sim2real*): lo aprendido en simulación no siempre funciona en el mundo físico. Se ataca con simuladores muy realistas, aleatorizando el simulador (*domain randomization*) y con métodos basados en modelo. Y para problemas sin simulador, el **refuerzo offline** aprende de datos históricos sin interactuar.
+</Callout>
+
+## Para llevar
+
+- DDPG: actor determinista + crítico Q(s, a), con replay y redes objetivo con actualización suave (τ). Sucesores: TD3 y SAC.
+- PPO: recorta el ratio de probabilidades a [1−ε, 1+ε] para dar pasos seguros y reutilizar cada lote varias épocas. El algoritmo por defecto (y el de RLHF).
+- Basados en modelo: aprender cómo funciona el mundo y planificar (AlphaZero, Dyna, Dreamer, MuZero). Mucho más eficientes en datos.

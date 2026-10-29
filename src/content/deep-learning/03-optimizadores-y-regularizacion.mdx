@@ -1,0 +1,142 @@
+Saber calcular el gradiente no basta: hay que decidir **cómo de grande** es cada paso y **cómo combinar** los gradientes de pasos anteriores. Y una vez que la red aprende, el problema suele ser el contrario: aprende **demasiado** (sobreajuste). Esta lección va de las dos cosas.
+
+## El learning rate lo es (casi) todo
+
+El tamaño del paso $\eta$ es el hiperparámetro más importante de una red:
+
+- **Demasiado pequeño**: el entrenamiento avanza a paso de tortuga y puede quedarse atascado.
+- **Demasiado grande**: los pasos se pasan del mínimo, la pérdida oscila o **diverge** (sube hasta `NaN`).
+
+Valores de partida típicos: **1e-3 con Adam**, 1e-2 a 1e-1 con SGD + momentum. Y casi siempre se usa un **calendario** (*schedule*) que lo reduce durante el entrenamiento: escalonado, *cosine decay*, o un *warmup* al principio (subir poco a poco) en transformers.
+
+## Los optimizadores
+
+<OptimizerSim />
+
+- **SGD**: $w \leftarrow w - \eta \, g$. Un único paso igual para todas las direcciones. En un valle alargado, zigzaguea: el gradiente apunta sobre todo a la pared empinada.
+- **Momentum**: acumula una "velocidad" $v \leftarrow \beta v + g$ (con $\beta \approx 0{,}9$) y avanza con ella. Las oscilaciones se cancelan y lo constante se acelera, como una bola rodando que además puede **saltar baches** (mínimos locales pequeños).
+- **AdaGrad**: divide el paso de cada peso por la raíz de la suma de sus gradientes al cuadrado. Los pesos que se mueven mucho dan pasos pequeños y viceversa. Problema: esa suma solo crece y el aprendizaje acaba parándose.
+- **RMSProp**: lo mismo, pero con una **media móvil** de los gradientes al cuadrado en vez de la suma: no se para.
+- **Adam**: momentum (media móvil del gradiente, $m$) + RMSProp (media móvil del gradiente al cuadrado, $v$) + corrección del sesgo inicial. El optimizador por defecto de casi todo.
+
+$$m \leftarrow \beta_1 m + (1-\beta_1) g, \quad v \leftarrow \beta_2 v + (1-\beta_2) g^2, \quad w \leftarrow w - \eta \frac{\hat m}{\sqrt{\hat v} + \epsilon}$$
+
+<CodeExercise
+  id="adam"
+  title="Un paso de Adam"
+  starter={`
+    import numpy as np
+
+    def adam_step(w, g, m, v, t, lr=0.1, b1=0.9, b2=0.999, eps=1e-8):
+        m = b1 * m + (1 - b1) * g
+        v = b2 * v + (1 - b2) * ___
+        m_hat = m / (1 - b1 ** t)          # corrección del sesgo (m y v empiezan en 0)
+        v_hat = v / (1 - b2 ** t)
+        w = w - lr * m_hat / (np.sqrt(___) + eps)
+        return w, m, v
+
+    # Minimiza f(w) = (w - 3)^2, cuyo gradiente es 2(w - 3)
+    w, m, v = 0.0, 0.0, 0.0
+    for t in range(1, 201):
+        g = 2 * (w - 3)
+        w, m, v = adam_step(w, g, m, v, t)
+    print("w final:", round(w, 4))
+  `}
+  solution={`
+    import numpy as np
+
+    def adam_step(w, g, m, v, t, lr=0.1, b1=0.9, b2=0.999, eps=1e-8):
+        m = b1 * m + (1 - b1) * g
+        v = b2 * v + (1 - b2) * g ** 2
+        m_hat = m / (1 - b1 ** t)          # corrección del sesgo (m y v empiezan en 0)
+        v_hat = v / (1 - b2 ** t)
+        w = w - lr * m_hat / (np.sqrt(v_hat) + eps)
+        return w, m, v
+
+    # Minimiza f(w) = (w - 3)^2, cuyo gradiente es 2(w - 3)
+    w, m, v = 0.0, 0.0, 0.0
+    for t in range(1, 201):
+        g = 2 * (w - 3)
+        w, m, v = adam_step(w, g, m, v, t)
+    print("w final:", round(w, 4))
+  `}
+  hints={["v es la media móvil del gradiente al cuadrado.", "El denominador usa la versión corregida de v."]}
+  check={`
+    assert abs(w - 3) < 0.05, "Adam debería llevar w cerca de 3"
+    w1, _, _ = adam_step(0.0, -6.0, 0.0, 0.0, 1)
+    assert abs(w1 - 0.1) < 1e-6, "En el primer paso Adam avanza ≈ lr (gracias a la corrección del sesgo)"
+  `}
+>
+Implementa la actualización. Un detalle curioso que comprueba el test: en el primer paso Adam se mueve exactamente $\eta$, sea cual sea el tamaño del gradiente. Adam normaliza la escala del gradiente.
+</CodeExercise>
+
+<Callout kind="real">
+- **Adam (o AdamW)** con `lr=1e-3` es el punto de partida estándar. **AdamW** separa el *weight decay* de la actualización y es el que se usa para entrenar transformers.
+- **SGD con momentum** y un buen calendario a veces generaliza algo mejor en visión (muchas arquitecturas clásicas se entrenaron así).
+- Busca el learning rate con un *LR range test*: entrenar unas pocas iteraciones subiendo el lr exponencialmente y quedarse con un valor algo menor que donde la pérdida empieza a dispararse.
+</Callout>
+
+## Leer las curvas de aprendizaje
+
+Tu práctica dibuja `train_loss` y `val_loss` por época. Son el principal instrumento de diagnóstico:
+
+| Lo que ves | Diagnóstico | Qué hacer |
+|---|---|---|
+| Las dos bajan y siguen bajando | aún aprende | más épocas |
+| Las dos altas y planas | subajuste | más capacidad, mejor lr, entrenar más |
+| Train baja, validación baja y luego **sube** | **sobreajuste** | regularizar, más datos, parar antes |
+| Pérdida que salta o da `NaN` | lr demasiado alto o datos sin normalizar | bajar lr, normalizar entradas |
+
+## Regularización: que generalice
+
+- **Early stopping**: vigilar `val_loss` y parar cuando deja de mejorar (con algo de paciencia), quedándote con los mejores pesos. Gratis y muy eficaz.
+- **Dropout**: en cada paso de entrenamiento, apaga al azar una fracción $p$ de las neuronas (0,2–0,5). Ninguna puede depender de otra concreta. En inferencia se usan todas. ¡Es lo que hiciste a mano en la simulación de la lección anterior!
+- **L2 / weight decay**: penaliza los pesos grandes (como Ridge).
+- **Batch normalization**: normaliza las activaciones de cada capa por lote. Estabiliza y acelera el entrenamiento y regulariza un poco.
+- **Data augmentation**: crear variaciones de los datos (lo verás en la lección de transfer learning). En imágenes, a menudo es la regularización más potente.
+- **Más datos**: siempre lo mejor, si se puede.
+
+```python
+from tensorflow.keras import layers, callbacks, models
+
+model = models.Sequential([
+    layers.Input((28, 28)),
+    layers.Flatten(),
+    layers.Dense(512, activation="relu"),
+    layers.Dropout(0.3),
+    layers.Dense(10, activation="softmax"),
+])
+parar = callbacks.EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True)
+model.fit(X_tr, y_tr, validation_data=(X_val, y_val), epochs=100, callbacks=[parar])
+```
+
+<Quiz
+  id="curvas"
+  options={[
+    "Aumentar el número de épocas a 200",
+    "Subir el learning rate",
+    "Añadir dropout o early stopping: la red está sobreajustando a partir de la época 15",
+    "Quitar la capa de validación",
+  ]}
+  answer={2}
+  explanation="Train sigue bajando mientras validación sube: la red memoriza el entrenamiento. Más épocas lo empeorarían. Early stopping (con restore_best_weights) se quedaría con los pesos de la época 15, y dropout/augmentation retrasarían el sobreajuste."
+>
+La pérdida de entrenamiento baja sin parar durante 50 épocas. La de validación baja hasta la época 15 y después sube poco a poco. ¿Qué haces?
+</Quiz>
+
+<Predict
+  id="dropout-activas"
+  answer={["400", "≈400", "~400"]}
+  tolerance={1}
+  explanation="Dropout(0.2) apaga de media el 20% de las 500 neuronas en cada paso: quedan unas 400 activas (cada paso un subconjunto distinto). En inferencia se usan las 500 (Keras escala las activaciones durante el entrenamiento para que el valor esperado sea el mismo)."
+  hints={["El argumento de Dropout es la proporción que se APAGA, no la que se mantiene."]}
+>
+Una capa de 500 neuronas va seguida de `Dropout(0.2)`. ¿Cuántas neuronas siguen activas, de media, en cada paso de entrenamiento?
+</Predict>
+
+## Para llevar
+
+- El learning rate es el hiperparámetro clave; demasiado alto diverge, demasiado bajo no avanza. Usa calendarios.
+- Momentum suaviza y acelera; RMSProp adapta el paso por peso; Adam combina ambos y es el defecto.
+- Las curvas train/validación diagnostican sub- y sobreajuste.
+- Regulariza con early stopping, dropout, weight decay, batch norm y, sobre todo, más (o aumentados) datos.

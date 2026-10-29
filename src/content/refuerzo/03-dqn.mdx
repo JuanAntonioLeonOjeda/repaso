@@ -1,0 +1,193 @@
+En 2013–2015, DeepMind publicó un agente que aprendía a jugar a 49 juegos de Atari **mirando solo los píxeles y la puntuación**, a nivel humano en muchos de ellos. Era Q-learning con una red neuronal en lugar de la tabla, más dos trucos para que el entrenamiento no se desmoronase: la **Deep Q-Network (DQN)**.
+
+## De la tabla a la red
+
+Una red recibe el estado (por ejemplo, los últimos 4 fotogramas) y devuelve **un valor Q por cada acción** en una sola pasada. Se entrena para que $Q(s, a)$ se acerque al objetivo de Bellman, como en una regresión:
+
+$$L = \Big(\underbrace{r + \gamma \max_{a'} Q_{\theta^-}(s', a')}_{\text{objetivo}} - Q_\theta(s, a)\Big)^2$$
+
+Pero hacerlo "tal cual" es muy inestable, por dos motivos, y cada truco arregla uno.
+
+### Truco 1: memoria de repetición (*experience replay*)
+
+Los pasos consecutivos de un juego están muy correlacionados (dos fotogramas seguidos casi iguales). Entrenar con ellos en orden es como entrenar un clasificador viendo 1.000 fotos del mismo gato seguidas. Solución: guardar cada transición $(s, a, r, s', \text{fin})$ en una **memoria** grande (1 millón de transiciones en el paper) y entrenar con **lotes aleatorios** de ella. Además, cada experiencia se reutiliza muchas veces.
+
+### Truco 2: red objetivo (*target network*)
+
+El objetivo depende de la propia red: al actualizar $Q_\theta$, el objetivo se mueve. Es perseguir tu propia sombra. Solución: usar una **copia** de la red, $Q_{\theta^-}$, para calcular los objetivos, y actualizarla solo de vez en cuando (copia completa cada N pasos, o una mezcla suave en cada paso: `target_model_update=1e-2` en keras-rl).
+
+<CodeExercise
+  id="replay-buffer"
+  title="Una memoria de repetición"
+  starter={`
+    import random
+    from collections import deque
+
+    class ReplayBuffer:
+        def __init__(self, capacidad):
+            # deque con maxlen: al llenarse, descarta las experiencias más antiguas
+            self.memoria = deque(maxlen=___)
+
+        def guardar(self, s, a, r, s2, fin):
+            self.memoria.append((s, a, r, s2, fin))
+
+        def muestrear(self, n):
+            lote = random.___(self.memoria, n)          # sin reemplazo
+            return list(zip(*lote))                      # -> (estados, acciones, recompensas, ...)
+
+        def __len__(self):
+            return len(self.memoria)
+
+    random.seed(0)
+    buffer = ReplayBuffer(capacidad=1000)
+    for t in range(1500):
+        buffer.guardar(t, t % 4, -1.0, t + 1, False)
+
+    estados, acciones, recompensas, siguientes, fines = buffer.muestrear(32)
+    print("Tamaño:", len(buffer), "· lote de", len(estados), "· estado más antiguo guardado:", buffer.memoria[0][0])
+  `}
+  solution={`
+    import random
+    from collections import deque
+
+    class ReplayBuffer:
+        def __init__(self, capacidad):
+            # deque con maxlen: al llenarse, descarta las experiencias más antiguas
+            self.memoria = deque(maxlen=capacidad)
+
+        def guardar(self, s, a, r, s2, fin):
+            self.memoria.append((s, a, r, s2, fin))
+
+        def muestrear(self, n):
+            lote = random.sample(self.memoria, n)          # sin reemplazo
+            return list(zip(*lote))                      # -> (estados, acciones, recompensas, ...)
+
+        def __len__(self):
+            return len(self.memoria)
+
+    random.seed(0)
+    buffer = ReplayBuffer(capacidad=1000)
+    for t in range(1500):
+        buffer.guardar(t, t % 4, -1.0, t + 1, False)
+
+    estados, acciones, recompensas, siguientes, fines = buffer.muestrear(32)
+    print("Tamaño:", len(buffer), "· lote de", len(estados), "· estado más antiguo guardado:", buffer.memoria[0][0])
+  `}
+  hints={["La longitud máxima es la capacidad.", "random.sample elige n elementos distintos al azar."]}
+  check={`
+    assert len(buffer) == 1000, "La memoria no debe pasar de su capacidad"
+    assert buffer.memoria[0][0] == 500, "Tras 1.500 inserciones con capacidad 1.000, la más antigua es la 500"
+    assert len(set(estados)) == 32, "El lote debe tener 32 experiencias distintas"
+  `}
+>
+Implementa la `SequentialMemory` de keras-rl en versión mínima. Un `deque` con `maxlen` hace de memoria circular gratis.
+</CodeExercise>
+
+<CodeExercise
+  id="td-targets"
+  title="Objetivos de DQN para un lote"
+  starter={`
+    import numpy as np
+
+    gamma = 0.99
+    recompensas = np.array([1.0, 0.0, -1.0, 0.0])
+    fines = np.array([False, False, True, False])     # ¿terminó el episodio tras ese paso?
+    # Salida de la RED OBJETIVO para los estados siguientes (4 transiciones × 3 acciones)
+    q_siguiente = np.array([[0.5, 2.0, 1.0],
+                            [1.5, 0.2, 0.3],
+                            [9.0, 9.0, 9.0],
+                            [0.0, 0.1, 0.4]])
+
+    # objetivo = r + γ · max_a' Q⁻(s', a'), salvo en estados finales, donde no hay futuro
+    objetivos = recompensas + gamma * np.___(q_siguiente, axis=1) * (1 - ___)
+    print(objetivos)
+  `}
+  solution={`
+    import numpy as np
+
+    gamma = 0.99
+    recompensas = np.array([1.0, 0.0, -1.0, 0.0])
+    fines = np.array([False, False, True, False])     # ¿terminó el episodio tras ese paso?
+    # Salida de la RED OBJETIVO para los estados siguientes (4 transiciones × 3 acciones)
+    q_siguiente = np.array([[0.5, 2.0, 1.0],
+                            [1.5, 0.2, 0.3],
+                            [9.0, 9.0, 9.0],
+                            [0.0, 0.1, 0.4]])
+
+    # objetivo = r + γ · max_a' Q⁻(s', a'), salvo en estados finales, donde no hay futuro
+    objetivos = recompensas + gamma * np.max(q_siguiente, axis=1) * (1 - fines)
+    print(objetivos)
+  `}
+  hints={["El mejor valor de cada fila: np.max con axis=1.", "Multiplicar por (1 − fines) anula el futuro en los estados finales (True cuenta como 1)."]}
+  check={`
+    assert np.allclose(objetivos, [1 + 0.99 * 2.0, 0.99 * 1.5, -1.0, 0.99 * 0.4]), "Revisa el máximo por filas y el caso terminal"
+  `}
+>
+El cálculo vectorizado que hace DQN en cada paso de entrenamiento. Cuidado con los estados finales: ahí el objetivo es solo la recompensa (el 9,0 de la tercera fila debe ignorarse).
+</CodeExercise>
+
+## El algoritmo completo
+
+1. Inicializa la red $Q_\theta$, la red objetivo $Q_{\theta^-} = Q_\theta$ y la memoria.
+2. En cada paso: elige acción con ε-greedy, ejecútala, guarda la transición.
+3. Muestrea un lote de la memoria, calcula objetivos con $Q_{\theta^-}$ y da un paso de descenso del gradiente sobre $Q_\theta$.
+4. Cada cierto tiempo, actualiza $Q_{\theta^-}$.
+
+## Atari en la práctica
+
+<Callout kind="practice" title="De tus prácticas (sesión práctica 1)">
+El notebook entrena primero un DQN en **CartPole** (una red densa pequeña, `BoltzmannQPolicy`, `SequentialMemory(limit=50000)`, `target_model_update=1e-2`) y luego en **Breakout** con el preprocesado del paper de Mnih et al. (2015), implementado en `AtariProcessor`:
+
+- Fotogramas a **84×84 en escala de grises** (menos datos, el color no aporta).
+- **Apilar 4 fotogramas** (`WINDOW_LENGTH = 4`) para que el estado capture el movimiento.
+- **Recortar las recompensas** a [−1, 1] para que todos los juegos tengan la misma escala.
+- Una CNN: 3 convoluciones + 2 densas, con una salida por acción.
+- ε que baja linealmente de 1 a 0,1 (`LinearAnnealedPolicy`).
+
+Los pesos entrenados (`dqn_BreakoutDeterministic-v4_weights_*.h5f`) en tu carpeta son el resultado de millones de pasos: no es algo que se entrene en un rato en un portátil.
+</Callout>
+
+```python
+model = Sequential([
+    Permute((2, 3, 1), input_shape=(4, 84, 84)),   # (frames, h, w) -> (h, w, frames)
+    Convolution2D(32, (8, 8), strides=(4, 4), activation="relu"),
+    Convolution2D(64, (4, 4), strides=(2, 2), activation="relu"),
+    Convolution2D(64, (3, 3), strides=(1, 1), activation="relu"),
+    Flatten(),
+    Dense(512, activation="relu"),
+    Dense(nb_actions, activation="linear"),          # un valor Q por acción, sin activación
+])
+```
+
+<Quiz
+  id="salida-lineal"
+  options={[
+    "Softmax, para que los valores Q sumen 1",
+    "Sigmoide, para acotarlos entre 0 y 1",
+    "Lineal (ninguna): Q es un retorno esperado, puede ser cualquier número",
+    "ReLU, porque los valores Q nunca son negativos",
+  ]}
+  answer={2}
+  explanation="La red hace una regresión del retorno esperado de cada acción, que puede ser negativo o mayor que 1. No es una distribución de probabilidad. Por eso la última capa del DQN es Dense(nb_actions) con activación lineal."
+>
+¿Qué activación lleva la capa de salida de un DQN?
+</Quiz>
+
+## Mejoras posteriores
+
+- **Double DQN**: el `max` sobreestima los valores (elige el error más optimista). Se elige la acción con la red online y se evalúa con la objetivo.
+- **Dueling DQN**: separa la red en $V(s)$ y la ventaja de cada acción $A(s,a)$.
+- **Prioritized replay**: muestrear más a menudo las transiciones con mayor error TD.
+- **Rainbow**: todas a la vez.
+
+<Callout kind="real">
+DQN (y sus mejoras) sigue siendo la referencia cuando las acciones son **discretas y pocas**. Para acciones continuas no sirve (no puedes hacer `max` sobre infinitas acciones): ahí entran DDPG, SAC o PPO. En Stable-Baselines3: `DQN("CnnPolicy", env)` para Atari, con todos estos trucos ya incluidos.
+</Callout>
+
+## Para llevar
+
+- DQN = Q-learning con una red que aproxima Q(s, ·), con una salida lineal por acción.
+- Experience replay rompe la correlación entre pasos y reutiliza experiencia.
+- La red objetivo estabiliza el blanco de la regresión.
+- Atari: 84×84 en gris, 4 fotogramas apilados, recompensas recortadas, ε decreciente.
+- Solo para acciones discretas; Double/Dueling/Prioritized/Rainbow lo mejoran.

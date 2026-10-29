@@ -1,0 +1,138 @@
+Una red neuronal no es más que muchas funciones muy simples encadenadas. Si entiendes **una neurona** y **por qué hace falta más de una capa**, entiendes la base de todo lo que viene (CNN, LSTM, transformers…).
+
+## Una neurona
+
+Recibe unas entradas $x_1, \dots, x_n$, las multiplica por unos **pesos**, suma un **sesgo** (*bias*) y pasa el resultado por una **función de activación**:
+
+$$\hat{y} = f\Big(\underbrace{w_1 x_1 + w_2 x_2 + \dots + w_n x_n + b}_{z}\Big)$$
+
+- Los **pesos** dicen cuánto importa cada entrada (y si suma o resta).
+- El **sesgo** desplaza el umbral a partir del cual la neurona "se activa".
+- Pesos y sesgos son los **parámetros entrenables**. La activación es un **hiperparámetro** (lo eliges tú).
+
+El **perceptrón** de Rosenblatt (1957) usaba como activación un escalón: 1 si $z > 0$, 0 si no. Geométricamente, $z = 0$ es una **recta** (un hiperplano en general): la neurona divide el espacio en dos mitades.
+
+## AND, OR… y el problema del XOR
+
+Con la neurona del notebook de clase ($w_1 = w_2 = 1$, $b = -1{,}5$) se obtiene un AND: solo $(1,1)$ supera el umbral. Cambiando el sesgo sale un OR. Pero el **XOR** (1 si las entradas son distintas) **no se puede** con una sola neurona: no existe una recta que deje $(0,1)$ y $(1,0)$ a un lado y $(0,0)$ y $(1,1)$ al otro.
+
+La solución es apilar neuronas: una **capa oculta** cuyas neuronas dibujan varias rectas, y una neurona de salida que combina sus respuestas. Eso es un **perceptrón multicapa (MLP)**.
+
+<PerceptronSim />
+
+<CodeExercise
+  id="xor-numpy"
+  title="Una red XOR con numpy"
+  starter={`
+    import numpy as np
+
+    step = lambda z: (z > 0).astype(int)
+
+    X = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
+
+    # Capa oculta: h1 = OR, h2 = AND  (cada columna son los pesos de una neurona)
+    W1 = np.array([[1, 1],
+                   [1, 1]])
+    b1 = np.array([___, ___])       # sesgo de h1 (OR) y de h2 (AND)
+
+    # Salida: "h1 y no h2"
+    W2 = np.array([1, ___])
+    b2 = -0.5
+
+    H = step(X @ W1 + b1)
+    y = step(H @ W2 + b2)
+    print("Capa oculta:", H.tolist())
+    print("XOR:", y)
+  `}
+  solution={`
+    import numpy as np
+
+    step = lambda z: (z > 0).astype(int)
+
+    X = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
+
+    # Capa oculta: h1 = OR, h2 = AND  (cada columna son los pesos de una neurona)
+    W1 = np.array([[1, 1],
+                   [1, 1]])
+    b1 = np.array([-0.5, -1.5])       # sesgo de h1 (OR) y de h2 (AND)
+
+    # Salida: "h1 y no h2"
+    W2 = np.array([1, -1])
+    b2 = -0.5
+
+    H = step(X @ W1 + b1)
+    y = step(H @ W2 + b2)
+    print("Capa oculta:", H.tolist())
+    print("XOR:", y)
+  `}
+  hints={[
+    "Para un OR basta con que la suma (0, 1 o 2) supere 0,5; para un AND, que supere 1,5.",
+    "La salida debe activarse con h1 = 1 y h2 = 0, y apagarse si h2 = 1: el peso de h2 tiene que restar.",
+  ]}
+  check={`
+    assert list(y) == [0, 1, 1, 0], "La salida debería ser [0, 1, 1, 0]"
+  `}
+>
+Es el ejercicio del notebook `07MIAR_clase01b`: encontrar los pesos de una red de dos capas que calcule XOR. Fíjate en que `X @ W1 + b1` calcula **toda la capa para todos los ejemplos a la vez**: así trabajan las librerías de verdad.
+</CodeExercise>
+
+## El perceptrón multicapa
+
+Un MLP organiza las neuronas en **capas densas** (*fully connected*): cada neurona de una capa recibe todas las salidas de la anterior.
+
+- **Capa de entrada**: los datos (no tiene parámetros).
+- **Capas ocultas**: aprenden representaciones intermedias. Más capas = más "profundidad".
+- **Capa de salida**: tantas neuronas como necesite la tarea (1 para regresión o binaria, $C$ para $C$ clases).
+
+En forma matricial, una capa es $h = f(W x + b)$, y una red es una composición: $\hat{y} = f_3(W_3 \, f_2(W_2 \, f_1(W_1 x + b_1) + b_2) + b_3)$.
+
+<Callout kind="idea" title="Por qué la activación tiene que ser no lineal">
+Si todas las activaciones fueran lineales, componer capas daría otra función lineal: una red de 100 capas equivaldría a una sola. La no linealidad (sigmoide, tanh, ReLU…) es lo que permite que cada capa "doble" el espacio y la red aproxime funciones complicadas. El **teorema de aproximación universal** dice que con una sola capa oculta suficientemente ancha se puede aproximar cualquier función continua; en la práctica, ir **en profundidad** necesita muchas menos neuronas que ir en anchura.
+</Callout>
+
+### Contar parámetros
+
+Una capa densa con $n_{\text{in}}$ entradas y $n_{\text{out}}$ neuronas tiene $n_{\text{in}} \cdot n_{\text{out}}$ pesos más $n_{\text{out}}$ sesgos.
+
+<Predict
+  id="parametros-densa"
+  answer={["401920", "401.920", "401,920"]}
+  explanation="Cada una de las 512 neuronas tiene 784 pesos (uno por píxel) y 1 sesgo: 512 · 784 + 512 = 401.920. Es exactamente el número que imprime model.summary() en tu práctica de MNIST."
+  hints={["Las imágenes de 28×28 se aplanan en 784 entradas.", "Pesos: entradas × neuronas. Más un sesgo por neurona."]}
+>
+En tu práctica de MNIST, las imágenes de 28×28 se aplanan (`Flatten`) y pasan a una capa `Dense(512)`. ¿Cuántos parámetros tiene esa capa?
+</Predict>
+
+<Predict
+  id="parametros-salida"
+  answer={["5130", "5.130", "5,130"]}
+  explanation="512 entradas × 10 neuronas = 5.120 pesos, más 10 sesgos = 5.130. La red completa tiene 401.920 + 5.130 = 407.050 parámetros."
+  hints={["Ahora las entradas son las 512 salidas de la capa anterior."]}
+>
+Tras esa capa viene `Dense(10, activation="softmax")`. ¿Cuántos parámetros tiene?
+</Predict>
+
+<Callout kind="real">
+Contar parámetros no es un ejercicio académico: te dice cuánta memoria ocupa el modelo, cuánto tarda y cuántos datos necesitas para no sobreajustar. Un MLP sobre imágenes desperdicia parámetros (cada píxel conectado a cada neurona y sin noción de vecindad); por eso para imágenes se usan **convoluciones**, que comparten pesos. Lo verás en la lección de CNN.
+</Callout>
+
+<Quiz
+  id="sin-activacion"
+  options={[
+    "Una red lineal: equivale a una sola capa, no puede resolver XOR",
+    "Una red más rápida e igual de potente",
+    "Una red que solo puede hacer clasificación binaria",
+    "Una red que no se puede entrenar con backpropagation",
+  ]}
+  answer={0}
+  explanation="W₃(W₂(W₁x)) = (W₃W₂W₁)x: el producto de matrices es otra matriz. Sin no linealidades, la profundidad no aporta nada."
+>
+Construyes un MLP de 5 capas ocultas, pero olvidas poner funciones de activación (todas son la identidad). ¿Qué tienes?
+</Quiz>
+
+## Para llevar
+
+- Neurona = suma ponderada + sesgo + activación. Geométricamente, una recta que divide el espacio.
+- Una neurona no puede con XOR; una capa oculta sí. Las capas componen funciones.
+- Sin activaciones no lineales, una red profunda es una regresión lineal disfrazada.
+- Parámetros de una capa densa: entradas × neuronas + neuronas.

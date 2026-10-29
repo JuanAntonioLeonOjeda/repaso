@@ -1,0 +1,171 @@
+DQN aprende **valores** y deduce la política (elegir la acción de mayor Q). Policy Gradient se salta el intermediario: **aprende la política directamente**, una red que da la probabilidad de cada acción, y la empuja hacia las acciones que llevaron a buenos resultados.
+
+## ¿Por qué aprender la política directamente?
+
+- Funciona con **acciones continuas** (la red puede dar la media y la desviación de una gaussiana).
+- Aprende políticas **estocásticas**, útiles cuando lo óptimo es aleatorizar (piedra, papel o tijera) o hay información incompleta.
+- A menudo converge de forma más suave: cambios pequeños en los pesos = cambios pequeños en el comportamiento.
+- A cambio: **mucha varianza** y poca eficiencia (necesita muchas partidas).
+
+## La idea: aprendizaje supervisado ponderado
+
+Imagina que juegas una partida con tu política $\pi_\theta(a \mid s)$ y guardas qué hiciste en cada paso. Si la partida fue bien, quieres que esas acciones sean **más probables**; si fue mal, **menos**. Es como un clasificador entrenado con "las acciones que tomé" como etiquetas, pero **ponderando cada ejemplo por lo bien que salió**:
+
+$$\nabla_\theta J \approx \sum_t \nabla_\theta \log \pi_\theta(a_t \mid s_t) \cdot G_t$$
+
+El $\log \pi$ viene del *log-derivative trick*, y $G_t$ (el retorno desde ese paso) hace de peso. En código, la pérdida es la entropía cruzada de las acciones tomadas, multiplicada por el retorno:
+
+```python
+loss = -(log_probs_de_las_acciones_tomadas * retornos).mean()
+```
+
+## REINFORCE
+
+1. Juega un episodio completo con la política actual.
+2. Calcula el retorno descontado $G_t$ de cada paso.
+3. Actualiza la política con el gradiente de arriba.
+4. Repite.
+
+### Recompensas descontadas y normalizadas
+
+Los apuntes insisten en "suavizar las recompensas": en Pong solo hay recompensa al marcar o encajar un punto, así que **todas** las acciones previas reciben el mérito (o la culpa) a través del descuento. Y además se **normalizan** los retornos (restar la media, dividir por la desviación): así la mitad de las acciones se refuerzan y la otra mitad se penalizan, lo que reduce mucho la varianza.
+
+<ReturnsSim />
+
+<CodeExercise
+  id="retornos-descontados"
+  title="Retornos descontados (de atrás hacia delante)"
+  starter={`
+    import numpy as np
+
+    def retornos_descontados(recompensas, gamma):
+        G = np.zeros(len(recompensas))
+        acumulado = 0.0
+        for t in reversed(range(len(recompensas))):
+            acumulado = recompensas[t] + ___ * acumulado
+            G[t] = ___
+        return G
+
+    r = [0, 0, -1, 0, 0, 10]
+    G = retornos_descontados(r, 0.9)
+    print("G:", G.round(3))
+
+    G_norm = (G - G.mean()) / (G.std() + 1e-8)
+    print("G normalizado:", G_norm.round(2))
+  `}
+  solution={`
+    import numpy as np
+
+    def retornos_descontados(recompensas, gamma):
+        G = np.zeros(len(recompensas))
+        acumulado = 0.0
+        for t in reversed(range(len(recompensas))):
+            acumulado = recompensas[t] + gamma * acumulado
+            G[t] = acumulado
+        return G
+
+    r = [0, 0, -1, 0, 0, 10]
+    G = retornos_descontados(r, 0.9)
+    print("G:", G.round(3))
+
+    G_norm = (G - G.mean()) / (G.std() + 1e-8)
+    print("G normalizado:", G_norm.round(2))
+  `}
+  hints={["Cada retorno es la recompensa de ese paso más γ por el retorno del paso siguiente.", "Guarda el acumulado en la posición t."]}
+  check={`
+    assert np.allclose(G, [0.9**5 * 10 - 0.9**2, 0.9**4 * 10 - 0.9, 0.9**3 * 10 - 1, 0.9**2 * 10, 0.9 * 10, 10]), "Revisa la recurrencia"
+    assert np.allclose(retornos_descontados([1, 1, 1], 0.0), [1, 1, 1]), "Con γ = 0 cada retorno es su recompensa"
+  `}
+>
+Es la función `discount_rewards` que aparece en la práctica de Policy Gradient: recorrer las recompensas al revés hace que el cálculo sea lineal en vez de cuadrático.
+</CodeExercise>
+
+### La línea base
+
+Si todas las recompensas son positivas (por ejemplo, +1 por cada paso que el palo sigue en pie en CartPole), REINFORCE refuerza **todas** las acciones, solo que unas más que otras. Funciona, pero con muchísima varianza. Restar una **línea base** $b$ (que no dependa de la acción) no cambia el gradiente esperado pero reduce la varianza:
+
+$$\nabla_\theta J \approx \sum_t \nabla_\theta \log \pi_\theta(a_t \mid s_t) \cdot (G_t - b)$$
+
+Con $b$ = la media de los retornos sale la normalización anterior. Con $b = V(s_t)$, un valor **aprendido** por otra red, llegamos a los métodos **actor-crítico** (siguiente lección). Es el "Vanilla Policy Gradient con baseline" (bPG) de la práctica.
+
+<CodeExercise
+  id="reinforce"
+  title="REINFORCE en un bandido de dos brazos"
+  starter={`
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    premios = [0.3, 0.8]            # probabilidad de premio (+1) de cada brazo: el 1 es mejor
+    theta = np.zeros(2)             # preferencias: π = softmax(theta)
+    lr = 0.1
+
+    def politica(theta):
+        e = np.exp(theta - theta.max())
+        return e / e.sum()
+
+    media_r = 0.0                   # línea base: media móvil de las recompensas
+    for t in range(2000):
+        pi = politica(theta)
+        a = rng.choice(2, p=pi)
+        r = float(rng.random() < premios[a])
+
+        # gradiente de log π(a) respecto a theta para softmax: one_hot(a) − π
+        grad_log_pi = np.eye(2)[a] - ___
+        theta += lr * grad_log_pi * (r - ___)
+        media_r += 0.01 * (r - media_r)
+
+    print("π final:", politica(theta).round(3))
+  `}
+  solution={`
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    premios = [0.3, 0.8]            # probabilidad de premio (+1) de cada brazo: el 1 es mejor
+    theta = np.zeros(2)             # preferencias: π = softmax(theta)
+    lr = 0.1
+
+    def politica(theta):
+        e = np.exp(theta - theta.max())
+        return e / e.sum()
+
+    media_r = 0.0                   # línea base: media móvil de las recompensas
+    for t in range(2000):
+        pi = politica(theta)
+        a = rng.choice(2, p=pi)
+        r = float(rng.random() < premios[a])
+
+        # gradiente de log π(a) respecto a theta para softmax: one_hot(a) − π
+        grad_log_pi = np.eye(2)[a] - pi
+        theta += lr * grad_log_pi * (r - media_r)
+        media_r += 0.01 * (r - media_r)
+
+    print("π final:", politica(theta).round(3))
+  `}
+  hints={["La derivada de log softmax respecto a las preferencias es one_hot(a) − π.", "La ventaja es la recompensa menos la línea base."]}
+  check={`
+    assert politica(theta)[1] > 0.9, "La política debería preferir claramente el brazo 1"
+  `}
+>
+REINFORCE con línea base en el caso más pequeño posible: una política softmax sobre dos acciones. No hay red: los parámetros son directamente las "preferencias" de cada acción.
+</CodeExercise>
+
+<Quiz
+  id="pg-vs-dqn"
+  options={[
+    "DQN, porque es más eficiente con los datos",
+    "Policy Gradient (o un actor-crítico), porque puede representar directamente una política sobre acciones continuas",
+    "Q-learning tabular",
+    "Ninguno: el refuerzo no sirve para robots",
+  ]}
+  answer={1}
+  explanation="El par de cada articulación es un número real: no se puede hacer un max sobre infinitas acciones como en DQN. Una política parametrizada (por ejemplo, una gaussiana cuya media y varianza da la red) sí puede. En la práctica se usaría PPO o SAC, que son actor-críticos."
+>
+Un brazo robótico debe decidir en cada instante el par (fuerza de giro) de cada una de sus 6 articulaciones. ¿Qué familia de algoritmos encaja?
+</Quiz>
+
+## Para llevar
+
+- Policy Gradient aprende π(a|s) directamente; vale para acciones continuas y políticas estocásticas.
+- Es "supervisado ponderado": aumentar la probabilidad de las acciones tomadas en proporción al retorno.
+- REINFORCE: episodio completo → retornos descontados → gradiente.
+- Mucha varianza: normalizar retornos y restar una línea base. Si la línea base es un V(s) aprendido → actor-crítico.

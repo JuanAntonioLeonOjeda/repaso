@@ -1,0 +1,136 @@
+El conocimiento real está lleno de **incertidumbre** (no sabemos si algo es cierto) e **imprecisión** (no sabemos exactamente cuánto: "fiebre alta", "un cliente joven"). Un médico diagnostica con síntomas ambiguos; un banco concede créditos sin conocer el futuro. Esta asignatura repasa los modelos clásicos para razonar así: probabilidad bayesiana, factores de certeza, la teoría de la evidencia y la lógica borrosa.
+
+## De dónde sale la incertidumbre
+
+- Experiencia insuficiente o datos incompletos.
+- Información poco fiable (sensores con ruido, testigos que dudan).
+- Representación inadecuada del conocimiento (reglas que "casi siempre" se cumplen).
+- Imprecisión del lenguaje ("alto", "cerca", "bastante").
+
+| Enfoque | Modela | Idea |
+|---|---|---|
+| Probabilidad bayesiana | incertidumbre | actualizar creencias con evidencias |
+| Factores de certeza | incertidumbre | grado de confianza de un experto en una regla |
+| Dempster-Shafer | incertidumbre e ignorancia | creencia en conjuntos de hipótesis, con intervalos |
+| Lógica borrosa | imprecisión | pertenencia gradual a conceptos vagos |
+
+## El teorema de Bayes
+
+Permite calcular la probabilidad de una **hipótesis** $h$ (una causa, un diagnóstico) a partir de una **evidencia** $e$ (un síntoma), usando probabilidades más fáciles de conocer:
+
+$$P(h \mid e) = \frac{P(e \mid h) \cdot P(h)}{P(e)}$$
+
+- $P(h)$: probabilidad **a priori** de la hipótesis (antes de ver la evidencia). En medicina, la prevalencia.
+- $P(e \mid h)$: **verosimilitud**: lo probable que es ver la evidencia si la hipótesis es cierta. Suele saberse por experiencia (es "causal": de la enfermedad al síntoma).
+- $P(h \mid e)$: probabilidad **a posteriori**: lo que nos interesa (es "diagnóstica": del síntoma a la enfermedad).
+
+<Predict
+  id="meningitis"
+  answer={["0.0002", "0,0002", "1/5000", "0.02%", "0,02%"]}
+  tolerance={0.00001}
+  explanation="P(m | rigidez) = P(rigidez | m) · P(m) / P(rigidez) = 0,5 · (1/50.000) / (1/20) = 0,5 · 20 / 50.000 = 0,0002. Aunque la meningitis provoque rigidez la mitad de las veces, solo 1 de cada 5.000 pacientes con el cuello rígido tiene meningitis: la enfermedad es rarísima."
+  hints={["P(h | e) = P(e | h) · P(h) / P(e)", "0,5 · (1/50.000) / (1/20)"]}
+>
+El ejemplo del tema: la meningitis provoca rigidez de cuello el 50% de las veces. La probabilidad a priori de meningitis es 1/50.000 y la de tener el cuello rígido (por cualquier causa), 1/20. ¿Probabilidad de meningitis si un paciente tiene el cuello rígido?
+</Predict>
+
+Lo que este ejemplo enseña, y lo que más falla en la intuición humana, es el **olvido de la tasa base**: una evidencia muy asociada a una causa rara sigue apuntando, casi siempre, a otra cosa.
+
+<BayesSim />
+
+## Varias evidencias e hipótesis
+
+Con $k$ hipótesis **mutuamente excluyentes y exhaustivas** y varias evidencias, si suponemos que las evidencias son **independientes dada cada hipótesis** (la suposición "ingenua" de Naive Bayes):
+
+$$P(h_i \mid e_1, \dots, e_n) = \frac{P(h_i) \prod_j P(e_j \mid h_i)}{\sum_k P(h_k) \prod_j P(e_j \mid h_k)}$$
+
+<CodeExercise
+  id="inversor"
+  title="El perfil del inversor (ejemplo del tema)"
+  starter={`
+    import numpy as np
+
+    # Hipótesis: h1 = inversor de alto riesgo, h2 = de bajo riesgo
+    prior = np.array([0.3, 0.7])
+    # P(evidencia | hipótesis): columnas = [h1, h2]
+    verosimilitud = {
+        "soltero":         np.array([0.6, 0.4]),
+        "ingresos_altos":  np.array([0.2, 0.8]),
+        "joven":           np.array([0.5, 0.5]),
+    }
+
+    def posterior(evidencias):
+        p = prior.copy()
+        for e in evidencias:
+            p = p * ___                # multiplicar por P(e | h) de cada hipótesis
+        return p / ___                 # normalizar para que sume 1
+
+    for ev in (["soltero"], ["ingresos_altos"], ["soltero", "joven"], ["soltero", "ingresos_altos", "joven"]):
+        p = posterior(ev)
+        print(f"{' + '.join(ev):<35} P(alto riesgo) = {p[0]:.3f}")
+  `}
+  solution={`
+    import numpy as np
+
+    # Hipótesis: h1 = inversor de alto riesgo, h2 = de bajo riesgo
+    prior = np.array([0.3, 0.7])
+    # P(evidencia | hipótesis): columnas = [h1, h2]
+    verosimilitud = {
+        "soltero":         np.array([0.6, 0.4]),
+        "ingresos_altos":  np.array([0.2, 0.8]),
+        "joven":           np.array([0.5, 0.5]),
+    }
+
+    def posterior(evidencias):
+        p = prior.copy()
+        for e in evidencias:
+            p = p * verosimilitud[e]                # multiplicar por P(e | h) de cada hipótesis
+        return p / p.sum()                 # normalizar para que sume 1
+
+    for ev in (["soltero"], ["ingresos_altos"], ["soltero", "joven"], ["soltero", "ingresos_altos", "joven"]):
+        p = posterior(ev)
+        print(f"{' + '.join(ev):<35} P(alto riesgo) = {p[0]:.3f}")
+  `}
+  hints={["La verosimilitud de cada evidencia está en el diccionario.", "Para normalizar se divide entre la suma."]}
+  check={`
+    assert abs(posterior(["soltero"])[0] - 0.391) < 0.001, "P(h1 | soltero) ≈ 0,39"
+    assert abs(posterior(["soltero", "ingresos_altos", "joven"])[0] - 0.018 / 0.13) < 1e-9, "Con las tres evidencias ≈ 0,14"
+  `}
+>
+Reproduce la tabla de las diapositivas: con las tres evidencias a la vez, el perfil más probable es el de bajo riesgo (≈ 0,86). Fíjate en que "joven" no cambia nada: tiene la misma verosimilitud con las dos hipótesis.
+</CodeExercise>
+
+## Limitaciones del enfoque bayesiano (según el tema)
+
+1. Necesita **muchas probabilidades** ($P(h)$ y $P(e \mid h)$ para todo), difíciles de estimar.
+2. Requiere muestras representativas.
+3. La suposición de **independencia** entre evidencias rara vez se cumple.
+4. Una evidencia a favor de $h$ obliga a que esté en contra de $\neg h$: $P(h \mid e) + P(\neg h \mid e) = 1$. Un experto puede creer algo "bastante" sin creer su contrario en la medida complementaria.
+5. Añadir conocimiento nuevo obliga a recalcular mucho.
+
+Por eso surgieron los factores de certeza y la teoría de Dempster-Shafer (siguiente lección).
+
+<Callout kind="real">
+La probabilidad bayesiana es, de largo, el enfoque que ha ganado: **Naive Bayes** para clasificar texto, **redes bayesianas** (modelos gráficos que relajan la independencia ingenua codificando qué variable depende de cuál) para diagnóstico y fiabilidad, **filtros de Kalman** y de partículas en robótica y navegación, y la **estadística bayesiana** (PyMC, Stan) para estimar con incertidumbre en finanzas, medicina o tests A/B. Y el razonamiento de la simulación (tasa base, falsos positivos) es exactamente el que hay detrás de cualquier sistema de alertas: si el fraude es raro, casi todas las alarmas serán falsas.
+</Callout>
+
+<Quiz
+  id="tasa-base"
+  options={[
+    "Un 99%",
+    "Mucho menos de lo que parece: con un fraude tan raro, la mayoría de las alertas serán falsas",
+    "Un 50%",
+    "No se puede saber nada sin el código del modelo",
+  ]}
+  answer={1}
+  explanation="De 1.000.000 de transacciones, 100 son fraude y el sistema detecta 99. De las 999.900 legítimas, el 1% (≈ 9.999) da falsa alarma. P(fraude | alerta) ≈ 99 / (99 + 9.999) ≈ 1%. Por eso estos sistemas se combinan con una segunda revisión."
+>
+Un sistema detecta el 99% de los fraudes y da falsas alarmas en el 1% de las operaciones legítimas. El fraude es el 0,01% de las transacciones. Si salta una alerta, ¿qué probabilidad hay de que sea fraude?
+</Quiz>
+
+## Para llevar
+
+- Incertidumbre (¿es cierto?) frente a imprecisión (¿cuánto exactamente?).
+- Bayes: posterior ∝ verosimilitud × prior. No olvides la tasa base.
+- Con varias evidencias independientes, se multiplican las verosimilitudes y se normaliza (Naive Bayes).
+- Limitaciones: muchas probabilidades, independencia, complementariedad forzada. De ahí los otros enfoques.

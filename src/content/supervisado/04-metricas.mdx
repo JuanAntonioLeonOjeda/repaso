@@ -1,0 +1,185 @@
+Elegir la métrica es elegir **qué errores te duelen más**. Un 95% de accuracy puede ser excelente o inútil según el problema. Esta lección va de saber qué número mirar y por qué.
+
+## Métricas de regresión
+
+Sea $y_i$ el valor real e $\hat{y}_i$ la predicción:
+
+| Métrica | Fórmula | Se lee como | Ojo |
+|---|---|---|---|
+| **MAE** | $\frac{1}{n}\sum \lvert y_i - \hat{y}_i\rvert$ | "me equivoco de media X unidades" | robusta a atípicos |
+| **RMSE** | $\sqrt{\frac{1}{n}\sum (y_i - \hat{y}_i)^2}$ | como el MAE, pero castiga más los errores grandes | sensible a atípicos |
+| **MAPE** | $\frac{100}{n}\sum \left\lvert \frac{y_i - \hat{y}_i}{y_i}\right\rvert$ | "me equivoco un X% de media" | explota si algún $y_i$ ≈ 0 |
+| **R²** | $1 - \frac{\sum (y_i-\hat{y}_i)^2}{\sum (y_i-\bar{y})^2}$ | % de la variabilidad explicada | 0 = como predecir la media |
+
+MAE y RMSE están **en las unidades de la variable** (euros, grados…), y eso es lo que entiende la gente de negocio. "El modelo se equivoca de media 12.000 € por piso" se entiende; "R² = 0,83", no tanto.
+
+<CodeExercise
+  id="metricas-regresion"
+  title="MAE, RMSE y MAPE a mano"
+  starter={`
+    import numpy as np
+
+    y_real = np.array([100, 150, 200, 250, 300])
+    y_pred = np.array([110, 140, 210, 230, 360])
+
+    errores = y_real - y_pred
+    mae = ___
+    rmse = ___
+    mape = ___
+
+    print(f"MAE={mae:.2f}  RMSE={rmse:.2f}  MAPE={mape:.2f}%")
+  `}
+  solution={`
+    import numpy as np
+
+    y_real = np.array([100, 150, 200, 250, 300])
+    y_pred = np.array([110, 140, 210, 230, 360])
+
+    errores = y_real - y_pred
+    mae = np.mean(np.abs(errores))
+    rmse = np.sqrt(np.mean(errores ** 2))
+    mape = np.mean(np.abs(errores / y_real)) * 100
+
+    print(f"MAE={mae:.2f}  RMSE={rmse:.2f}  MAPE={mape:.2f}%")
+  `}
+  hints={[
+    "MAE: media del valor absoluto de los errores (np.abs, np.mean).",
+    "RMSE: raíz (np.sqrt) de la media de los errores al cuadrado.",
+    "MAPE: como el MAE, pero dividiendo cada error por el valor real, y por 100.",
+  ]}
+  check={`
+    assert abs(mae - 22) < 1e-9, "El MAE debería ser 22"
+    assert abs(rmse - np.sqrt(860)) < 1e-9, "El RMSE debería ser √860 ≈ 29,33"
+    assert abs(mape - 9.9333) < 1e-3, "El MAPE debería ser ≈ 9,93%"
+  `}
+>
+Implementa las tres métricas de `Programa10.EvaluacionRegresion` con numpy. Fíjate en cómo el único error grande (60) hace que el RMSE se separe del MAE.
+</CodeExercise>
+
+<Callout kind="real">
+La métrica de evaluación debería salir del coste real del error. Si quedarte corto de stock cuesta el triple que pasarte, ni MAE ni RMSE lo reflejan: se usan pérdidas asimétricas (como la *quantile loss*) o se predice un percentil en vez de la media. Pregunta a negocio cuánto cuesta cada tipo de fallo.
+</Callout>
+
+## Métricas de clasificación: la matriz de confusión
+
+Todo empieza aquí. Para un problema binario (positivo = lo que buscas: fraude, enfermedad, spam):
+
+|  | Predicho **positivo** | Predicho **negativo** |
+|---|---|---|
+| Real **positivo** | **TP** (verdadero positivo) | **FN** (falso negativo: se te escapa) |
+| Real **negativo** | **FP** (falso positivo: falsa alarma) | **TN** (verdadero negativo) |
+
+Y de ahí salen todas las demás:
+
+- **Accuracy** $= \frac{TP+TN}{\text{total}}$: proporción de aciertos. Engañosa si las clases están desbalanceadas.
+- **Precisión** $= \frac{TP}{TP+FP}$: de lo que marco como positivo, ¿cuánto lo es? *Importa cuando las falsas alarmas cuestan* (bloquear la tarjeta de un cliente legítimo).
+- **Sensibilidad / recall** $= \frac{TP}{TP+FN}$: de los positivos reales, ¿cuántos encuentro? *Importa cuando lo que se escapa cuesta* (un cáncer no detectado).
+- **Especificidad** $= \frac{TN}{TN+FP}$: el recall de los negativos.
+- **F1** $= 2 \cdot \frac{\text{precisión} \cdot \text{recall}}{\text{precisión} + \text{recall}}$: media armónica de ambas; solo es alta si las dos lo son.
+
+<Predict
+  id="precision-recall"
+  answer={["0.8", "0,8", "80%", "80"]}
+  tolerance={0.001}
+  explanation="Precisión = TP / (TP + FP) = 40 / (40 + 10) = 0,8. Fíjate en que la accuracy sería (40 + 940) / 1000 = 0,98, que suena muy bien… pero el recall es 40 / (40 + 10) = 0,8: se escapa 1 de cada 5 fraudes."
+  hints={["Solo necesitas la columna de los que el modelo marcó como positivos.", "TP / (TP + FP)"]}
+>
+Un detector de fraude, sobre 1.000 transacciones: TP = 40, FP = 10, FN = 10, TN = 940. ¿Cuál es su **precisión**?
+</Predict>
+
+### El umbral lo eliges tú
+
+La mayoría de clasificadores no dicen "sí/no", sino una **puntuación** (probabilidad). El "sí" sale de compararla con un umbral, que por defecto es 0,5 pero **no tiene por qué serlo**. Subir el umbral aumenta la precisión y baja el recall; bajarlo, al revés.
+
+<ThresholdSim />
+
+- La **curva ROC** dibuja la tasa de verdaderos positivos frente a la de falsos positivos para todos los umbrales. El **AUC** (área bajo ella) resume la calidad de la puntuación independientemente del umbral: 0,5 = azar, 1 = perfecto.
+- Con clases muy desbalanceadas, la **curva precisión-recall** (y su área, *average precision*) es más informativa que la ROC.
+
+<Callout kind="real" title="Cómo se elige el umbral en un trabajo real">
+No se deja en 0,5. Se fija con una restricción de negocio: "necesito detectar al menos el 90% de los fraudes" (recall ≥ 0,9) o "el equipo de revisión puede mirar 200 casos al día" (los 200 con mayor puntuación). Y se elige con datos de **validación**, nunca de test.
+</Callout>
+
+## Más de dos clases: macro, micro y weighted
+
+Con varias clases se calcula precisión/recall/F1 **por clase** y luego se promedia:
+
+- **macro**: media simple de las clases. Todas pesan igual: las clases pequeñas cuentan.
+- **weighted**: media ponderada por el número de ejemplos de cada clase.
+- **micro**: se suman TP, FP y FN de todas las clases antes de calcular (en multiclase coincide con la accuracy).
+
+Tus prácticas usan `average="macro"`, que es lo sensato si te importan todas las clases por igual.
+
+<CodeExercise
+  id="matriz-confusion"
+  title="Predicciones de validación cruzada y matriz de confusión"
+  starter={`
+    import numpy as np
+    from sklearn import datasets, metrics
+    from sklearn.model_selection import train_test_split, cross_val_predict
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.svm import SVC
+
+    X, y = datasets.load_iris(return_X_y=True)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    modelo = make_pipeline(StandardScaler(), SVC(C=1))
+
+    # Una predicción por muestra de train, hecha por el modelo de la bolsa que NO la vio
+    y_pred = ___(modelo, X_train, y_train, cv=5)
+
+    print(metrics.confusion_matrix(y_train, y_pred))
+    f1_macro = metrics.f1_score(y_train, y_pred, average=___)
+    print("F1 macro:", round(f1_macro, 3))
+  `}
+  solution={`
+    import numpy as np
+    from sklearn import datasets, metrics
+    from sklearn.model_selection import train_test_split, cross_val_predict
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.svm import SVC
+
+    X, y = datasets.load_iris(return_X_y=True)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    modelo = make_pipeline(StandardScaler(), SVC(C=1))
+
+    # Una predicción por muestra de train, hecha por el modelo de la bolsa que NO la vio
+    y_pred = cross_val_predict(modelo, X_train, y_train, cv=5)
+
+    print(metrics.confusion_matrix(y_train, y_pred))
+    f1_macro = metrics.f1_score(y_train, y_pred, average="macro")
+    print("F1 macro:", round(f1_macro, 3))
+  `}
+  hints={["La función está ya importada: predice con validación cruzada.", "El tipo de promedio se pasa como texto."]}
+  check={`
+    assert len(y_pred) == len(y_train), "Debe haber una predicción por cada muestra de entrenamiento"
+    assert f1_macro > 0.9, "El F1 macro debería superar 0,9"
+  `}
+>
+Como en `Programa11.EvaluacionClasificacion`: obtén predicciones "honestas" de validación cruzada para todo el train y, con ellas, la matriz de confusión y el F1 macro.
+</CodeExercise>
+
+<Quiz
+  id="metrica-cancer"
+  options={[
+    "Accuracy, porque resume todo en un número",
+    "Precisión, para no alarmar a pacientes sanos",
+    "Recall (sensibilidad), con un umbral bajo, y una prueba de confirmación después",
+    "Especificidad, porque la mayoría de pacientes están sanos",
+  ]}
+  answer={2}
+  explanation="En un cribado lo grave es el falso negativo (un cáncer que se escapa). Se maximiza el recall aceptando más falsas alarmas, que luego filtra una prueba más precisa. Así funcionan los cribados reales: dos fases."
+>
+Diseñas un cribado de cáncer de mama a partir de mamografías. El 0,5% de las pacientes tiene cáncer. ¿Qué optimizas?
+</Quiz>
+
+## Para llevar
+
+- Regresión: MAE para comunicar, RMSE si los errores grandes duelen más, cuidado con MAPE y valores cercanos a 0.
+- Clasificación: empieza siempre por la matriz de confusión.
+- Precisión = calidad de las alarmas; recall = cobertura de los positivos. El umbral mueve una contra otra.
+- Con desbalanceo, la accuracy miente: usa F1, AUC o la curva precisión-recall.
+- La métrica y el umbral salen del coste real de cada error.

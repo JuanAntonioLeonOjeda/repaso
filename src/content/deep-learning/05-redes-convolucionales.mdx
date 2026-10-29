@@ -1,0 +1,145 @@
+Un MLP trata una imagen como una lista de píxeles sin orden: no sabe que dos píxeles son vecinos. Y es carísimo: una foto en color de 224×224 conectada a una capa de 1.000 neuronas son 150 millones de pesos. Las **redes convolucionales (CNN)** resuelven las dos cosas con una idea: **pequeños filtros que recorren la imagen compartiendo pesos**.
+
+## La convolución
+
+Un filtro (*kernel*) de, por ejemplo, 3×3 se desliza por la imagen. En cada posición multiplica sus 9 pesos por los 9 píxeles de debajo y suma: eso da un píxel del **mapa de características** de salida.
+
+<ConvolutionSim />
+
+Lo que lo hace potente:
+
+- **Conectividad local**: cada neurona mira solo una zona pequeña (su *campo receptivo*).
+- **Pesos compartidos**: el mismo filtro se usa en toda la imagen. Un detector de bordes verticales sirve igual arriba que abajo. Muchos menos parámetros.
+- **Equivarianza a traslaciones**: si el objeto se mueve, su respuesta se mueve con él.
+
+Una capa convolucional tiene **muchos filtros** (32, 64, 128…), y cada uno produce su propio mapa. Las primeras capas aprenden bordes y colores; las intermedias, texturas y partes; las profundas, objetos enteros.
+
+### Tamaños: padding y stride
+
+Para una entrada de lado $N$, un filtro de lado $K$, *padding* $P$ y *stride* $S$:
+
+$$\text{salida} = \left\lfloor \frac{N + 2P - K}{S} \right\rfloor + 1$$
+
+- **Padding** `"valid"` (sin relleno): la imagen encoge. `"same"`: se rellena con ceros para conservar el tamaño (con stride 1).
+- **Stride** > 1: el filtro salta píxeles; la salida se reduce.
+
+<Predict
+  id="tamano-salida"
+  answer="15"
+  explanation="⌊(32 + 2·0 − 3) / 2⌋ + 1 = ⌊14,5⌋ + 1 = 14 + 1 = 15. El suelo se aplica a la división: el filtro no cabe en una posición más."
+  hints={["N = 32, K = 3, P = 0 (valid), S = 2.", "⌊(32 − 3) / 2⌋ + 1"]}
+>
+Una imagen de CIFAR-10 (32×32) pasa por una convolución 3×3 con `padding="valid"` y `strides=2`. ¿De qué lado es el mapa de salida?
+</Predict>
+
+### Contar parámetros
+
+Cada filtro tiene $K \times K \times C_{\text{in}}$ pesos (atraviesa **todos** los canales de entrada) más un sesgo.
+
+<Predict
+  id="params-conv"
+  answer={["896"]}
+  explanation="Cada filtro: 3 · 3 · 3 = 27 pesos + 1 sesgo = 28. Con 32 filtros: 28 · 32 = 896. Compáralo con los 400.000 de una capa densa: y además no depende del tamaño de la imagen."
+  hints={["Una imagen RGB tiene 3 canales: cada filtro es de 3×3×3.", "Suma un sesgo por filtro."]}
+>
+`Conv2D(32, (3, 3))` sobre una imagen RGB. ¿Cuántos parámetros tiene la capa?
+</Predict>
+
+## Pooling
+
+Reduce el tamaño de los mapas resumiendo cada ventana (normalmente 2×2) con su **máximo** (*max pooling*) o su media. Divide el lado por 2, abarata las capas siguientes, aumenta el campo receptivo y aporta algo de invarianza a pequeños desplazamientos. No tiene parámetros.
+
+## La arquitectura típica
+
+<CnnDiagram />
+
+1. **Base convolucional** (*feature extractor*): bloques `Conv → ReLU (→ BatchNorm) → Conv → ReLU → MaxPool`, duplicando el número de filtros cuando se reduce el tamaño (32 → 64 → 128).
+2. **Cabeza** (*top model*, clasificador): `Flatten` o, mejor, `GlobalAveragePooling2D` (media de cada mapa: muchos menos parámetros) → `Dense` → `Dense(n_clases, softmax)`.
+
+```python
+from tensorflow.keras import layers, models
+
+inputs = layers.Input((32, 32, 3))
+x = layers.Conv2D(32, 3, padding="same", activation="relu")(inputs)
+x = layers.Conv2D(32, 3, padding="same", activation="relu")(x)
+x = layers.MaxPooling2D()(x)                 # 32 -> 16
+x = layers.Conv2D(64, 3, padding="same", activation="relu")(x)
+x = layers.Conv2D(64, 3, padding="same", activation="relu")(x)
+x = layers.MaxPooling2D()(x)                 # 16 -> 8
+x = layers.GlobalAveragePooling2D()(x)       # 8×8×64 -> 64
+x = layers.Dense(128, activation="relu")(x)
+outputs = layers.Dense(10, activation="softmax")(x)
+model = models.Model(inputs, outputs)
+```
+
+<Callout kind="practice" title="De tus prácticas (VC04–VC05)">
+La práctica compara en **CIFAR-10** un MLP con una CNN: el MLP se queda en torno al 50% de accuracy y sobreajusta enseguida; la CNN, con menos parámetros, pasa holgadamente del 70%. Es la demostración de que la estructura (localidad + pesos compartidos) importa más que el número de parámetros.
+</Callout>
+
+<CodeExercise
+  id="conv2d"
+  title="Implementa una convolución"
+  starter={`
+    import numpy as np
+
+    def conv2d(img, kernel, stride=1, padding=0):
+        img = np.pad(img, padding)                       # relleno de ceros
+        k = kernel.shape[0]
+        n_out = (img.shape[0] - k) // stride + 1
+        out = np.zeros((n_out, n_out))
+        for i in range(n_out):
+            for j in range(n_out):
+                ventana = img[i * stride:i * stride + k, j * stride:j * stride + ___]
+                out[i, j] = np.sum(ventana * ___)
+        return out
+
+    # Una imagen con un borde vertical: mitad izquierda oscura, derecha clara
+    img = np.zeros((6, 6)); img[:, 3:] = 1
+    sobel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
+    salida = conv2d(img, sobel_x)
+    print(salida)
+  `}
+  solution={`
+    import numpy as np
+
+    def conv2d(img, kernel, stride=1, padding=0):
+        img = np.pad(img, padding)                       # relleno de ceros
+        k = kernel.shape[0]
+        n_out = (img.shape[0] - k) // stride + 1
+        out = np.zeros((n_out, n_out))
+        for i in range(n_out):
+            for j in range(n_out):
+                ventana = img[i * stride:i * stride + k, j * stride:j * stride + k]
+                out[i, j] = np.sum(ventana * kernel)
+        return out
+
+    # Una imagen con un borde vertical: mitad izquierda oscura, derecha clara
+    img = np.zeros((6, 6)); img[:, 3:] = 1
+    sobel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
+    salida = conv2d(img, sobel_x)
+    print(salida)
+  `}
+  hints={["La ventana es de k × k: el corte de columnas es igual que el de filas.", "Se multiplican elemento a elemento ventana y filtro, y se suma."]}
+  check={`
+    assert salida.shape == (4, 4), "Una imagen 6×6 con un filtro 3×3 sin padding da 4×4"
+    assert np.allclose(salida[:, 1:3], 4) and np.allclose(salida[:, [0, 3]], 0), "El filtro debe responder (con 4) solo sobre el borde"
+    assert conv2d(np.ones((5, 5)), np.ones((3, 3)), padding=1).shape == (5, 5), "Con padding 1 debe conservar el tamaño"
+  `}
+>
+Escribe la operación que hacen las capas `Conv2D` (sin el bucle por canales ni el sesgo). Verás que el filtro de Sobel "se enciende" solo donde hay un borde vertical.
+</CodeExercise>
+
+<Callout kind="idea" title="¿Y backpropagation en una CNN?">
+Igual que en un MLP, con una particularidad: como el filtro se usa en todas las posiciones, su gradiente es la **suma** de los gradientes de todas ellas. Y el gradiente respecto a la entrada resulta ser otra convolución (con el filtro girado 180°). Por eso entrenar una CNN es, en esencia, hacer muchas convoluciones: justo lo que las GPU hacen rapidísimo.
+</Callout>
+
+<Callout kind="real">
+Casi nunca se diseña una CNN desde cero: se parte de arquitecturas probadas (**ResNet**, con conexiones residuales que permiten cientos de capas; **EfficientNet**; **ConvNeXt**) o de **Vision Transformers**, y se hace transfer learning (siguiente lección). Diseñar tu propia arquitectura tiene sentido para problemas pequeños o muy específicos (imágenes de 1 canal raras, dispositivos con pocos recursos).
+</Callout>
+
+## Para llevar
+
+- Convolución: filtros pequeños que recorren la imagen con pesos compartidos. Muchos menos parámetros que un MLP y respetan la vecindad.
+- Salida $= \lfloor (N + 2P - K)/S \rfloor + 1$. Parámetros $= (K \cdot K \cdot C_{in} + 1) \cdot n_{filtros}$.
+- Pooling reduce tamaño sin parámetros.
+- Arquitectura: bloques conv-ReLU-pool que duplican filtros + cabeza densa (mejor con global average pooling).

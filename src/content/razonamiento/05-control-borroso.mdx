@@ -1,0 +1,140 @@
+La aplicación estrella de la lógica borrosa: **controladores** que siguen reglas escritas en lenguaje de experto ("si el agua está muy sucia, lava más tiempo") en lugar de un modelo matemático exacto del sistema. Desde los años 80, en Japón llenaron el mercado: lavadoras, cámaras, metro de Sendai, ABS…
+
+## Por qué control borroso
+
+El control clásico (PID, control moderno) necesita un **modelo matemático** del sistema. Cuando el sistema es complejo, no lineal o mal conocido, pero **un operador humano sabe manejarlo**, se puede capturar ese saber en reglas. Es control "experto": interpretable, robusto y fácil de ajustar a mano.
+
+## La arquitectura
+
+<FuzzyControllerDiagram />
+
+1. **Borrosificación** (*fuzzification*): las entradas nítidas (un número del sensor) se convierten en grados de pertenencia a cada etiqueta lingüística ("el servicio es 6,5" → bueno 0,5, excelente 0,17).
+2. **Base de reglas**: las reglas SI–ENTONCES del experto.
+3. **Inferencia**: se evalúa cada regla y se combinan sus conclusiones.
+4. **Desborrosificación** (*defuzzification*): el conjunto borroso de salida se convierte en un número nítido para el actuador.
+
+## El enfoque de Mamdani
+
+Para cada regla "SI $x_1$ es $A_1$ Y $x_2$ es $A_2$ ENTONCES $y$ es $B$":
+
+1. **Grado de activación** $\alpha$ de la regla: el grado del antecedente (con Y = mínimo, O = máximo).
+2. **Implicación**: se **recorta** el conjunto de salida $B$ a la altura $\alpha$ (implicación de Mamdani: $\min(\alpha, \mu_B(y))$).
+3. **Agregación**: los conjuntos recortados de todas las reglas se unen con el **máximo**.
+4. **Desborrosificación** del conjunto agregado:
+   - **Centro de gravedad (centroide)**: $y^* = \frac{\int y \, \mu(y)\, dy}{\int \mu(y)\, dy}$. El más usado: suave y tiene en cuenta todas las reglas.
+   - **Media de los máximos**: la media de los puntos donde $\mu$ es máxima.
+   - **Criterio del máximo**: cualquier punto de grado máximo.
+
+<MamdaniSim />
+
+<CodeExercise
+  id="centroide"
+  title="Un controlador de Mamdani con numpy"
+  starter={`
+    import numpy as np
+
+    def tri(x, a, b, c):
+        return np.maximum(0, np.minimum((x - a) / (b - a), (c - x) / (c - b)))
+
+    # Universo de salida: propina de 0 a 25 %
+    y = np.linspace(0, 25, 2501)
+    baja, media, alta = tri(y, 0, 5, 10), tri(y, 8, 13, 18), tri(y, 16, 21, 25)
+
+    # Grados de activación ya calculados para unas entradas concretas
+    alfa = {"baja": 0.2, "media": 0.7, "alta": 0.4}
+
+    # 1) Recortar cada salida a su grado (Mamdani = mínimo) y 2) agregar con el máximo
+    agregado = np.maximum.reduce([
+        np.minimum(alfa["baja"], baja),
+        np.minimum(alfa["media"], ___),
+        np.minimum(alfa["alta"], alta),
+    ])
+
+    # 3) Desborrosificar por centro de gravedad
+    centroide = np.sum(y * agregado) / np.___(agregado)
+    print(f"Propina: {centroide:.2f} %")
+  `}
+  solution={`
+    import numpy as np
+
+    def tri(x, a, b, c):
+        return np.maximum(0, np.minimum((x - a) / (b - a), (c - x) / (c - b)))
+
+    # Universo de salida: propina de 0 a 25 %
+    y = np.linspace(0, 25, 2501)
+    baja, media, alta = tri(y, 0, 5, 10), tri(y, 8, 13, 18), tri(y, 16, 21, 25)
+
+    # Grados de activación ya calculados para unas entradas concretas
+    alfa = {"baja": 0.2, "media": 0.7, "alta": 0.4}
+
+    # 1) Recortar cada salida a su grado (Mamdani = mínimo) y 2) agregar con el máximo
+    agregado = np.maximum.reduce([
+        np.minimum(alfa["baja"], baja),
+        np.minimum(alfa["media"], media),
+        np.minimum(alfa["alta"], alta),
+    ])
+
+    # 3) Desborrosificar por centro de gravedad
+    centroide = np.sum(y * agregado) / np.sum(agregado)
+    print(f"Propina: {centroide:.2f} %")
+  `}
+  hints={["La regla con grado 0,7 recorta el conjunto 'media'.", "El centroide es la media ponderada: suma de y·μ entre suma de μ."]}
+  check={`
+    assert 12 < centroide < 14.5, "Domina la regla 'media' (0,7): el centroide queda cerca de 13, algo desplazado hacia arriba por 'alta'"
+  `}
+>
+Implementa los tres últimos pasos de Mamdani: recortar, agregar y calcular el centroide. Es la misma cuenta que hace la simulación.
+</CodeExercise>
+
+## El enfoque de Takagi-Sugeno
+
+Mismo antecedente borroso, pero el **consecuente es una función** de las entradas (normalmente lineal), no un conjunto borroso:
+
+$$\text{SI } x_1 \text{ es } A_1 \text{ Y } x_2 \text{ es } A_2 \text{ ENTONCES } y = p_0 + p_1 x_1 + p_2 x_2$$
+
+La salida es la **media ponderada** de las salidas de cada regla por su grado de activación:
+
+$$y^* = \frac{\sum_r \alpha_r \, y_r}{\sum_r \alpha_r}$$
+
+- No hace falta desborrosificar: es mucho más barato de calcular.
+- Si los consecuentes son constantes, es **Sugeno de orden 0** (lo que muestra la simulación).
+- Los parámetros $p_i$ se pueden **aprender de datos** (es la base de **ANFIS**, que combina lógica borrosa y redes neuronales).
+
+El ejemplo del tema es un coche que toma una curva: cuatro entradas (distancias y ángulo) y reglas cuyo consecuente es una ecuación lineal del giro del volante.
+
+<Predict
+  id="sugeno"
+  answer={["16", "16.0", "16,0"]}
+  tolerance={0.01}
+  explanation="y* = (0,4 · 10 + 0,6 · 20) / (0,4 + 0,6) = (4 + 12) / 1 = 16. La salida queda más cerca de 20 porque esa regla se activa más."
+  hints={["Media ponderada de las salidas de cada regla por su grado de activación.", "(α₁ · y₁ + α₂ · y₂) / (α₁ + α₂)"]}
+>
+Un controlador Sugeno de orden 0 tiene dos reglas activas: la primera con grado 0,4 propone $y = 10$; la segunda, con grado 0,6, propone $y = 20$. ¿Cuál es la salida?
+</Predict>
+
+<Callout kind="real">
+- En Python, **scikit-fuzzy** (`skfuzzy.control`) implementa todo el flujo con muy pocas líneas; en MATLAB, la *Fuzzy Logic Toolbox*.
+- Hoy, en control industrial dominan los **PID** (bien sintonizados) y el control predictivo (MPC). El control borroso sigue usándose cuando el conocimiento experto es la mejor fuente disponible, en electrodomésticos y como capa de supervisión sobre controladores clásicos (ajustar las ganancias de un PID según la situación).
+- La gran virtud que no hay que olvidar: un controlador borroso **se puede leer**. Cada salida se explica con las reglas que se activaron. En una época de modelos de caja negra, esa interpretabilidad vale mucho.
+</Callout>
+
+<Quiz
+  id="mamdani-vs-sugeno"
+  options={[
+    "Mamdani: la salida es una ecuación y no hay que desborrosificar",
+    "Sugeno: consecuentes funcionales, salida por media ponderada (rápido y fácil de ajustar con datos)",
+    "Ninguno: el control borroso no funciona en tiempo real",
+    "Mamdani con centroide calculado sobre un millón de puntos",
+  ]}
+  answer={1}
+  explanation="Takagi-Sugeno evita construir y desborrosificar el conjunto de salida: solo calcula una media ponderada, ideal para microcontroladores, y sus parámetros se pueden aprender (ANFIS). Mamdani es más intuitivo para escribir reglas a mano con un experto."
+>
+Tienes que implementar el controlador en un microcontrolador pequeño, a 1.000 decisiones por segundo, y quieres ajustar sus parámetros con datos registrados. ¿Qué enfoque?
+</Quiz>
+
+## Para llevar
+
+- Controlador borroso = borrosificar → reglas → inferencia → desborrosificar.
+- Mamdani: activación (mín/máx) → recortar salidas → agregar (máx) → centroide. Muy interpretable.
+- Takagi-Sugeno: consecuentes funcionales y media ponderada; rápido y aprendible (ANFIS).
+- Su valor hoy: capturar conocimiento experto de forma legible.

@@ -1,0 +1,120 @@
+K-means y Ward buscan "nubes" alrededor de un centro. Pero muchos grupos reales no tienen centro: calles en un mapa, galaxias, zonas de una imagen. Los métodos por **densidad** definen un cluster como **una zona densa de puntos separada de otras por zonas vacías**, tenga la forma que tenga.
+
+## DBSCAN
+
+Dos parámetros:
+
+- **ε (eps)**: el radio del vecindario de cada punto.
+- **minPts** (`min_samples`): cuántos puntos tiene que haber en ese radio (contando el propio punto) para considerarlo zona densa.
+
+Con ellos, cada punto es uno de tres tipos:
+
+- **Núcleo**: tiene al menos *minPts* vecinos a distancia ≤ ε.
+- **Frontera**: no es núcleo, pero está dentro del radio de algún núcleo.
+- **Ruido**: ni lo uno ni lo otro. **Se queda sin cluster** (etiqueta −1).
+
+Un cluster es un conjunto de núcleos conectados (cada uno alcanzable desde otro saltando de vecindario en vecindario) más sus puntos frontera.
+
+<DbscanSim />
+
+### Cómo elegir ε y minPts
+
+- **minPts**: una regla habitual es $\geq$ número de dimensiones + 1, y más alto cuanto más ruido haya (en 2D, 4–5 suele ir bien).
+- **ε**: el **gráfico de la k-distancia**: calcula para cada punto la distancia a su vecino número *minPts*, ordénalas y dibújalas. El "codo" de esa curva es un buen ε.
+- **Escala**: ε es una distancia, así que **escala los datos antes**. Es exactamente lo que hace tu notebook T2.4 con `StandardScaler`.
+
+<CodeExercise
+  id="dbscan-vs-kmeans"
+  title="Datos estirados: k-means contra DBSCAN"
+  starter={`
+    import numpy as np
+    from sklearn.datasets import make_blobs
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.cluster import KMeans, DBSCAN
+    from sklearn.metrics import adjusted_rand_score
+
+    # Como en tu notebook: 5 grupos, "estirados" con una transformación lineal
+    X, y = make_blobs(random_state=170, n_samples=600, centers=5)
+    X = X @ np.random.RandomState(74).normal(size=(2, 2))
+    X = StandardScaler().fit_transform(X)
+
+    km = KMeans(n_clusters=5, n_init=10, random_state=0).fit_predict(X)
+    db = DBSCAN(eps=___, min_samples=___).fit_predict(X)
+
+    ari_km = adjusted_rand_score(y, km)
+    ari_db = adjusted_rand_score(y, db)
+    print(f"ARI k-means: {ari_km:.3f}")
+    print(f"ARI DBSCAN:  {ari_db:.3f}  ({len(set(db) - {-1})} clusters, {np.sum(db == -1)} ruido)")
+  `}
+  solution={`
+    import numpy as np
+    from sklearn.datasets import make_blobs
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.cluster import KMeans, DBSCAN
+    from sklearn.metrics import adjusted_rand_score
+
+    # Como en tu notebook: 5 grupos, "estirados" con una transformación lineal
+    X, y = make_blobs(random_state=170, n_samples=600, centers=5)
+    X = X @ np.random.RandomState(74).normal(size=(2, 2))
+    X = StandardScaler().fit_transform(X)
+
+    km = KMeans(n_clusters=5, n_init=10, random_state=0).fit_predict(X)
+    db = DBSCAN(eps=0.12, min_samples=2).fit_predict(X)
+
+    ari_km = adjusted_rand_score(y, km)
+    ari_db = adjusted_rand_score(y, db)
+    print(f"ARI k-means: {ari_km:.3f}")
+    print(f"ARI DBSCAN:  {ari_db:.3f}  ({len(set(db) - {-1})} clusters, {np.sum(db == -1)} ruido)")
+  `}
+  hints={[
+    "Los grupos son muy estrechos tras estirarlos: ε tiene que ser pequeño (del orden de 0,1).",
+    "Tu notebook resuelto usa eps=0.12 y min_samples=2.",
+  ]}
+  check={`
+    assert ari_db > ari_km, "DBSCAN debería superar a k-means en estos datos alargados"
+    assert ari_db > 0.9, "Ajusta eps y min_samples hasta que el ARI de DBSCAN pase de 0,9"
+  `}
+>
+Reproduce el experimento del notebook T2.4: con grupos alargados, k-means los corta mal y DBSCAN los encuentra. Ajusta ε y minPts para que el ARI de DBSCAN supere 0,9.
+</CodeExercise>
+
+### Ventajas e inconvenientes
+
+- ✅ No hay que fijar el número de clusters. Encuentra **formas arbitrarias**. Detecta **ruido/atípicos** de serie.
+- ❌ Un único ε para todo: si hay grupos de **densidades muy distintas**, ninguno sirve para todos. Y sufre en muchas dimensiones (todas las distancias se parecen).
+
+<Callout kind="real">
+En la práctica se usa mucho **HDBSCAN** (en sklearn desde la versión 1.3), que prueba todos los ε a la vez y se queda con los clusters más estables. Solo necesita `min_cluster_size`, que es intuitivo ("no me interesan grupos de menos de 20 puntos"), y funciona con densidades distintas. Es la opción por defecto para agrupar embeddings de texto (por ejemplo, en BERTopic para descubrir temas).
+</Callout>
+
+## Mean-shift
+
+Imagina que cada punto es una bola en un paisaje cuya altura es la densidad de datos. **Mean-shift** mueve cada punto, iteración a iteración, hacia la **media de sus vecinos** dentro de una ventana de radio $h$ (el *bandwidth*). Todos acaban en algún pico (moda) de la densidad; los que llegan al mismo pico forman un cluster.
+
+- ✅ No hay que fijar $k$: sale del número de picos. Clusters de forma libre.
+- ❌ Lento, y el resultado depende mucho de $h$ (se puede estimar con `estimate_bandwidth`). Muy usado en **segmentación de imágenes** y seguimiento de objetos en vídeo, como en tu notebook.
+
+## Affinity propagation
+
+Los puntos "se votan" entre sí para elegir **ejemplares** (representantes) mediante paso de mensajes: la **responsabilidad** $r(i,k)$ (lo adecuado que es $k$ como ejemplar de $i$) y la **disponibilidad** $a(i,k)$ (lo apropiado que es que $i$ elija a $k$). El número de clusters sale solo (se controla con la *preferencia*). Es elegante pero $O(n^2)$: solo para datasets pequeños.
+
+<Quiz
+  id="densidad-que-metodo"
+  options={[
+    "K-means con k = número de barrios",
+    "DBSCAN (o HDBSCAN) sobre las coordenadas, con ε del orden de unos cientos de metros",
+    "Clustering jerárquico con enlace máximo",
+    "Mean-shift con un bandwidth enorme",
+  ]}
+  answer={1}
+  explanation="Buscas zonas densas de forma libre (siguen calles y plazas) y quieres ignorar los puntos aislados. Es el caso de uso de manual de DBSCAN. Además, ε tiene un significado físico (metros) fácil de elegir; con coordenadas geográficas se usa la métrica haversine."
+>
+Tienes las coordenadas GPS de 50.000 avisos de averías en una ciudad y quieres encontrar "puntos calientes" de cualquier forma, ignorando los avisos aislados. ¿Qué usas?
+</Quiz>
+
+## Para llevar
+
+- Cluster por densidad = zona densa separada por zonas vacías, de cualquier forma.
+- DBSCAN: ε y minPts; puntos núcleo, frontera y ruido. Escala antes; elige ε con la k-distancia.
+- HDBSCAN quita el problema de elegir ε y soporta densidades distintas.
+- Mean-shift sube hasta los picos de densidad; affinity propagation elige ejemplares por votación.

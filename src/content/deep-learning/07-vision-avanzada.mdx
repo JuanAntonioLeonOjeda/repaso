@@ -1,0 +1,116 @@
+Clasificar dice **qué** hay en una imagen. Muchas aplicaciones reales necesitan además **dónde**: un coche autónomo, un sistema de inspección o un diagnóstico por imagen. Esta lección recorre las tareas avanzadas de visión y las arquitecturas que las resuelven.
+
+## Las tareas
+
+| Tarea | Salida | Ejemplo |
+|---|---|---|
+| Clasificación | una etiqueta por imagen | "hay un perro" |
+| **Detección de objetos** | cajas (*bounding boxes*) + clase + confianza | "perro en (x, y, w, h), 0,93" |
+| **Segmentación semántica** | una clase por píxel | todos los píxeles de "carretera" |
+| **Segmentación de instancias** | una máscara por objeto | "este perro" y "ese otro perro" por separado |
+| **Tracking** | identidades de objetos a lo largo de un vídeo | seguir al jugador 7 |
+
+## Detección de objetos
+
+### Medir el solape: IoU
+
+Para saber si una caja predicha acierta se compara con la real mediante la **intersección sobre la unión**:
+
+$$\text{IoU} = \frac{\text{área}(A \cap B)}{\text{área}(A \cup B)}$$
+
+Una detección se considera correcta si IoU ≥ 0,5 (o umbrales más estrictos). La métrica estándar, **mAP** (*mean Average Precision*), promedia la precisión a distintos niveles de recall, por clase y a veces por varios umbrales de IoU.
+
+<CodeExercise
+  id="iou"
+  title="Calcula el IoU de dos cajas"
+  starter={`
+    def iou(a, b):
+        """Cajas como (x1, y1, x2, y2): esquina superior izquierda e inferior derecha."""
+        ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+        ix2, iy2 = ___(a[2], b[2]), ___(a[3], b[3])
+        interseccion = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        area_a = (a[2] - a[0]) * (a[3] - a[1])
+        area_b = (b[2] - b[0]) * (b[3] - b[1])
+        union = ___
+        return interseccion / union
+
+    real = (50, 50, 150, 150)
+    predicha = (100, 100, 200, 200)
+    print(round(iou(real, predicha), 3))
+  `}
+  solution={`
+    def iou(a, b):
+        """Cajas como (x1, y1, x2, y2): esquina superior izquierda e inferior derecha."""
+        ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+        ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+        interseccion = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        area_a = (a[2] - a[0]) * (a[3] - a[1])
+        area_b = (b[2] - b[0]) * (b[3] - b[1])
+        union = area_a + area_b - interseccion
+        return interseccion / union
+
+    real = (50, 50, 150, 150)
+    predicha = (100, 100, 200, 200)
+    print(round(iou(real, predicha), 3))
+  `}
+  hints={["La intersección termina donde termina la primera de las dos cajas: el mínimo de los bordes.", "La unión es la suma de áreas menos lo que se cuenta dos veces."]}
+  check={`
+    assert abs(iou(real, predicha) - 2500 / 17500) < 1e-9, "Intersección 50×50 = 2.500; unión 10.000 + 10.000 − 2.500 = 17.500"
+    assert iou((0, 0, 10, 10), (20, 20, 30, 30)) == 0, "Cajas separadas: IoU 0"
+    assert iou((0, 0, 10, 10), (0, 0, 10, 10)) == 1, "Cajas idénticas: IoU 1"
+  `}
+>
+Una predicción desplazada medio lado en diagonal parece "bastante buena" a ojo… ¿lo es según el IoU?
+</CodeExercise>
+
+### Non-maximum suppression
+
+Los detectores generan muchas cajas candidatas solapadas para el mismo objeto. **NMS** limpia: ordena por confianza, se queda con la mejor y elimina las que la solapan con IoU por encima de un umbral; repite con las que quedan.
+
+<IouNmsSim />
+
+### La evolución de los detectores
+
+- **R-CNN** (2013): propone ~2.000 regiones con un algoritmo clásico (*selective search*), pasa **cada una** por una CNN y clasifica con SVM. Preciso pero lentísimo.
+- **Fast R-CNN**: pasa la imagen **una vez** por la CNN y recorta las regiones del mapa de características (*RoI pooling*). Mucho más rápido.
+- **Faster R-CNN**: sustituye la propuesta de regiones por una red, la **RPN** (*Region Proposal Network*), con *anchors* de varias formas. Todo entrenable de punta a punta. Detector de **dos etapas**: preciso.
+- **SSD** y **YOLO**: detectores de **una etapa**. Predicen cajas y clases directamente sobre una rejilla, en una sola pasada. YOLO divide la imagen en celdas y cada celda predice cajas y probabilidades. Mucho más rápidos: tiempo real.
+
+<Callout kind="real">
+Hoy, en la industria, detección = casi siempre la familia **YOLO** (Ultralytics YOLOv8/YOLO11: entrenar un detector propio son unas pocas líneas) o detectores basados en transformers (**DETR**/RT-DETR, que eliminan anchors y NMS). Para anotar cajas se usan herramientas como CVAT o Label Studio. El cuello de botella real no es el modelo: es **conseguir y etiquetar bien las imágenes** de tu caso.
+</Callout>
+
+## Segmentación
+
+- **FCN** (*Fully Convolutional Network*): sustituye las capas densas por convoluciones y **sobremuestrea** (deconvoluciones/convoluciones transpuestas) para devolver un mapa del tamaño de la imagen con una clase por píxel.
+- **U-Net**: un codificador que reduce (como una CNN) y un decodificador simétrico que amplía, con **conexiones de salto** que pasan los detalles finos de cada nivel del codificador al decodificador. Diseñada para imagen médica con pocos datos; sigue siendo la referencia en segmentación (y es la columna vertebral de los modelos de difusión que generan imágenes).
+- **Mask R-CNN**: Faster R-CNN + una rama que predice una máscara para cada caja. Segmentación de instancias.
+
+<Quiz
+  id="tarea-vision"
+  options={[
+    "Clasificación de la imagen completa",
+    "Detección de objetos con cajas",
+    "Segmentación semántica (una clase por píxel)",
+    "Tracking",
+  ]}
+  answer={2}
+  explanation="Quieres el área exacta de la lesión (en píxeles, y de ahí en mm²), no solo si existe ni una caja aproximada. Eso es segmentación; con una sola clase de interés, semántica basta (U-Net es la opción típica en imagen médica)."
+>
+Un dermatólogo quiere medir automáticamente el área de una lesión en la piel a partir de una foto. ¿Qué tarea es?
+</Quiz>
+
+## Tracking
+
+Seguir objetos en vídeo = **detectar en cada fotograma** y **asociar** detecciones entre fotogramas (por solape de cajas, predicción de movimiento con un filtro de Kalman y apariencia). Por eso la velocidad del detector importa tanto: YOLO o SSD en vez de Faster R-CNN cuando hay que procesar 30 fotogramas por segundo. Algoritmos típicos: SORT, DeepSORT, ByteTrack.
+
+## Autoencoders en visión
+
+Los apuntes también recogen los autoencoders (ver Deep clustering en No Supervisado): **convolucionales** para imágenes, **de eliminación de ruido** (entrenados para reconstruir la imagen limpia a partir de una ruidosa), **variacionales** (VAE) para generar. Un uso industrial muy común: **detección de anomalías**. Se entrena solo con piezas buenas; una pieza defectuosa se reconstruye mal, y el error de reconstrucción la delata.
+
+## Para llevar
+
+- Clasificación (qué), detección (qué y dónde, con cajas), segmentación (qué píxeles), instancias (qué píxeles de cada objeto), tracking (a lo largo del tiempo).
+- IoU mide el solape de cajas; NMS elimina duplicados; mAP evalúa detectores.
+- Dos etapas (Faster R-CNN, preciso) frente a una etapa (YOLO/SSD, rápido).
+- U-Net (codificador-decodificador con saltos) es la referencia en segmentación.

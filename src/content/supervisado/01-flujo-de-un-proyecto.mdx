@@ -1,0 +1,154 @@
+Antes de hablar de algoritmos, una idea incómoda: **en un proyecto real de machine learning, el modelo es la parte pequeña**. La mayoría del tiempo se va en entender el problema, conseguir y limpiar datos, validar bien y poner el modelo en producción sin que se rompa. Esta lección es el mapa de todo lo que viene.
+
+## Qué es aprender "supervisado"
+
+Tienes ejemplos del pasado **con la respuesta correcta** (la *etiqueta*) y quieres un programa que la prediga en ejemplos nuevos. "Supervisado" porque alguien —una persona, un sistema, el paso del tiempo— ya anotó la respuesta.
+
+- **Regresión**: la respuesta es un número. ¿Cuánto costará este piso? ¿Cuántas unidades venderemos el lunes?
+- **Clasificación**: la respuesta es una categoría. ¿Este correo es spam? ¿Este paciente tiene glaucoma? ¿Qué dígito hay en esta imagen?
+
+Para situarlo frente a sus vecinos:
+
+| Tipo | Qué tienes | Qué buscas | Ejemplo |
+|---|---|---|---|
+| Supervisado | ejemplos **con** respuesta | predecir la respuesta | detectar fraude con transacciones ya marcadas |
+| No supervisado | ejemplos **sin** respuesta | estructura: grupos, anomalías, compresión | segmentar clientes |
+| Por refuerzo | un entorno que da recompensas | una estrategia de acciones | un robot que aprende a andar |
+
+<Quiz
+  id="tipo-problema"
+  options={[
+    "Clasificación",
+    "Regresión",
+    "Clustering (no supervisado)",
+    "Aprendizaje por refuerzo",
+  ]}
+  answer={1}
+  explanation="La respuesta es una cantidad continua (euros), y tienes el histórico con el valor real: regresión supervisada. Si te pidieran «¿subirá o bajará?», sería clasificación."
+>
+Una cadena de supermercados tiene el histórico de ventas diarias de cada tienda (en euros) junto con el tiempo, el día de la semana y si había promoción. Quiere estimar cuánto venderá cada tienda mañana. ¿Qué tipo de problema es?
+</Quiz>
+
+## La tabla: instancias, atributos y clase
+
+Casi todo el ML clásico trabaja con una **tabla**:
+
+- Cada **fila** es una *instancia* (muestra, ejemplo, observación): un vino, un paciente, una transacción.
+- Cada **columna** es un *atributo* (variable, característica, *feature*): acidez, edad, importe.
+- Una columna especial es la **clase** o *target*: lo que queremos predecir.
+
+En código, por convención: `X` es la matriz de atributos (forma `n_muestras × n_atributos`) e `y` el vector de etiquetas (longitud `n_muestras`). Lo verás en **todos** los notebooks y en la documentación de scikit-learn.
+
+<Predict
+  id="forma-iris"
+  answer={["(150, 4)", "150, 4", "150x4"]}
+  explanation="Iris tiene 150 flores (50 de cada una de 3 especies) y 4 medidas por flor: largo y ancho de sépalo y de pétalo. `X.shape` devuelve (filas, columnas)."
+  hints={["Son 3 especies con 50 flores cada una.", "Cada flor tiene medidas de sépalo y pétalo: largo y ancho de cada uno."]}
+>
+En tus prácticas (`Programa7.HoldOut`) se usa el dataset Iris. ¿Qué imprime esto?
+
+```python
+from sklearn import datasets
+iris = datasets.load_iris()
+print(iris.data.shape)
+```
+</Predict>
+
+Antes de modelar nada conviene anotar el "carné de identidad" del dataset: número de instancias, de atributos, tipo de cada atributo (numérico, categórico, fecha, texto), porcentaje de valores ausentes y, en clasificación, **cuántos ejemplos hay de cada clase**. Este último dato decide muchas cosas: si una clase es el 2% de los datos, la *accuracy* será engañosa y tendrás que estratificar al partir.
+
+<CodeExercise
+  id="carne-vino"
+  title="El carné de identidad de un dataset"
+  files={["winequality-red.csv"]}
+  starter={`
+    import pandas as pd
+
+    # Ojo: este CSV usa ';' como separador
+    df = pd.read_csv("winequality-red.csv", sep=___)
+
+    n_filas, n_columnas = df.___
+    print("Instancias:", n_filas, "· Atributos + clase:", n_columnas)
+
+    # ¿Cuántos vinos hay de cada nota de calidad?
+    conteo = df["quality"].___()
+    print(conteo.sort_index())
+  `}
+  solution={`
+    import pandas as pd
+
+    # Ojo: este CSV usa ';' como separador
+    df = pd.read_csv("winequality-red.csv", sep=";")
+
+    n_filas, n_columnas = df.shape
+    print("Instancias:", n_filas, "· Atributos + clase:", n_columnas)
+
+    # ¿Cuántos vinos hay de cada nota de calidad?
+    conteo = df["quality"].value_counts()
+    print(conteo.sort_index())
+  `}
+  hints={[
+    "El separador se pasa como texto: un punto y coma entre comillas.",
+    "Un DataFrame tiene un atributo que devuelve la tupla (filas, columnas).",
+    "Para contar cuántas veces aparece cada valor de una columna: `value_counts()`.",
+  ]}
+  check={`
+    assert n_filas == 1599 and n_columnas == 12, "Revisa el separador: deberían salir 1599 filas y 12 columnas"
+    assert int(conteo[5]) == 681, "El conteo de la calidad 5 debería ser 681"
+  `}
+>
+Es el dataset de vinos tintos de tu carpeta `Datasets/wine+quality`. Cárgalo, saca su tamaño y cuenta cuántos vinos hay de cada calidad. Fíjate en lo desbalanceado que está: casi todo son 5 y 6.
+</CodeExercise>
+
+## CRISP-DM: el ciclo de vida de un proyecto
+
+La metodología más usada para ordenar un proyecto de datos es **CRISP-DM** (y su evolución para ML, **CRISP-ML(Q)**, que añade aseguramiento de calidad y monitorización). Lo importante no son los nombres de las fases sino que **es un ciclo**: casi siempre vuelves atrás.
+
+<CrispDiagram />
+
+1. **Comprensión del negocio**. ¿Qué decisión va a cambiar con el modelo? ¿Cómo mediremos el éxito *en euros o en minutos*, no en accuracy? ¿Qué pasa si se equivoca?
+2. **Comprensión de los datos**. Qué hay, de dónde viene, cómo de fiable es. Gráficas, estadísticos, sorpresas.
+3. **Preparación de los datos**. Limpiar, imputar, escalar, crear variables. Suele ser el **60–80%** del tiempo.
+4. **Modelado**. Probar algoritmos y ajustar hiperparámetros, con una validación honesta.
+5. **Evaluación**. ¿Cumple el objetivo de negocio, no solo la métrica? ¿Es justo? ¿Se entiende?
+6. **Despliegue** (y, en CRISP-ML, **monitorización y mantenimiento**). Ponerlo a funcionar y vigilar que no se degrade.
+
+<Callout kind="real">
+En una empresa, la fase 1 es la que más proyectos salva o hunde. Un patrón muy común: el equipo de datos entrega un modelo con un 92% de accuracy y negocio no lo usa, porque nadie preguntó qué hacía falta para tomar la decisión (¿un ranking?, ¿una alerta?, ¿un número con intervalo de confianza?). Antes de abrir un notebook, escribe en una frase: *"Este modelo servirá para que ___ decida ___, y sabremos que funciona si ___"*.
+</Callout>
+
+<Callout kind="real" title="Lo que CRISP-DM no te cuenta: MLOps">
+La fase de despliegue hoy tiene nombre propio: **MLOps**. En la práctica significa: versionar datos y modelos (DVC, MLflow), registrar cada experimento (parámetros, métricas, artefactos), empaquetar el modelo como servicio (una API con FastAPI, un batch nocturno…), y **monitorizar la deriva**: los datos de producción cambian (*data drift*) y el modelo envejece. Un modelo sin monitorización es una bomba de relojería.
+</Callout>
+
+<Quiz
+  id="fase-crisp"
+  options={[
+    "Modelado: hay que probar un algoritmo más potente",
+    "Preparación de los datos: hay que limpiar mejor",
+    "Comprensión del negocio: el problema estaba mal definido",
+    "Despliegue: hay que monitorizar la deriva",
+  ]}
+  answer={2}
+  explanation="El modelo predice bien lo que se le pidió (si un cliente se dará de baja), pero lo que el negocio necesitaba era saber a quién merece la pena retener, que no es lo mismo. Es un fallo de definición del problema: vuelta a la fase 1."
+>
+Un modelo de *churn* (bajas de clientes) acierta mucho, pero el equipo comercial se queja: les avisa de clientes que se iban a ir igualmente y no hay nada que hacer, mientras que no detecta a los clientes valiosos y dudosos. ¿A qué fase deberíais volver?
+</Quiz>
+
+## Roles: quién hace qué
+
+En los libros aparecen roles muy definidos (director de proyecto, analista de negocio, ingeniero de datos, científico de datos, ingeniero de ML…). En la realidad **se solapan** según el tamaño de la empresa:
+
+- En una *startup*, una persona hace de todo: SQL, modelo, API y la presentación al jefe.
+- En una empresa grande hay separación: **data engineers** construyen las tuberías de datos, **data scientists** exploran y modelan, **ML engineers** llevan los modelos a producción, y **analistas** traducen a negocio.
+
+<Callout kind="idea">
+Si vienes de un máster muy teórico, el salto más rentable no es aprender otro algoritmo: es saber escribir SQL con soltura, estructurar código en módulos (no solo notebooks), usar git y dejar el modelo detrás de una API. Eso es lo que te pedirán el primer mes.
+</Callout>
+
+## Para llevar
+
+- Supervisado = aprender de ejemplos con la respuesta. Regresión (número) o clasificación (categoría).
+- Los datos viven en una tabla `X` (atributos) más un vector `y` (clase).
+- Mira siempre tamaño, tipos, ausentes y **balance de clases** antes de modelar.
+- CRISP-DM es un ciclo; la fase de negocio y la de preparación de datos son las que más pesan.
+- Producción (MLOps) es parte del trabajo, no un extra.

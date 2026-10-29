@@ -1,0 +1,112 @@
+Ordenar es el problema más estudiado de la informática, y no por capricho: es la base de buscar rápido, eliminar duplicados, calcular medianas o hacer *joins*. Además, los algoritmos de ordenación son el mejor gimnasio para entender complejidad y técnicas de diseño.
+
+<SortingSim />
+
+## Los clásicos $O(n^2)$
+
+- **Burbuja**: recorre la lista intercambiando pares vecinos desordenados; en cada pasada el mayor "sube" al final. Si en una pasada no hay intercambios, ya está ordenada (mejor caso $O(n)$).
+- **Selección**: busca el mínimo del resto y lo pone en su sitio. Siempre $n(n-1)/2$ comparaciones, pero pocas escrituras.
+- **Inserción**: como ordenar cartas en la mano: cada elemento se inserta en su sitio dentro de la parte ya ordenada. Muy rápida con listas **casi ordenadas** y con listas pequeñas.
+
+<Predict
+  id="burbuja-peor"
+  answer={["45"]}
+  explanation="En el peor caso (lista al revés) la burbuja hace (n − 1) + (n − 2) + … + 1 = n(n − 1)/2 comparaciones. Con n = 10: 10 · 9 / 2 = 45. Compruébalo en la simulación con n = 10 y datos «al revés»."
+  hints={["Primera pasada: 9 comparaciones; segunda: 8; …", "n(n − 1)/2"]}
+>
+¿Cuántas comparaciones hace la ordenación por burbuja en el peor caso con $n = 10$ elementos?
+</Predict>
+
+## Los rápidos $O(n \log n)$: divide y vencerás
+
+- **Mergesort**: divide la lista en dos mitades, ordena cada una (recursivamente) y **mezcla** las dos mitades ordenadas en un recorrido. Siempre $O(n \log n)$: hay $\log_2 n$ niveles de división y cada nivel cuesta $O(n)$ mezclar. Necesita memoria extra. Es **estable**.
+- **Quicksort**: elige un **pivote**, coloca los menores a un lado y los mayores al otro (partición), y ordena cada lado. $O(n \log n)$ de media y muy rápido en la práctica (trabaja en el sitio), pero $O(n^2)$ si el pivote es siempre el peor (por ejemplo, el último elemento de una lista ya ordenada: pruébalo en la simulación).
+
+<CodeExercise
+  id="mergesort"
+  title="Implementa mergesort"
+  starter={`
+    def mezclar(izq, der):
+        """Mezcla dos listas ordenadas en una lista ordenada."""
+        resultado = []
+        i = j = 0
+        while i < len(izq) and j < len(der):
+            if izq[i] <= der[j]:
+                resultado.append(izq[i]); i += 1
+            else:
+                resultado.append(der[j]); j += 1
+        # lo que quede en cualquiera de las dos ya está ordenado
+        return resultado + izq[i:] + ___
+
+    def mergesort(lista):
+        if len(lista) <= ___:
+            return lista
+        mitad = len(lista) // 2
+        return mezclar(mergesort(lista[:mitad]), mergesort(___))
+
+    print(mergesort([38, 27, 43, 3, 9, 82, 10]))
+  `}
+  solution={`
+    def mezclar(izq, der):
+        """Mezcla dos listas ordenadas en una lista ordenada."""
+        resultado = []
+        i = j = 0
+        while i < len(izq) and j < len(der):
+            if izq[i] <= der[j]:
+                resultado.append(izq[i]); i += 1
+            else:
+                resultado.append(der[j]); j += 1
+        # lo que quede en cualquiera de las dos ya está ordenado
+        return resultado + izq[i:] + der[j:]
+
+    def mergesort(lista):
+        if len(lista) <= 1:
+            return lista
+        mitad = len(lista) // 2
+        return mezclar(mergesort(lista[:mitad]), mergesort(lista[mitad:]))
+
+    print(mergesort([38, 27, 43, 3, 9, 82, 10]))
+  `}
+  hints={["Al final se añade lo que quede de la lista izquierda y de la derecha.", "El caso base: una lista de 0 o 1 elementos ya está ordenada.", "La segunda mitad empieza en 'mitad'."]}
+  check={`
+    import random
+    random.seed(1)
+    for n in [0, 1, 2, 7, 100]:
+        datos = [random.randint(-50, 50) for _ in range(n)]
+        assert mergesort(datos) == sorted(datos), f"Falla con {n} elementos"
+  `}
+>
+Completa las dos funciones. El test lo comprueba con listas aleatorias de varios tamaños (incluida la vacía).
+</CodeExercise>
+
+## Estabilidad
+
+Un algoritmo es **estable** si mantiene el orden relativo de los elementos iguales. Importa cuando ordenas por varias claves: si ordenas pedidos por fecha y luego (de forma estable) por cliente, cada cliente conserva sus pedidos por fecha. Mergesort, inserción y burbuja son estables; quicksort y selección, en su forma clásica, no.
+
+<Callout kind="real" title="En la práctica, no programes tu propio sort">
+- `sorted()` y `list.sort()` de Python usan **Timsort**: un híbrido de mergesort e inserción que detecta tramos ya ordenados. $O(n \log n)$, estable y $O(n)$ con datos casi ordenados. Ordena por claves con `key=`: `sorted(pedidos, key=lambda p: (p.cliente, p.fecha))`.
+- `numpy.sort` usa por defecto *introsort* (quicksort que cambia a heapsort si se degenera).
+- Si solo necesitas los $k$ mayores, no ordenes todo: `heapq.nlargest(k, datos)` o `np.argpartition` son $O(n)$–$O(n \log k)$.
+- Ordenar por comparaciones no puede bajar de $O(n \log n)$. Si las claves son enteros acotados, *counting sort* o *radix sort* van en $O(n)$.
+</Callout>
+
+<Quiz
+  id="que-ordenacion"
+  options={[
+    "Quicksort con el último elemento como pivote",
+    "Ordenación por inserción (o Timsort, que la usa por dentro)",
+    "Ordenación por selección",
+    "Mergesort desde cero, ignorando el orden existente",
+  ]}
+  answer={1}
+  explanation="Con la lista casi ordenada, inserción hace muy pocos movimientos (casi O(n)). Quicksort con pivote al final sería su peor caso (O(n²)). Timsort, el de Python, aprovecha justamente los tramos ya ordenados."
+>
+Tienes un registro de 1 millón de eventos ya ordenados por hora, y llegan 50 eventos nuevos con algo de retraso que se añaden al final. ¿Qué ordenación aprovecha mejor la situación?
+</Quiz>
+
+## Para llevar
+
+- Burbuja, selección, inserción: $O(n^2)$; inserción brilla con datos casi ordenados.
+- Mergesort ($O(n \log n)$ siempre, estable) y quicksort ($O(n \log n)$ de media, $O(n^2)$ con mal pivote): divide y vencerás.
+- Estabilidad importa al ordenar por varias claves.
+- En código real: `sorted` (Timsort), y `heapq`/`argpartition` si solo quieres los k primeros.

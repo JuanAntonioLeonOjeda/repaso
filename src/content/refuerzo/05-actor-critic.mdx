@@ -1,0 +1,120 @@
+REINFORCE espera a que termine el episodio para saber lo bien que fue cada acción, y su estimación es muy ruidosa. ¿Y si una segunda red aprendiese a **predecir** cómo de bueno es cada estado? Así se puede valorar cada acción en el momento, comparándola con lo esperado. Es la idea **actor-crítico**, la base de casi todos los algoritmos modernos (A2C, A3C, PPO, SAC).
+
+## Dos redes, dos papeles
+
+- **Actor** $\pi_\theta(a \mid s)$: la política. Decide qué hacer.
+- **Crítico** $V_\phi(s)$: estima el valor de cada estado. Juzga lo que hace el actor.
+
+En cada paso, el crítico calcula la **ventaja** (*advantage*): ¿la acción salió mejor o peor de lo que esperaba?
+
+$$A(s_t, a_t) \approx r_t + \gamma V(s_{t+1}) - V(s_t)$$
+
+Ese número (que es el error TD de la lección de Q-learning) es el que pondera el gradiente del actor: si $A > 0$, la acción fue mejor de lo previsto y se hace más probable; si $A < 0$, menos. Y el crítico se entrena como una regresión para que $V(s_t)$ se acerque a $r_t + \gamma V(s_{t+1})$.
+
+<Predict
+  id="ventaja"
+  answer={["1.25", "1,25"]}
+  tolerance={0.001}
+  explanation="A = r + γ·V(s′) − V(s) = 1 + 0,9 · 5 − 4,25 = 1 + 4,5 − 4,25 = 1,25. La acción salió algo mejor de lo que el crítico esperaba, así que el actor la hará un poco más probable."
+  hints={["A = r + γ · V(s′) − V(s)"]}
+>
+El crítico estima $V(s) = 4{,}25$. El agente actúa, recibe $r = 1$ y llega a $s'$, con $V(s') = 5$. Con $\gamma = 0{,}9$, ¿cuál es la ventaja estimada de la acción?
+</Predict>
+
+<Callout kind="idea" title="Por qué funciona mejor que REINFORCE">
+REINFORCE usa el retorno real $G_t$: sin sesgo, pero con muchísima varianza (depende de toda la suerte del resto del episodio). La ventaja de un paso usa la estimación del crítico: algo de sesgo (el crítico se equivoca) pero mucha menos varianza, y además se puede actualizar **sin esperar al final** del episodio. Es el compromiso sesgo-varianza de toda la vida.
+</Callout>
+
+## GAE: el punto medio ajustable
+
+¿Ventaja de un paso (poca varianza, más sesgo) o retorno completo (sin sesgo, mucha varianza)? **Generalized Advantage Estimation** mezcla todas las opciones con un parámetro $\lambda$:
+
+$$\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t), \qquad \hat{A}_t = \sum_{k \geq 0} (\gamma \lambda)^k \, \delta_{t+k}$$
+
+- $\lambda = 0$: ventaja de un paso.
+- $\lambda = 1$: equivale a usar el retorno completo menos $V(s_t)$.
+- Valor típico: $\lambda = 0{,}95$. Es lo que usan PPO y A2C en la práctica.
+
+<CodeExercise
+  id="gae"
+  title="Calcula GAE"
+  starter={`
+    import numpy as np
+
+    def gae(recompensas, valores, gamma=0.99, lam=0.95):
+        """valores tiene un elemento más: V del estado tras el último paso (0 si terminó)."""
+        T = len(recompensas)
+        deltas = recompensas + gamma * valores[1:] - valores[:___]
+        ventajas = np.zeros(T)
+        acumulado = 0.0
+        for t in reversed(range(T)):
+            acumulado = deltas[t] + gamma * ___ * acumulado
+            ventajas[t] = acumulado
+        return ventajas
+
+    r = np.array([1.0, 0.0, 0.0, 1.0])
+    V = np.array([0.5, 0.4, 0.6, 0.8, 0.0])
+    print("λ = 0:   ", gae(r, V, lam=0.0).round(3))
+    print("λ = 0,95:", gae(r, V).round(3))
+  `}
+  solution={`
+    import numpy as np
+
+    def gae(recompensas, valores, gamma=0.99, lam=0.95):
+        """valores tiene un elemento más: V del estado tras el último paso (0 si terminó)."""
+        T = len(recompensas)
+        deltas = recompensas + gamma * valores[1:] - valores[:-1]
+        ventajas = np.zeros(T)
+        acumulado = 0.0
+        for t in reversed(range(T)):
+            acumulado = deltas[t] + gamma * lam * acumulado
+            ventajas[t] = acumulado
+        return ventajas
+
+    r = np.array([1.0, 0.0, 0.0, 1.0])
+    V = np.array([0.5, 0.4, 0.6, 0.8, 0.0])
+    print("λ = 0:   ", gae(r, V, lam=0.0).round(3))
+    print("λ = 0,95:", gae(r, V).round(3))
+  `}
+  hints={["δ usa V de cada estado (todos menos el último elemento) y V del siguiente (todos menos el primero).", "La suma se descuenta con γ·λ."]}
+  check={`
+    d = r + 0.99 * V[1:] - V[:-1]
+    assert np.allclose(gae(r, V, lam=0.0), d), "Con λ = 0, la ventaja es el error TD de un paso"
+    G = np.array([sum(0.99**k * r[t + k] for k in range(4 - t)) for t in range(4)])
+    assert np.allclose(gae(r, V, lam=1.0), G - V[:-1]), "Con λ = 1, la ventaja es el retorno menos V(s)"
+  `}
+>
+Implementa GAE con la misma recurrencia hacia atrás que los retornos descontados. El test comprueba los dos extremos: λ = 0 da el error TD y λ = 1, el retorno completo menos el valor.
+</CodeExercise>
+
+## A2C y A3C
+
+- **A3C** (*Asynchronous Advantage Actor-Critic*, DeepMind 2016): lanza **muchos agentes en paralelo**, cada uno con su copia del entorno, que calculan gradientes y actualizan una red global **de forma asíncrona**. La diversidad de experiencias de los distintos trabajadores rompe la correlación (sin necesidad de memoria de repetición) y aprovecha CPUs multinúcleo. Es lo que implementa `a3c_full.py` de tu práctica con `torch.multiprocessing`.
+- **A2C**: la versión **síncrona**: los trabajadores avanzan a la vez, se juntan sus experiencias en un lote y se hace una actualización. En la práctica funciona igual o mejor que A3C y aprovecha mejor la GPU, así que es la que se suele usar.
+
+La pérdida típica combina tres términos: la del actor ($-\log \pi \cdot A$), la del crítico (error cuadrático del valor) y un **bonus de entropía** que premia que la política no se vuelva determinista demasiado pronto (exploración).
+
+<Quiz
+  id="entropia"
+  options={[
+    "Para que el crítico aprenda más rápido",
+    "Para evitar que la política colapse demasiado pronto en una sola acción y deje de explorar",
+    "Para normalizar las ventajas",
+    "Para que las acciones sean continuas",
+  ]}
+  answer={1}
+  explanation="Una política con alta entropía reparte probabilidad entre acciones (explora). Sin el bonus, el actor puede volverse casi determinista en cuanto encuentra algo que funciona regular, y quedarse ahí. El coeficiente de entropía (p. ej. 0,01) es un hiperparámetro habitual de A2C y PPO."
+>
+¿Para qué sirve el término de entropía en la pérdida de A2C/A3C?
+</Quiz>
+
+<Callout kind="real">
+En Stable-Baselines3, `A2C` y `PPO` son actor-críticos con GAE, varios entornos en paralelo (`make_vec_env(..., n_envs=8)`) y bonus de entropía configurable. Si empiezas un proyecto de refuerzo con acciones discretas o continuas, **PPO** es la elección por defecto (siguiente lección); A2C es más simple pero menos robusto.
+</Callout>
+
+## Para llevar
+
+- Actor (política) + crítico (valor). El crítico convierte cada paso en una señal: la ventaja.
+- Ventaja de un paso: $r + \gamma V(s') - V(s)$. Menos varianza que REINFORCE, algo de sesgo, sin esperar al final del episodio.
+- GAE mezcla horizontes con λ (≈ 0,95).
+- A3C: trabajadores en paralelo y asíncronos; A2C: síncrono y más práctico. Pérdida = actor + crítico + entropía.

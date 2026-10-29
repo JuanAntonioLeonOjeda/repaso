@@ -1,0 +1,188 @@
+Con conjuntos borrosos ya podemos describir conceptos vagos. Para **razonar** con ellos ("si la temperatura es alta, la velocidad del ventilador es alta; la temperatura es *bastante* alta, ¿qué velocidad pongo?") hacen falta tres piezas más: **relaciones borrosas**, **implicaciones borrosas** y la **regla composicional de inferencia**.
+
+## Relaciones borrosas
+
+Una relación clásica entre $X$ e $Y$ dice qué pares están relacionados (1) y cuáles no (0). Una relación **borrosa** da un grado a cada par: "muy cerca" entre ciudades, "parecido" entre productos.
+
+$$R : X \times Y \to [0, 1]$$
+
+Para conjuntos finitos es simplemente una **matriz** de grados. Por ejemplo, "muy cerca" entre algunas ciudades andaluzas: $R(\text{Cádiz}, \text{Sevilla}) = 0{,}8$, $R(\text{Cádiz}, \text{Almería}) = 0{,}1$…
+
+### Composición max-min
+
+Si $P$ relaciona $X$ con $Y$ y $Q$ relaciona $Y$ con $Z$, la composición $R = P \circ Q$ relaciona $X$ con $Z$:
+
+$$R(x, z) = \max_{y} \; \min\big(P(x, y), Q(y, z)\big)$$
+
+Se lee: "$x$ está relacionado con $z$ tanto como el **mejor camino** que pase por algún $y$, y un camino vale lo que su **eslabón más débil**". Es como un producto de matrices, cambiando la multiplicación por el mínimo y la suma por el máximo.
+
+<CodeExercise
+  id="max-min"
+  title="Composición max-min"
+  starter={`
+    import numpy as np
+
+    # P: síntomas de 3 pacientes (filas) · Q: síntomas -> enfermedades
+    P = np.array([[0.9, 0.0, 0.3],
+                  [0.2, 1.0, 0.8],
+                  [0.8, 0.0, 0.7]])
+    Q = np.array([[0.8, 0.1],
+                  [0.0, 0.9],
+                  [0.5, 0.6]])
+
+    def max_min(P, Q):
+        # Para cada (x, z): mínimo elemento a elemento entre la fila x de P y la columna z de Q,
+        # y después el máximo. Con broadcasting: (n, m, 1) y (1, m, k) -> (n, m, k)
+        return np.___(np.minimum(P[:, :, None], Q[None, :, :]), axis=___)
+
+    R = max_min(P, Q)
+    print(R)
+  `}
+  solution={`
+    import numpy as np
+
+    # P: síntomas de 3 pacientes (filas) · Q: síntomas -> enfermedades
+    P = np.array([[0.9, 0.0, 0.3],
+                  [0.2, 1.0, 0.8],
+                  [0.8, 0.0, 0.7]])
+    Q = np.array([[0.8, 0.1],
+                  [0.0, 0.9],
+                  [0.5, 0.6]])
+
+    def max_min(P, Q):
+        # Para cada (x, z): mínimo elemento a elemento entre la fila x de P y la columna z de Q,
+        # y después el máximo. Con broadcasting: (n, m, 1) y (1, m, k) -> (n, m, k)
+        return np.max(np.minimum(P[:, :, None], Q[None, :, :]), axis=1)
+
+    R = max_min(P, Q)
+    print(R)
+  `}
+  hints={["Primero el mínimo (ya está), después el máximo: np.max.", "El máximo se toma sobre el índice intermedio y, que es el eje 1."]}
+  check={`
+    esperado = np.array([[max(min(P[i, j], Q[j, k]) for j in range(3)) for k in range(2)] for i in range(3)])
+    assert np.allclose(R, esperado), "Revisa el eje del máximo"
+    assert np.allclose(R, [[0.8, 0.3], [0.5, 0.9], [0.8, 0.6]])
+  `}
+>
+Es la aplicación médica clásica (relación de Sánchez): pacientes → síntomas → enfermedades. El paciente 2 tiene sobre todo el síntoma 2, que apunta a la enfermedad 2.
+</CodeExercise>
+
+## Principio de extensión
+
+Permite aplicar **cualquier función clásica** $f$ a conjuntos borrosos: el grado de un resultado $y$ es el **máximo** grado de las entradas que dan $y$:
+
+$$\mu_{f(A)}(y) = \max_{x \,:\, f(x) = y} \mu_A(x)$$
+
+Así se definen la suma o el producto de números borrosos ("aproximadamente 2" + "aproximadamente 3" = "aproximadamente 5", más ancho).
+
+<Predict
+  id="extension"
+  answer={["0.9", "0,9"]}
+  tolerance={0.001}
+  explanation="f(x) = x² da 4 tanto para x = −2 (grado 0,6) como para x = 2 (grado 0,9). El principio de extensión se queda con el máximo: 0,9."
+  hints={["¿Qué valores de x dan x² = 4?", "Se toma el máximo de sus grados."]}
+>
+$A = 0{,}6/{-2} + 1/0 + 0{,}9/2$. Con el principio de extensión, ¿qué grado tiene el 4 en $f(A)$ para $f(x) = x^2$?
+</Predict>
+
+## Implicaciones borrosas
+
+Una regla "SI $x$ es $A$ ENTONCES $y$ es $B$" se convierte en una **relación** $R(x, y) = I\big(\mu_A(x), \mu_B(y)\big)$, donde $I$ es una función de implicación. Hay muchas, agrupadas en familias:
+
+| Implicación | $I(a, b)$ | Familia |
+|---|---|---|
+| Mamdani | $\min(a, b)$ | (en realidad, una conjunción; la más usada en control) |
+| Larsen | $a \cdot b$ | (conjunción con producto) |
+| Kleene-Dienes | $\max(1 - a, b)$ | S-implicación |
+| Łukasiewicz | $\min(1, 1 - a + b)$ | S y R-implicación |
+| Gödel | $1$ si $a \leq b$; $b$ si no | R-implicación |
+| Zadeh | $\max(1 - a, \min(a, b))$ | QL-implicación |
+
+Elegir implicación depende de lo que se quiera modelar; el tema propone criterios (que el modus ponens generalizado devuelva $B$ cuando el hecho es exactamente $A$, por ejemplo).
+
+## La regla composicional de inferencia
+
+El **modus ponens generalizado**:
+
+- Regla: SI $x$ es $A$ ENTONCES $y$ es $B$.
+- Hecho: $x$ es $A'$ (parecido a $A$, no igual).
+- Conclusión: $y$ es $B'$, con $B' = A' \circ R$:
+
+$$\mu_{B'}(y) = \max_x \min\big(\mu_{A'}(x), R(x, y)\big)$$
+
+<CodeExercise
+  id="modus-ponens"
+  title="Modus ponens generalizado"
+  starter={`
+    import numpy as np
+
+    # Temperatura X = {20, 25, 30, 35} ºC · Ventilador Y = {bajo, medio, alto}
+    A = np.array([0.0, 0.3, 0.8, 1.0])          # "temperatura alta"
+    B = np.array([0.0, 0.5, 1.0])               # "ventilador alto"
+
+    # Regla "SI temperatura alta ENTONCES ventilador alto" con la implicación de Mamdani (mínimo)
+    R = np.minimum(A[:, None], B[None, :])      # matriz 4 × 3
+
+    # Hecho: la temperatura es "bastante alta"
+    A_prima = np.array([0.0, 0.6, 1.0, 0.7])
+
+    # B' = A' ∘ R  (max-min)
+    B_prima = np.___(np.minimum(A_prima[:, None], ___), axis=0)
+    print("R =", R, sep="\\n")
+    print("B' =", B_prima)
+  `}
+  solution={`
+    import numpy as np
+
+    # Temperatura X = {20, 25, 30, 35} ºC · Ventilador Y = {bajo, medio, alto}
+    A = np.array([0.0, 0.3, 0.8, 1.0])          # "temperatura alta"
+    B = np.array([0.0, 0.5, 1.0])               # "ventilador alto"
+
+    # Regla "SI temperatura alta ENTONCES ventilador alto" con la implicación de Mamdani (mínimo)
+    R = np.minimum(A[:, None], B[None, :])      # matriz 4 × 3
+
+    # Hecho: la temperatura es "bastante alta"
+    A_prima = np.array([0.0, 0.6, 1.0, 0.7])
+
+    # B' = A' ∘ R  (max-min)
+    B_prima = np.max(np.minimum(A_prima[:, None], R), axis=0)
+    print("R =", R, sep="\\n")
+    print("B' =", B_prima)
+  `}
+  hints={["Mínimo entre cada fila de R y el grado de A′ en ese x, y después el máximo por columnas.", "El segundo argumento del mínimo es la relación R."]}
+  check={`
+    assert np.allclose(B_prima, [0.0, 0.5, 0.8]), "B' = [0, 0,5, 0,8]: el ventilador es 'casi alto'"
+  `}
+>
+Con una regla y un hecho parecido al antecedente, calcula la conclusión. Fíjate: como el hecho no coincide del todo con "temperatura alta", la conclusión es un "ventilador alto" algo rebajado.
+</CodeExercise>
+
+## Proposiciones borrosas
+
+El tema distingue cuatro tipos, de menos a más complejos:
+
+1. **No condicionadas, no cualificadas**: "la temperatura es alta" (su verdad es $\mu_{\text{alta}}(t)$).
+2. **No condicionadas, cualificadas**: "la temperatura es alta **es muy cierto**" (un calificador de verdad, también borroso).
+3. **Condicionadas, no cualificadas**: "si la temperatura es alta, el ventilador es rápido" (una implicación).
+4. **Condicionadas y cualificadas**: "si … entonces … **es bastante cierto**".
+
+<Quiz
+  id="eslabon-debil"
+  options={[
+    "La media de los grados de los dos tramos",
+    "El mínimo de los dos tramos (eslabón más débil), y luego el máximo sobre los posibles intermediarios",
+    "La suma de los grados",
+    "El producto de las matrices como en álgebra lineal",
+  ]}
+  answer={1}
+  explanation="En la composición max-min, un camino x → y → z vale lo que su tramo más débil (mínimo), y entre todos los caminos posibles se queda el mejor (máximo). Si se usa el producto en vez del mínimo, sale la composición max-producto, otra variante válida."
+>
+En la composición max-min, ¿cómo se calcula la fuerza de la relación entre $x$ y $z$ a través de un intermediario $y$?
+</Quiz>
+
+## Para llevar
+
+- Relación borrosa = matriz de grados. Composición max-min: el mejor camino, valorado por su eslabón más débil.
+- Principio de extensión: aplicar funciones a conjuntos borrosos tomando el máximo grado de las preimágenes.
+- Una regla SI–ENTONCES se convierte en una relación mediante una implicación (Mamdani = mínimo es la más usada en control).
+- Modus ponens generalizado: $B' = A' \circ R$.

@@ -1,0 +1,178 @@
+Dos respuestas históricas a las limitaciones de la probabilidad: los **factores de certeza** de los sistemas expertos (sencillos, pensados para expertos humanos) y la **teoría de Dempster-Shafer** (que permite decir "no lo sé" de forma explícita).
+
+## Factores de certeza (MYCIN)
+
+MYCIN fue un sistema experto de los años 70 que diagnosticaba infecciones de la sangre. Sus reglas llevaban un **factor de certeza** (CF) entre −1 y 1 que expresa la confianza del experto, **no una probabilidad estadística**:
+
+> SI la coloración del organismo es gram-positiva Y su morfología es coco Y crece en cadenas ENTONCES hay evidencia sugestiva (0,7) de que es estreptococo.
+
+- CF = 1: certeza total a favor; CF = −1: certeza total en contra; CF = 0: no se sabe.
+- A diferencia de la probabilidad, que algo tenga CF 0,7 **no implica** nada sobre su contrario.
+
+### Combinar reglas que llegan a la misma conclusión
+
+Si dos reglas concluyen $h$ con factores $a$ y $b$:
+
+$$
+CF(h) =
+\begin{cases}
+a + b\,(1 - a) & \text{si ambos } \geq 0 \\
+a + b\,(1 + a) & \text{si ambos } \leq 0 \\
+\dfrac{a + b}{1 - \min(\lvert a\rvert, \lvert b\rvert)} & \text{si tienen signo distinto}
+\end{cases}
+$$
+
+Dos evidencias a favor se refuerzan pero **nunca pasan de 1**; una en contra resta fuerza.
+
+<CertaintyFactorSim />
+
+### Condiciones con su propia certeza
+
+Si una regla tiene condiciones inciertas, el CF de la conclusión es el CF de la regla multiplicado por el de la condición, y las condiciones compuestas se evalúan con:
+
+- **Y** (conjunción): el **mínimo** de los CF de las condiciones.
+- **O** (disyunción): el **máximo**.
+
+$$CF(h, e) = CF_{\text{regla}} \cdot CF(e)$$
+
+<CodeExercise
+  id="cf-mycin"
+  title="El ejemplo de las reglas R1 y R2"
+  starter={`
+    def combinar(a, b):
+        if a >= 0 and b >= 0:
+            return a + b * (1 - a)
+        if a <= 0 and b <= 0:
+            return a + b * (1 + ___)
+        return (a + b) / (1 - min(abs(a), abs(b)))
+
+    # R1: SI A (0.7) Y B (0.2) ENTONCES C, CF = -0.8
+    # R2: SI D (0.3) O F (0.6) ENTONCES C, CF = -0.4
+    cf_r1 = ___(0.7, 0.2) * -0.8      # conjunción -> mínimo
+    cf_r2 = ___(0.3, 0.6) * -0.4      # disyunción -> máximo
+    cf_c = combinar(cf_r1, cf_r2)
+    print(f"CF por R1: {cf_r1:.2f} · por R2: {cf_r2:.2f} · combinado: {cf_c:.4f}")
+  `}
+  solution={`
+    def combinar(a, b):
+        if a >= 0 and b >= 0:
+            return a + b * (1 - a)
+        if a <= 0 and b <= 0:
+            return a + b * (1 + a)
+        return (a + b) / (1 - min(abs(a), abs(b)))
+
+    # R1: SI A (0.7) Y B (0.2) ENTONCES C, CF = -0.8
+    # R2: SI D (0.3) O F (0.6) ENTONCES C, CF = -0.4
+    cf_r1 = min(0.7, 0.2) * -0.8      # conjunción -> mínimo
+    cf_r2 = max(0.3, 0.6) * -0.4      # disyunción -> máximo
+    cf_c = combinar(cf_r1, cf_r2)
+    print(f"CF por R1: {cf_r1:.2f} · por R2: {cf_r2:.2f} · combinado: {cf_c:.4f}")
+  `}
+  hints={["Con los dos negativos: a + b · (1 + a).", "Y = mínimo, O = máximo."]}
+  check={`
+    assert abs(cf_r1 + 0.16) < 1e-9 and abs(cf_r2 + 0.24) < 1e-9, "CF(C, A∧B) = −0,16 y CF(C, D∨F) = −0,24"
+    assert abs(cf_c + 0.3616) < 1e-9, "Combinados: −0,16 − 0,24 · (1 − 0,16) = −0,3616"
+    assert abs(combinar(0.8, 0.7) - 0.94) < 1e-9, "Viernes y lluvia: 0,8 + 0,7 · 0,2 = 0,94"
+  `}
+>
+Es el ejemplo de la diapositiva "Factores de certeza X": dos reglas con condiciones compuestas y certezas negativas que concluyen lo mismo.
+</CodeExercise>
+
+<Callout kind="warn">
+Los factores de certeza son fáciles de usar pero **no tienen una base matemática sólida**: el resultado puede depender del orden en que se combinan las reglas en cadenas largas y no tratan bien las dependencias entre evidencias. Por eso se abandonaron en favor de las redes bayesianas. Merece la pena conocerlos por su papel histórico y porque la idea de "reglas con confianza" sigue en muchos sistemas de negocio.
+</Callout>
+
+## Teoría de la evidencia (Dempster-Shafer)
+
+Su idea clave: no obligar a repartir la creencia entre hipótesis **sueltas**. Si una evidencia dice "fue Jim o Sally" pero no cuál, se le asigna masa al **conjunto** {Jim, Sally}.
+
+- **Marco de discernimiento** $H$: el conjunto de hipótesis excluyentes y exhaustivas (los sospechosos).
+- **Masa** $m(S)$: la creencia asignada exactamente al conjunto $S$. Suman 1 sobre todos los subconjuntos; $m(\emptyset) = 0$. La masa en $H$ completo representa la **ignorancia**.
+- **Creencia** $\text{Bel}(S) = \sum_{A \subseteq S} m(A)$: lo que la evidencia apoya **seguro** para $S$.
+- **Plausibilidad** $\text{Pl}(S) = \sum_{A \cap S \neq \emptyset} m(A) = 1 - \text{Bel}(\neg S)$: lo que la evidencia **no descarta**.
+- El intervalo $[\text{Bel}, \text{Pl}]$ es la incertidumbre sobre $S$; su anchura mide la ignorancia. Si todos los intervalos se estrechan a un punto, se recupera la probabilidad.
+
+<DempsterShaferSim />
+
+### Combinar evidencias: la regla de Dempster
+
+Dos fuentes de evidencia $m_1$ y $m_2$ se combinan multiplicando las masas de los conjuntos que **intersecan** y renormalizando por el **conflicto** $K$ (la masa que caería en intersecciones vacías):
+
+$$m_{12}(C) = \frac{\sum_{A \cap B = C} m_1(A)\, m_2(B)}{1 - K}, \qquad K = \sum_{A \cap B = \emptyset} m_1(A)\, m_2(B)$$
+
+<CodeExercise
+  id="bel-pl"
+  title="Creencia y plausibilidad (modos de fallo de un proceso)"
+  starter={`
+    # Ejemplo del tema: un proceso industrial con 4 modos de fallo A, B, C y D.
+    m = {
+        frozenset("A"): 0.70, frozenset("B"): 0.05, frozenset("C"): 0.02, frozenset("D"): 0.03,
+        frozenset("AB"): 0.10, frozenset("AD"): 0.05, frozenset("ABCD"): 0.05,
+    }
+
+    def bel(S):
+        S = frozenset(S)
+        return sum(masa for A, masa in m.items() if A <= ___)        # A ⊆ S
+
+    def pl(S):
+        S = frozenset(S)
+        return sum(masa for A, masa in m.items() if A & S)            # A ∩ S ≠ ∅
+
+    for S in ["A", "B", "AB", "ACD"]:
+        print(f"{S:>4}: [Bel, Pl] = [{bel(S):.2f}, {pl(S):.2f}]  incertidumbre = {pl(S) - bel(S):.2f}")
+  `}
+  solution={`
+    # Ejemplo del tema: un proceso industrial con 4 modos de fallo A, B, C y D.
+    m = {
+        frozenset("A"): 0.70, frozenset("B"): 0.05, frozenset("C"): 0.02, frozenset("D"): 0.03,
+        frozenset("AB"): 0.10, frozenset("AD"): 0.05, frozenset("ABCD"): 0.05,
+    }
+
+    def bel(S):
+        S = frozenset(S)
+        return sum(masa for A, masa in m.items() if A <= S)        # A ⊆ S
+
+    def pl(S):
+        S = frozenset(S)
+        return sum(masa for A, masa in m.items() if A & S)            # A ∩ S ≠ ∅
+
+    for S in ["A", "B", "AB", "ACD"]:
+        print(f"{S:>4}: [Bel, Pl] = [{bel(S):.2f}, {pl(S):.2f}]  incertidumbre = {pl(S) - bel(S):.2f}")
+  `}
+  hints={["Con conjuntos de Python, A <= S significa «A es subconjunto de S»."]}
+  check={`
+    assert abs(bel("A") - 0.70) < 1e-9 and abs(pl("A") - 0.90) < 1e-9, "A: [0,70, 0,90] como en las diapositivas"
+    assert abs(bel("AB") - 0.85) < 1e-9, "Bel(A ∪ B) = 0,7 + 0,05 + 0,1 = 0,85"
+    assert abs(pl("ACD") - (1 - bel("B"))) < 1e-9, "Pl(S) = 1 − Bel(complemento de S)"
+  `}
+>
+Los números de la diapositiva "Teoría de la evidencia IX–XI". Implementa `bel` y comprueba los intervalos: el modo de fallo A tiene creencia 0,7 y plausibilidad 0,9.
+</CodeExercise>
+
+<Callout kind="warn" title="El talón de Aquiles: el conflicto">
+Cuando dos fuentes se contradicen mucho ($K$ cercano a 1), la regla de Dempster puede dar resultados absurdos: renormaliza y concede toda la creencia a una hipótesis que ninguna fuente apoyaba con fuerza (la famosa "paradoja de Zadeh"). En la práctica se vigila $K$ y se usan reglas alternativas (Yager, PCR) cuando el conflicto es alto.
+</Callout>
+
+<Callout kind="real">
+Dempster-Shafer se usa en **fusión de sensores** (vehículos autónomos, defensa, robótica: combinar radar, cámara y lidar que pueden decir "no sé"), en sistemas de diagnóstico y en evaluación de fiabilidad. Su gran ventaja frente a Bayes es distinguir "50% porque lo sé" de "50% porque no tengo ni idea".
+</Callout>
+
+<Quiz
+  id="ignorancia"
+  options={[
+    "Bel(A) = 0,5 y Pl(A) = 0,5",
+    "Bel(A) = 0 y Pl(A) = 1: nada la apoya ni la descarta",
+    "Bel(A) = 1 y Pl(A) = 0",
+    "No se puede calcular",
+  ]}
+  answer={1}
+  explanation="Si toda la masa está en el marco completo {A, B}, ningún subconjunto de {A} tiene masa (Bel = 0), pero el marco interseca con A (Pl = 1). El intervalo [0, 1] es la ignorancia total, algo que la probabilidad no puede expresar (tendría que decir 0,5)."
+>
+Con dos hipótesis {A, B} y ninguna evidencia, Dempster-Shafer asigna $m(\{A, B\}) = 1$. ¿Cuánto valen la creencia y la plausibilidad de A?
+</Quiz>
+
+## Para llevar
+
+- Factores de certeza: confianza del experto en [−1, 1]; combinación MYCIN; Y = mínimo, O = máximo; CF = CF_regla · CF_condición. Simples pero sin base sólida.
+- Dempster-Shafer: masas sobre conjuntos de hipótesis; Bel (apoyo seguro) ≤ Pl (lo no descartado).
+- La regla de Dempster combina fuentes renormalizando por el conflicto K; cuidado cuando K es grande.

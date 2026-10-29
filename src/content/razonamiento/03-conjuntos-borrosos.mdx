@@ -1,0 +1,139 @@
+"Persona baja: altura menor de 1,70 m". Con esa definición, alguien de 1,69 es bajo y alguien de 1,71 no. Así no razona nadie. La **lógica borrosa** (Lotfi Zadeh, 1965) permite que un elemento pertenezca a un conjunto **en un grado** entre 0 y 1, como hacen los conceptos del lenguaje natural.
+
+## De lo nítido a lo borroso
+
+Un conjunto clásico (*crisp*) se define con una **función característica**: $\mu_A(x) \in \{0, 1\}$. Un conjunto borroso, con una **función de pertenencia**:
+
+$$\mu_A : X \to [0, 1]$$
+
+En el ejemplo del tema, con "persona baja": alguien de 1,60 pertenece con grado 1; de 1,71, con 0,8; de 1,75, con 0,4; de 1,80, con 0.
+
+<Callout kind="idea" title="Borroso no es probabilidad">
+$\mu_{\text{alto}}(1{,}80) = 0{,}7$ **no** significa "70% de probabilidad de ser alto". La altura se conoce exactamente: lo impreciso es el concepto "alto". La probabilidad mide incertidumbre sobre **si** algo ocurre; la pertenencia borrosa, **hasta qué punto** se cumple un concepto vago.
+</Callout>
+
+### Formas habituales
+
+- **Triangular** $(a, b, c)$: 0 hasta $a$, sube hasta 1 en $b$, baja hasta 0 en $c$.
+- **Trapezoidal** $(a, b, c, d)$: como la triangular, pero con una meseta de 1 entre $b$ y $c$.
+- **Gaussiana**, **sigmoide** o expresiones como "números próximos a cero": $\mu(x) = \frac{1}{1 + 10x^2}$.
+
+Las funciones de pertenencia se obtienen de **expertos** (preguntándoles directamente o a partir de ejemplos) o se **aprenden de datos**.
+
+## Vocabulario de un conjunto borroso
+
+Con el ejemplo del tema: edades $X = \{5, 10, 20, 30, 40, 50, 60, 70, 80\}$ y el conjunto "joven":
+
+$$\text{Joven} = 1/5 + 1/10 + 0{,}8/20 + 0{,}5/30 + 0{,}2/40 + 0{,}1/50$$
+
+(la notación $\mu/x$ significa "el elemento $x$ con grado $\mu$"; el "+" no es una suma).
+
+- **Soporte**: los elementos con grado > 0 → {5, 10, 20, 30, 40, 50}.
+- **Núcleo**: los de grado 1 → {5, 10}.
+- **Altura**: el mayor grado. Si es 1, el conjunto es **normalizado**.
+- **α-corte** $A_\alpha$: el conjunto clásico de elementos con grado ≥ α. $\text{Joven}_{0,5} = \{5, 10, 20, 30\}$.
+- **Cardinalidad escalar**: la suma de los grados.
+- **Convexo**: todos sus α-cortes son intervalos. Un **número borroso** ("aproximadamente 5") es un conjunto borroso convexo, normalizado y continuo.
+
+<CodeExercise
+  id="alfa-corte"
+  title="Soporte, núcleo, α-cortes y cardinalidad"
+  starter={`
+    import numpy as np
+
+    edades = np.array([5, 10, 20, 30, 40, 50, 60, 70, 80])
+    joven  = np.array([1, 1, 0.8, 0.5, 0.2, 0.1, 0, 0, 0])
+
+    soporte = edades[joven ___ 0]
+    nucleo = edades[joven == ___]
+    def alfa_corte(alfa):
+        return edades[joven >= alfa]
+    cardinalidad = joven.___()
+
+    print("Soporte:", soporte)
+    print("Núcleo:", nucleo)
+    print("α = 0,5:", alfa_corte(0.5))
+    print("Cardinalidad:", cardinalidad)
+  `}
+  solution={`
+    import numpy as np
+
+    edades = np.array([5, 10, 20, 30, 40, 50, 60, 70, 80])
+    joven  = np.array([1, 1, 0.8, 0.5, 0.2, 0.1, 0, 0, 0])
+
+    soporte = edades[joven > 0]
+    nucleo = edades[joven == 1]
+    def alfa_corte(alfa):
+        return edades[joven >= alfa]
+    cardinalidad = joven.sum()
+
+    print("Soporte:", soporte)
+    print("Núcleo:", nucleo)
+    print("α = 0,5:", alfa_corte(0.5))
+    print("Cardinalidad:", cardinalidad)
+  `}
+  hints={["El soporte son los grados estrictamente mayores que 0.", "El núcleo, los que valen exactamente 1.", "La cardinalidad escalar es la suma de los grados."]}
+  check={`
+    assert list(soporte) == [5, 10, 20, 30, 40, 50]
+    assert list(nucleo) == [5, 10]
+    assert list(alfa_corte(0.5)) == [5, 10, 20, 30]
+    assert abs(cardinalidad - 3.6) < 1e-9
+  `}
+>
+Calcula las propiedades del conjunto "joven" con máscaras de numpy.
+</CodeExercise>
+
+## Operaciones: complemento, intersección y unión
+
+Las operaciones clásicas se generalizan a grados:
+
+- **Complemento**: $\mu_{\neg A}(x) = 1 - \mu_A(x)$ (hay otras familias: Sugeno, Yager).
+- **Intersección (Y)**: una **t-norma** $T(a, b)$. La estándar es el **mínimo**; otras: producto $a \cdot b$, Łukasiewicz $\max(0, a + b - 1)$.
+- **Unión (O)**: una **t-conorma**. La estándar es el **máximo**; otras: suma probabilística $a + b - ab$, Łukasiewicz $\min(1, a + b)$.
+
+Todas las t-normas cumplen que $T(a, 1) = a$, son conmutativas, asociativas y monótonas; el mínimo es la **mayor** de todas (la menos exigente).
+
+<Callout kind="warn">
+En lógica borrosa no se cumplen dos leyes clásicas: con el mínimo y el máximo, $A \cap \neg A \neq \emptyset$ (algo puede ser "un poco joven y un poco no joven") y $A \cup \neg A \neq X$. No es un fallo: es justo lo que permite modelar conceptos vagos.
+</Callout>
+
+### Modificadores lingüísticos (cercas)
+
+Palabras que refuerzan o suavizan un concepto:
+
+- **"Muy" A** = $\mu_A^2$ (concentración: más exigente).
+- **"Más o menos" A** = $\sqrt{\mu_A}$ (dilatación: más permisivo).
+- **"No" A** = $1 - \mu_A$.
+
+<FuzzySetsSim />
+
+<Predict
+  id="muy-joven"
+  answer={["0.25", "0,25"]}
+  tolerance={0.001}
+  explanation="«Muy» eleva al cuadrado: 0,5² = 0,25. Alguien de 30 años es «joven» en grado 0,5 pero «muy joven» solo en grado 0,25. «Más o menos joven» sería √0,5 ≈ 0,71."
+  hints={["«Muy A» = μ_A²"]}
+>
+Si $\mu_{\text{joven}}(30) = 0{,}5$, ¿con qué grado alguien de 30 años es "muy joven"?
+</Predict>
+
+<Predict
+  id="t-norma"
+  answer={["0.3", "0,3"]}
+  tolerance={0.001}
+  explanation="Łukasiewicz: max(0, 0,7 + 0,6 − 1) = max(0, 0,3) = 0,3. Con el mínimo daría 0,6 y con el producto 0,42: las t-normas son cada vez más exigentes (mínimo ≥ producto ≥ Łukasiewicz)."
+  hints={["T_Łuk(a, b) = max(0, a + b − 1)"]}
+>
+Un día es "caluroso" en grado 0,7 y "húmedo" en grado 0,6. ¿En qué grado es "caluroso Y húmedo" con la t-norma de Łukasiewicz?
+</Predict>
+
+<Callout kind="real">
+Los conjuntos borrosos se usan mucho más de lo que parece, a menudo sin el nombre: la lógica de control de electrodomésticos (lavadoras, aire acondicionado, arroceras japonesas), el ABS y el cambio automático de algunos coches, el enfoque de cámaras, sistemas de recomendación con reglas tipo "precio razonable y valoración alta", y el *fuzzy matching* de textos (aunque ahí "fuzzy" se usa en sentido más informal). En Python: **scikit-fuzzy**.
+</Callout>
+
+## Para llevar
+
+- Pertenencia gradual $\mu_A(x) \in [0, 1]$: modela conceptos vagos, no probabilidad.
+- Soporte (> 0), núcleo (= 1), altura, α-cortes, cardinalidad; número borroso = convexo y normalizado.
+- Complemento $1 - \mu$; Y con t-normas (mínimo, producto, Łukasiewicz); O con t-conormas (máximo, suma probabilística…).
+- "Muy" = cuadrado, "más o menos" = raíz.

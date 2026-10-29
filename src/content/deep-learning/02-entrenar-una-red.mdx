@@ -1,0 +1,184 @@
+Una red empieza con pesos aleatorios y no sabe nada. Entrenar es ajustar millones de pesos para que se equivoque lo menos posible. Para eso hacen falta tres piezas: **una forma de medir el error** (la función de pérdida), **una forma de saber hacia dónde mover cada peso** (backpropagation) y **una forma de moverlo** (descenso del gradiente).
+
+## El bucle de entrenamiento
+
+1. Coge un lote (*batch*) de ejemplos y calcula las predicciones (**forward pass**).
+2. Calcula la **pérdida**: lo lejos que están de las etiquetas.
+3. Calcula el **gradiente** de la pérdida respecto a cada peso (**backward pass**).
+4. Mueve cada peso un poco en la dirección contraria a su gradiente: $w \leftarrow w - \eta \, \frac{\partial L}{\partial w}$.
+5. Repite. Una pasada completa por todos los datos es una **época**.
+
+Según cuántos ejemplos uses en cada paso:
+
+- **SGD estocástico**: 1 ejemplo. Muy ruidoso.
+- **Mini-batch**: entre 32 y 512 (lo habitual). Equilibrio entre ruido, velocidad y uso de la GPU.
+- **Batch completo**: todos. Estable pero lento y caro en memoria.
+
+<MlpTrainerSim />
+
+<Callout kind="idea" title="Lo que enseña apagar neuronas">
+Cada neurona oculta dibuja una "recta difuminada" (una tanh); la salida las combina. Al apagar una, ves qué trozo de la frontera dependía de ella. Con muchas neuronas, apagar una apenas cambia nada: la red tiene **redundancia**. Esa es justo la idea de **dropout**, que apaga neuronas al azar durante el entrenamiento para que ninguna sea imprescindible.
+</Callout>
+
+## Funciones de activación
+
+<ActivationSim />
+
+Reglas prácticas:
+
+- **Capas ocultas**: **ReLU** por defecto (o sus variantes: Leaky ReLU, GELU en transformers). La sigmoide y la tanh se saturan y provocan el **desvanecimiento del gradiente** en redes profundas.
+- **Capa de salida**: depende de la tarea (ver tabla siguiente).
+
+## Funciones de pérdida: emparejar salida y pérdida
+
+| Tarea | Ejemplo de etiqueta | Activación de salida | Pérdida |
+|---|---|---|---|
+| Regresión | `23.5` | lineal (ninguna) | MSE (o MAE, Huber) |
+| Binaria | `1` | sigmoide (1 neurona) | entropía cruzada binaria |
+| Multiclase (una sola clase correcta) | `[0, 0, 1, 0]` | **softmax** ($C$ neuronas) | entropía cruzada categórica |
+| Multietiqueta (varias a la vez) | `[0, 1, 0, 1]` | **sigmoide** ($C$ neuronas) | entropía cruzada binaria |
+
+La **softmax** convierte unas puntuaciones (*logits*) en probabilidades que suman 1:
+
+$$\text{softmax}(z)_c = \frac{e^{z_c}}{\sum_k e^{z_k}}$$
+
+La **entropía cruzada** penaliza con $-\log$ de la probabilidad asignada a la clase correcta: si el modelo le da 0,9, la pérdida es pequeña (0,105); si le da 0,01, es enorme (4,6).
+
+<Callout kind="practice" title="De tus prácticas">
+Los comentarios del notebook de MNIST lo explican muy bien: en **multietiqueta** (una imagen puede tener perro *y* gato), softmax es un error porque obliga a repartir 1 entre las clases (`[0, 0.5, 0, 0.5, 0]`); con sigmoides independientes cada clase puede valer 1 (`[0, 1, 0, 1, 0]`).
+</Callout>
+
+<Predict
+  id="cross-entropy"
+  answer={["0.357", "0,357", "0.36", "0,36", "0.3567", "0,3567"]}
+  tolerance={0.005}
+  explanation="La pérdida solo mira la probabilidad de la clase correcta (la cuarta, 0,7): −ln(0,7) ≈ 0,357. Es el ejemplo de los comentarios de tu notebook."
+  hints={["Con una etiqueta one-hot, todos los términos del sumatorio salvo uno se anulan.", "−ln(0,7)"]}
+>
+La etiqueta es `y = [0, 0, 0, 1, 0]` y la red predice `ŷ = [0, 0.1, 0.2, 0.7, 0.0]`. ¿Cuánto vale la entropía cruzada categórica (con logaritmo natural)?
+</Predict>
+
+<CodeExercise
+  id="softmax-ce"
+  title="Softmax y entropía cruzada con numpy"
+  starter={`
+    import numpy as np
+
+    def softmax(z):
+        z = z - z.max()                # estabilidad numérica: no cambia el resultado
+        e = np.exp(z)
+        return e / ___
+
+    def cross_entropy(y_onehot, probs):
+        return -np.sum(y_onehot * np.___(probs))
+
+    logits = np.array([1.0, 2.0, 0.5, 4.0])
+    y = np.array([0, 0, 0, 1])
+    p = softmax(logits)
+    print("Probabilidades:", p.round(3), "suma:", p.sum())
+    print("Pérdida:", round(cross_entropy(y, p), 4))
+  `}
+  solution={`
+    import numpy as np
+
+    def softmax(z):
+        z = z - z.max()                # estabilidad numérica: no cambia el resultado
+        e = np.exp(z)
+        return e / e.sum()
+
+    def cross_entropy(y_onehot, probs):
+        return -np.sum(y_onehot * np.log(probs))
+
+    logits = np.array([1.0, 2.0, 0.5, 4.0])
+    y = np.array([0, 0, 0, 1])
+    p = softmax(logits)
+    print("Probabilidades:", p.round(3), "suma:", p.sum())
+    print("Pérdida:", round(cross_entropy(y, p), 4))
+  `}
+  hints={["Para que sumen 1, divide entre la suma de todos los exponenciales.", "La entropía cruzada usa el logaritmo natural: np.log."]}
+  check={`
+    assert abs(p.sum() - 1) < 1e-9, "Las probabilidades deben sumar 1"
+    assert abs(cross_entropy(y, p) - (-np.log(np.exp(4) / np.exp(logits).sum()))) < 1e-9
+    big = softmax(np.array([1000.0, 1001.0]))
+    assert np.all(np.isfinite(big)), "Con logits enormes no debería dar NaN (restar el máximo lo evita)"
+  `}
+>
+Implementa las dos funciones. El `z - z.max()` evita que `exp` desborde con logits grandes: un truco que todas las librerías hacen por dentro.
+</CodeExercise>
+
+<Callout kind="real">
+En Keras/PyTorch casi nunca se aplica la softmax "a mano" antes de la pérdida: se pasan los *logits* a una pérdida que la incluye (`CategoricalCrossentropy(from_logits=True)` o `nn.CrossEntropyLoss` en PyTorch), que es más estable numéricamente. Y si las etiquetas son enteros (`3`) en vez de one-hot, se usa `sparse_categorical_crossentropy` y te ahorras `to_categorical`.
+</Callout>
+
+## Backpropagation: la regla de la cadena, aplicada con orden
+
+Para mover un peso necesitamos $\frac{\partial L}{\partial w}$: cuánto cambiaría la pérdida si ese peso cambiase un poco. Con millones de pesos, calcularlo uno a uno sería imposible. **Backpropagation** usa la **regla de la cadena** $\big(f(g(x))\big)' = f'(g(x)) \cdot g'(x)$ recorriendo la red **de la salida hacia la entrada**, reutilizando los cálculos de cada capa para la anterior.
+
+Para una sola neurona con sigmoide y entropía cruzada, la cuenta sale preciosa:
+
+$$z = wx + b, \quad \hat{y} = \sigma(z), \quad \frac{\partial L}{\partial z} = \hat{y} - y, \quad \frac{\partial L}{\partial w} = (\hat{y} - y)\,x, \quad \frac{\partial L}{\partial b} = \hat{y} - y$$
+
+<CodeExercise
+  id="backprop-neurona"
+  title="Entrena una neurona a mano"
+  starter={`
+    import numpy as np
+
+    sigmoid = lambda z: 1 / (1 + np.exp(-z))
+
+    # Horas de estudio -> aprobado
+    x = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    y = np.array([0, 0, 0, 1, 1, 1])
+
+    w, b, lr = 0.0, 0.0, 0.5
+    for epoca in range(2000):
+        y_hat = sigmoid(w * x + b)              # forward
+        dz = y_hat - y                          # dL/dz para sigmoide + entropía cruzada
+        dw = np.mean(dz * ___)                  # dL/dw (media del lote)
+        db = np.mean(___)                       # dL/db
+        w -= lr * dw                            # descenso del gradiente
+        b -= ___
+
+    print(f"w = {w:.2f}, b = {b:.2f}, frontera en x = {-b / w:.2f} horas")
+    print("Predicciones:", (sigmoid(w * x + b) > 0.5).astype(int))
+  `}
+  solution={`
+    import numpy as np
+
+    sigmoid = lambda z: 1 / (1 + np.exp(-z))
+
+    # Horas de estudio -> aprobado
+    x = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    y = np.array([0, 0, 0, 1, 1, 1])
+
+    w, b, lr = 0.0, 0.0, 0.5
+    for epoca in range(2000):
+        y_hat = sigmoid(w * x + b)              # forward
+        dz = y_hat - y                          # dL/dz para sigmoide + entropía cruzada
+        dw = np.mean(dz * x)                  # dL/dw (media del lote)
+        db = np.mean(dz)                       # dL/db
+        w -= lr * dw                            # descenso del gradiente
+        b -= lr * db
+
+    print(f"w = {w:.2f}, b = {b:.2f}, frontera en x = {-b / w:.2f} horas")
+    print("Predicciones:", (sigmoid(w * x + b) > 0.5).astype(int))
+  `}
+  hints={["∂L/∂w = (ŷ − y)·x, promediado sobre los ejemplos.", "El sesgo se actualiza igual que el peso, con su propio gradiente."]}
+  check={`
+    assert list((sigmoid(w * x + b) > 0.5).astype(int)) == list(y), "La neurona debería clasificar bien los 6 ejemplos"
+    assert 3 < -b / w < 4, "La frontera debería quedar entre 3 y 4 horas"
+  `}
+>
+Implementa forward, gradientes y actualización de una neurona logística. Es exactamente lo que hacen Keras y PyTorch por dentro, multiplicado por millones de pesos y con la derivada calculada automáticamente (*autograd*).
+</CodeExercise>
+
+<Callout kind="warn" title="Inicialización">
+Si todos los pesos empiezan en 0, todas las neuronas de una capa calculan lo mismo y reciben el mismo gradiente: nunca se diferencian. Por eso se inicializan **aleatorios** y con una escala pensada para que la señal no explote ni se apague al atravesar capas (Glorot/Xavier para tanh/sigmoide, He para ReLU; los *initializers* de Keras que menciona tu notebook).
+</Callout>
+
+## Para llevar
+
+- Entrenar = forward → pérdida → backward → actualizar, por lotes y durante varias épocas.
+- ReLU en capas ocultas; la salida y la pérdida van emparejadas según la tarea.
+- Softmax + entropía cruzada para multiclase; sigmoide + entropía binaria para binaria y multietiqueta.
+- Backprop es la regla de la cadena aplicada de la salida a la entrada; para sigmoide + CE, $\partial L / \partial z = \hat{y} - y$.

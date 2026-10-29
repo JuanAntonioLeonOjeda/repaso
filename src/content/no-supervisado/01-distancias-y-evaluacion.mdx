@@ -1,0 +1,139 @@
+En el aprendizaje no supervisado no hay respuesta correcta que imitar. Solo tienes datos y una pregunta: **¿qué estructura hay aquí?** Grupos de clientes parecidos, transacciones raras, variables redundantes… Y todo empieza por decidir qué significa "parecido".
+
+<Callout kind="real" title="Dónde se usa">
+- **Segmentación de clientes** para marketing (el dataset de centro comercial de tus prácticas).
+- **Detección de anomalías**: fraude, fallos de máquinas, intrusiones.
+- **Compresión y visualización** de datos con muchas columnas (PCA, t-SNE, UMAP).
+- **Preetiquetado**: agrupar miles de documentos o imágenes para que una persona etiquete grupos en vez de ejemplos sueltos.
+- **Recomendación**: "clientes que compran X también compran Y" (reglas de asociación).
+</Callout>
+
+## Similitud y distancia
+
+Una **distancia** (disimilitud) es pequeña cuando dos ejemplos se parecen; una **similitud**, grande. Cuál elegir depende del tipo de dato:
+
+### Variables numéricas
+
+- **Euclídea**: la de toda la vida, $\sqrt{\sum (a_j - b_j)^2}$. Sensible a la escala: estandariza antes.
+- **Manhattan**: $\sum \lvert a_j - b_j \rvert$, "en cuadrícula". Algo más robusta a atípicos.
+- **Minkowski**: generaliza las dos, $\left(\sum \lvert a_j - b_j \rvert^p\right)^{1/p}$ ($p=1$ Manhattan, $p=2$ euclídea).
+- **Coseno**: mide el **ángulo** entre vectores, no su longitud: $\cos(a,b) = \frac{a \cdot b}{\lVert a\rVert \lVert b\rVert}$. Es la estándar para texto y *embeddings*: un documento largo y uno corto sobre el mismo tema apuntan en la misma dirección.
+
+### Variables binarias y categóricas
+
+- **Hamming**: número de posiciones distintas.
+- **Jaccard**: $\frac{\lvert A \cap B \rvert}{\lvert A \cup B \rvert}$, ignorando los "ceros compartidos". Ideal para cestas de la compra: que dos clientes **no** hayan comprado caviar no los hace parecidos.
+- Categóricas: 0 si coinciden, 1 si no.
+
+Con **tipos mezclados** se calcula una distancia por variable, se normaliza y se combinan (distancia de Gower).
+
+<Predict
+  id="coseno"
+  answer={["1", "1.0", "1,0"]}
+  tolerance={0.001}
+  explanation="(2, 4) = 2 · (1, 2): apuntan en la misma dirección, así que el ángulo es 0 y el coseno, 1. La distancia euclídea entre ellos es √5 ≈ 2,24, pero para el coseno son idénticos. Por eso se usa en texto: un artículo el doble de largo con las mismas proporciones de palabras es 'el mismo tema'."
+  hints={["Fíjate en la relación entre los dos vectores antes de calcular nada.", "a·b = 1·2 + 2·4 = 10; ‖a‖‖b‖ = √5 · √20 = 10"]}
+>
+¿Cuál es la similitud del coseno entre $a = (1, 2)$ y $b = (2, 4)$?
+</Predict>
+
+<Predict
+  id="jaccard"
+  answer={["0.4", "0,4", "2/5"]}
+  tolerance={0.001}
+  explanation="Productos en común: {pan, leche} = 2. Productos en total (unión): {pan, leche, huevos, café, galletas} = 5. Jaccard = 2/5 = 0,4."
+  hints={["Intersección: los productos que están en las dos cestas.", "Unión: todos los productos distintos que aparecen en alguna."]}
+>
+Cesta A = {pan, leche, huevos}; cesta B = {pan, leche, café, galletas}. ¿Cuál es su similitud de Jaccard?
+</Predict>
+
+## ¿Cómo sé si mis grupos son buenos?
+
+Es la gran pregunta del clustering, y la respuesta honesta es: **depende de para qué los quieras**. Hay dos familias de medidas.
+
+### Evaluación extrínseca: tengo etiquetas reales
+
+A veces sí tienes la "verdad" (por ejemplo, para comprobar un método en un dataset conocido, como los dígitos). Entonces comparas los grupos con las clases:
+
+- **Pureza**: para cada cluster, la proporción de su clase mayoritaria (ponderada). Fácil de entender, pero sube artificialmente con muchos clusters.
+- **Información mutua normalizada (NMI)** y **Adjusted Rand Index (ARI)**: miden el acuerdo entre dos particiones **sin importar cómo se numeren los grupos**. ARI vale 0 para un agrupamiento aleatorio y 1 para uno perfecto. Son las que usan tus notebooks (`adjusted_rand_score`, `normalized_mutual_info_score`).
+
+<Callout kind="warn">
+Las etiquetas de un clustering son arbitrarias: el "cluster 0" de k-means no tiene por qué ser la "clase 0". Por eso no puedes usar `accuracy_score` directamente: primero hay que emparejar cada cluster con su clase (por la moda, o con el algoritmo húngaro, como hace la función `acc` del notebook de deep clustering). ARI y NMI ya lo resuelven solas.
+</Callout>
+
+### Evaluación intrínseca: no tengo etiquetas (lo normal)
+
+Miden si los grupos son **compactos** por dentro y están **separados** entre sí:
+
+- **Silueta**: para cada punto, $s = \frac{b - a}{\max(a, b)}$, donde $a$ es la distancia media a los de su cluster y $b$ la distancia media al cluster vecino más cercano. Va de −1 (mal asignado) a 1 (perfecto). Se promedia.
+- **Calinski-Harabasz**: dispersión entre clusters / dispersión dentro. Más alto, mejor.
+- **Inercia / SSE** (suma de distancias al centroide): siempre baja al subir $k$; se usa con el "método del codo".
+
+<CodeExercise
+  id="elegir-k"
+  title="Elige k con la silueta"
+  starter={`
+    from sklearn.datasets import make_blobs
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import silhouette_score
+
+    X, _ = make_blobs(n_samples=500, centers=4, cluster_std=0.9, random_state=7)
+
+    siluetas = {}
+    for k in range(2, 8):
+        etiquetas = KMeans(n_clusters=k, n_init=10, random_state=0).fit_predict(X)
+        siluetas[k] = ___(X, etiquetas)
+        print(k, round(siluetas[k], 3))
+
+    mejor_k = max(siluetas, key=siluetas.get)
+    print("Mejor k:", mejor_k)
+  `}
+  solution={`
+    from sklearn.datasets import make_blobs
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import silhouette_score
+
+    X, _ = make_blobs(n_samples=500, centers=4, cluster_std=0.9, random_state=7)
+
+    siluetas = {}
+    for k in range(2, 8):
+        etiquetas = KMeans(n_clusters=k, n_init=10, random_state=0).fit_predict(X)
+        siluetas[k] = silhouette_score(X, etiquetas)
+        print(k, round(siluetas[k], 3))
+
+    mejor_k = max(siluetas, key=siluetas.get)
+    print("Mejor k:", mejor_k)
+  `}
+  hints={["La función ya está importada; recibe los datos y las etiquetas."]}
+  check={`
+    assert mejor_k == 4, "Los datos se generaron con 4 grupos: la silueta debería elegir k = 4"
+  `}
+>
+Genera datos con 4 grupos y deja que la silueta "descubra" cuántos hay.
+</CodeExercise>
+
+<Callout kind="real">
+En un proyecto real, las métricas intrínsecas son una ayuda, no la respuesta. Una segmentación de clientes con silueta 0,4 que marketing entiende y puede usar ("jóvenes con alto gasto", "familias que compran en oferta") vale más que una con 0,7 imposible de interpretar. Valida los grupos con quien los va a usar: describe cada cluster con las medias de sus variables y ponle nombre.
+</Callout>
+
+<Quiz
+  id="metrica-texto"
+  options={[
+    "Euclídea sobre el número de veces que aparece cada palabra",
+    "Coseno sobre los vectores TF-IDF (o embeddings) de cada documento",
+    "Hamming sobre la presencia o ausencia de cada palabra",
+    "Manhattan sobre la longitud de los documentos",
+  ]}
+  answer={1}
+  explanation="El coseno ignora la longitud y compara la 'dirección' (de qué se habla). Es la distancia estándar en texto, tanto con TF-IDF clásico como con embeddings de modelos de lenguaje."
+>
+Quieres agrupar noticias por tema. Algunas tienen 200 palabras y otras 3.000. ¿Qué distancia usas?
+</Quiz>
+
+## Para llevar
+
+- "Parecido" depende de la distancia: euclídea (numéricas escaladas), coseno (texto, embeddings), Jaccard (conjuntos).
+- Con etiquetas, compara con ARI o NMI (no con accuracy a pelo).
+- Sin etiquetas, silueta y Calinski-Harabasz miden compacidad y separación.
+- La validación definitiva de un clustering es que sea útil e interpretable para quien lo usa.
