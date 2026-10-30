@@ -23,6 +23,18 @@ DATASETS = ROOT / "public" / "datasets"
 # A JSX prop holding a template literal: name={`...`}
 PROP = r"{name}=\{{`(.*?)`\}}"
 
+# Pyodide runs code with top-level `await` allowed (the FastAPI exercises call the app with
+# `await client.get(...)`); CPython needs the compile flag and an event loop for that.
+RUNNER = """
+import ast, asyncio, inspect, sys
+with open(sys.argv[1]) as f:
+    source = f.read()
+code = compile(source, "<exec>", "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
+result = eval(code, {"__name__": "__main__"})
+if inspect.iscoroutine(result):
+    asyncio.run(result)
+"""
+
 
 def template_literal(raw: str) -> str:
     """What JavaScript makes of a template literal: escapes resolved, then dedented."""
@@ -48,9 +60,11 @@ def run(code: str, files: list[str]) -> tuple[bool, str]:
     with tempfile.TemporaryDirectory() as tmp:
         for name in files:
             shutil.copy(DATASETS / name, tmp)
+        script = Path(tmp) / "__exercise__.py"
+        script.write_text(code)
         env = {**os.environ, "MPLBACKEND": "Agg", "PYTHONHASHSEED": "0"}
         proc = subprocess.run(
-            [sys.executable, "-I", "-c", code],
+            [sys.executable, "-I", "-c", RUNNER, str(script)],
             cwd=tmp,
             capture_output=True,
             text=True,

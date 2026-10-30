@@ -50,7 +50,20 @@ def __collect_figures():
 __collect_figures()
 `;
 
+// WebAssembly Python has no threads, but Starlette runs every `def` endpoint and dependency
+// in a thread pool (anyio.to_thread). Running them inline gives the same results in a
+// single-threaded page; the FastAPI lessons explain what changes on a real server (ADR-0005).
+// The patch lasts for the worker's life (anyio stays imported); exercises load anyio through
+// their imports, so it is in place before the learner's code runs.
+const INLINE_THREADPOOL = `
+import anyio.to_thread
+async def __run_sync_inline(func, *args, abandon_on_cancel=False, cancellable=None, limiter=None):
+    return func(*args)
+anyio.to_thread.run_sync = __run_sync_inline
+`;
+
 let pyodidePromise: Promise<PyodideAPI> | null = null;
+let isThreadpoolInlined = false;
 
 function post(message: WorkerMessage): void {
   self.postMessage(message);
@@ -100,6 +113,10 @@ async function execute(pyodide: PyodideAPI, request: RunRequest): Promise<RunOut
   const source = request.check === null ? request.code : `${request.code}\n${request.check}`;
   setStatus("installing");
   await pyodide.loadPackagesFromImports(source);
+  if (!isThreadpoolInlined && "anyio" in pyodide.loadedPackages) {
+    await pyodide.runPythonAsync(INLINE_THREADPOOL);
+    isThreadpoolInlined = true;
+  }
   await copyDatasets(pyodide, request.files);
   setStatus("ready");
 
