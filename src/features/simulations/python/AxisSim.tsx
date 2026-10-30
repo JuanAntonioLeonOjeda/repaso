@@ -10,7 +10,8 @@ const MATRIX = [
   [6, 1, 4, 9],
 ];
 const W = 560;
-const H = 230;
+// tall enough for the axis=0 result row under the matrix (Y0 + 3·CELL + 14 + 34 = 250)
+const H = 262;
 const CELL = 54;
 const X0 = 40;
 const Y0 = 40;
