@@ -1,6 +1,6 @@
 # ADR-0004: TFM patient-derived images stay on this machine
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-30
 
 ## Context
