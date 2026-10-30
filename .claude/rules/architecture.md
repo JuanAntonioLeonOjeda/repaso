@@ -11,7 +11,7 @@ A static single-page app (Vite + React + React Router). No server code: nginx se
 ```
 src/
   content/              # the lessons
-    catalog.ts          # subjects in home-page order
+    catalog.ts          # subjects in home-page order, the TFM and the extras (tutorials)
     define-lesson.ts    # catalog entry + lazy component per lesson
     <subject>/index.ts  # the subject and its lessons (metadata, exercise ids, sources)
     <subject>/NN-<slug>.mdx

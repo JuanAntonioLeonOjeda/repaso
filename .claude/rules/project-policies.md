@@ -26,6 +26,11 @@ Python in the browser.
   its notebooks, exams and practices live in `../asignaturas/python-para-ia/` (only its PDF is
   in `Asignaturas/Python para IA/`). That subject is deliberately practical: most exercises
   are past exam questions.
+- **Expandir conocimientos** (`extras` in `catalog.ts`): practical tutorials beyond the
+  syllabus, browsed like a subject. The first is FastAPI (`src/content/fastapi/`). Its
+  exercises run FastAPI in Pyodide with an inline thread pool and call the app with
+  `httpx.AsyncClient` and top-level `await` (ADR-0005); `TestClient` and pytest appear only in
+  non-runnable code.
 
 Priority: **correct and useful content over features**. A wrong formula or a broken exercise
 is a bug of the highest severity; a missing feature is not.
@@ -72,8 +77,9 @@ message that the image was rebuilt (or why it was not).
 - The Pyodide version is pinned in two places that must agree: the `pyodide` devDependency
   (types) and `PYODIDE_VERSION` in `src/features/python/python.worker.ts`. Packages used in
   exercises must exist in that Pyodide release (numpy, pandas, scikit-learn, scipy,
-  matplotlib, networkx, Pillow, nltk without corpora, opencv-python, beautifulsoup4…);
-  TensorFlow, PyTorch and seaborn do not.
+  matplotlib, networkx, Pillow, nltk without corpora, opencv-python, beautifulsoup4, fastapi,
+  starlette, httpx, sqlalchemy, bcrypt…); TensorFlow, PyTorch, seaborn, PyJWT,
+  python-multipart, SQLModel and pydantic-settings do not.
 - When a main dependency is added or upgraded, update its badge in the README.
 
 ## Language
