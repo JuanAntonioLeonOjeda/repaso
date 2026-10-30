@@ -9,7 +9,8 @@ export type SubjectSlug =
   | "refuerzo"
   | "optimizacion"
   | "razonamiento"
-  | "tfm";
+  | "tfm"
+  | "fastapi";
 
 export interface Lesson {
   slug: string;

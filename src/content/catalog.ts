@@ -1,4 +1,5 @@
 import { deepLearning } from "./deep-learning";
+import { fastapi } from "./fastapi";
 import { noSupervisado } from "./no-supervisado";
 import { optimizacion } from "./optimizacion";
 import { python } from "./python";
@@ -22,5 +23,8 @@ export const subjects: readonly Subject[] = [
 /** The master's thesis: shown apart from the subjects, but browsed like one. */
 export { tfm };
 
-/** Every browsable section (subjects and the TFM), for routing and progress. */
-export const sections: readonly Subject[] = [...subjects, tfm];
+/** "Expandir conocimientos": tutorials beyond the master's syllabus, browsed like a subject. */
+export const extras: readonly Subject[] = [fastapi];
+
+/** Every browsable section (subjects, the TFM and the extras), for routing and progress. */
+export const sections: readonly Subject[] = [...subjects, tfm, ...extras];
