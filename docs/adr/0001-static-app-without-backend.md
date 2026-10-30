@@ -1,6 +1,6 @@
 # ADR-0001: A static app without a backend
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-29
 
 ## Context
