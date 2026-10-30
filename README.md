@@ -6,6 +6,8 @@ asignatura es una serie de lecciones que resumen el temario en lenguaje cercano,
 pista y solución), y notas de cómo se hace cada cosa en un trabajo real.
 
 - 6 asignaturas · 43 lecciones · 39 simulaciones · 137 ejercicios.
+- Una sección del **TFM** (LumosNet sobre LUMOS): 9 lecciones conectadas con el temario, 8
+  simulaciones más y la bitácora de experimentos reevaluada.
 - Funciona en local con Docker. Sin cuentas ni servidor: el progreso se guarda en el navegador.
 - El Python de los ejercicios (numpy, pandas, scikit-learn, matplotlib…) se ejecuta con
   Pyodide, que se descarga de un CDN la primera vez (hace falta conexión).
@@ -45,6 +47,17 @@ pnpm test           # Vitest
 pnpm lint
 pnpm typecheck
 pnpm build
+```
+
+## Imágenes del TFM (solo en local)
+
+Las radiografías, mapas de activación y Grad-CAM salen de pacientes de LUMOS, así que no están
+en el repositorio ni en la imagen de Docker (ADR-0004). Se generan con el entorno del TFM y
+Docker las monta como volumen:
+
+```bash
+../tfm/.venv/bin/python scripts/tfm/export_assets.py --tfm ../tfm      # → public/tfm-local/
+../tfm/.venv/bin/python scripts/tfm/experiment_metrics.py --tfm ../tfm # métricas agregadas
 ```
 
 ## Comprobar los ejercicios
