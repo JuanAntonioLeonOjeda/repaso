@@ -3,6 +3,7 @@ import type { MDXComponents } from "mdx/types";
 import { CodeExercise, Predict, Quiz, RunCode } from "@/features/exercises";
 import { illustrations } from "@/features/illustrations";
 import { simulations } from "@/features/simulations";
+import { ExperimentPlots, ExperimentTable, LocalImage, Temario } from "@/features/tfm";
 import { Callout, Figure } from "@/features/ui";
 
 /**
@@ -16,6 +17,10 @@ export const mdxComponents: MDXComponents = {
   Predict,
   CodeExercise,
   RunCode,
+  Temario,
+  ExperimentTable,
+  ExperimentPlots,
+  LocalImage,
   ...illustrations,
   ...simulations,
 };
