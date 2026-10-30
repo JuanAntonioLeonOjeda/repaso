@@ -127,6 +127,13 @@ export function SubjectIcon({ slug, size = 56 }: { slug: SubjectSlug; size?: num
           <path d="M42 12 l8 -6 M42 24 l8 -6" opacity={0.6} />
         </svg>
       );
+    case "fastapi":
+      return (
+        <svg {...common}>
+          <circle cx="28" cy="28" r="22" opacity={0.45} />
+          <path d="M31 9 L17 31 H28 L25 47 L39 25 H28 Z" fill="currentColor" fillOpacity={0.2} />
+        </svg>
+      );
     default: {
       const unreachable: never = slug;
       return unreachable;

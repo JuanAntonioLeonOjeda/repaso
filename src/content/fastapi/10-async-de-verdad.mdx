@@ -1,0 +1,302 @@
+FastAPI deja escribir los endpoints con `def` o con `async def`, y la elección no es estética: un `async def` mal usado puede hacer que tu API atienda **una petición cada vez** aunque tenga cien esperando. Es el error de rendimiento más frecuente en proyectos con FastAPI, y se entiende con una sola idea: **qué hace el servidor mientras espera**.
+
+## Esperar sin bloquear
+
+Casi todo el tiempo de una petición típica se va en **esperar**: a la base de datos, a otra API, al disco. Durante esa espera la CPU no hace nada. `async`/`await` aprovecha ese hueco:
+
+- El servidor tiene un **event loop**: un único hilo que va atendiendo tareas.
+- Cuando una tarea llega a un `await` de algo que tarda (una consulta, una petición HTTP), **cede el turno** y el loop atiende a otra.
+- Cuando la espera termina, la tarea retoma donde se quedó.
+
+La trampa: si dentro de un `async def` llamas a algo que espera **sin** `await` (`time.sleep`, `requests.get`, un driver de base de datos síncrono), el loop entero se queda parado esperando contigo, y todas las demás peticiones también.
+
+<EventLoopSim />
+
+<Predict
+  id="bloqueo"
+  answer={["500", "500 ms"]}
+  explanation="Con una llamada bloqueante dentro de async def, el event loop no puede atender a nadie más durante la espera: las 5 peticiones van una detrás de otra, 5 × 100 = 500 ms. Con await, las esperas se solapan y la última responde a los 100 ms."
+  hints={["Pon la simulación en ese caso: 5 peticiones, E/S 100 ms, CPU 0.", "Bloqueando, las esperas no se solapan: se suman."]}
+>
+5 peticiones simultáneas, cada una espera 100 ms a la base de datos (sin trabajo de CPU), con un `async def` que llama a `time.sleep(0.1)`. ¿A los cuántos milisegundos responde la última?
+</Predict>
+
+## La regla para elegir
+
+FastAPI es listo con los `def`: los ejecuta en un **pool de hilos** (40 por defecto), así que un `def` que bloquea solo ocupa un hilo y no para el loop. Eso da una regla sencilla:
+
+| Lo que hace el endpoint | Escríbelo con |
+|---|---|
+| llama a librerías `async` con `await` (`httpx.AsyncClient`, `asyncpg`, `AsyncSession`) | `async def` |
+| llama a librerías **síncronas** que esperan (`requests`, SQLAlchemy síncrono, `boto3`) | `def` |
+| calcula sin esperar a nada (validar, transformar un dict) | cualquiera; `async def` se ahorra el salto al hilo |
+| mucha CPU (un modelo grande, procesar imágenes) | `def`, y varios procesos (ver abajo) |
+
+<Quiz
+  id="elegir-def"
+  options={[
+    "async def, porque es más rápido",
+    "def, porque requests y la sesión síncrona bloquean; FastAPI lo ejecutará en un hilo",
+    "async def, y poner await delante de requests.get",
+    "Da igual",
+  ]}
+  answer={1}
+  explanation="requests y la Session síncrona de SQLAlchemy esperan bloqueando. En un def, FastAPI los ejecuta en el pool de hilos y el event loop sigue libre. En un async def bloquearían el loop entero. Y no se puede hacer await de requests.get: no devuelve nada esperable (daría TypeError). Para ir con async habría que cambiar a httpx.AsyncClient y AsyncSession."
+  hints={["¿requests.get devuelve algo sobre lo que se pueda hacer await?"]}
+>
+Un endpoint consulta la base de datos con la `Session` síncrona de SQLAlchemy y luego llama a otra API con `requests.get`. ¿Cómo lo declaras?
+</Quiz>
+
+<Callout kind="note" title="En el navegador no hay hilos">
+En esta página, Python no tiene hilos, así que los endpoints `def` se ejecutan directamente en el mismo hilo (lo explica el ADR-0005 del proyecto). Los resultados de los ejercicios son los mismos que en un servidor, pero aquí un `def` lento sí bloquearía: para ver el comportamiento real, la simulación de arriba.
+</Callout>
+
+## Varias esperas a la vez: gather
+
+`await` una detrás de otra suma los tiempos. Si las esperas son **independientes** (pedir el tiempo, el stock y el precio a tres servicios distintos), `asyncio.gather` las lanza a la vez y espera a todas: el tiempo total es el de la más lenta.
+
+<CodeExercise
+  id="gather"
+  title="Tres servicios a la vez"
+  starter={`
+    import asyncio
+    import time
+
+    import httpx
+    from fastapi import FastAPI
+
+    # Tres servicios externos de mentira: cada uno tarda 0,2 s en contestar
+    async def get_stock(wine_id: int) -> int:
+        await asyncio.sleep(0.2)
+        return 12
+
+    async def get_price(wine_id: int) -> float:
+        await asyncio.sleep(0.2)
+        return 9.5
+
+    async def get_reviews(wine_id: int) -> list[int]:
+        await asyncio.sleep(0.2)
+        return [4, 5, 3]
+
+    app = FastAPI()
+
+    @app.get("/wines/{wine_id}/summary")
+    async def wine_summary(wine_id: int):
+        stock, price, reviews = ___
+        return {"stock": stock, "price": price, "rating": sum(reviews) / len(reviews)}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    start = time.perf_counter()
+    print((await client.get("/wines/7/summary")).json())
+    print(f"{time.perf_counter() - start:.2f} s")
+  `}
+  solution={`
+    import asyncio
+    import time
+
+    import httpx
+    from fastapi import FastAPI
+
+    # Tres servicios externos de mentira: cada uno tarda 0,2 s en contestar
+    async def get_stock(wine_id: int) -> int:
+        await asyncio.sleep(0.2)
+        return 12
+
+    async def get_price(wine_id: int) -> float:
+        await asyncio.sleep(0.2)
+        return 9.5
+
+    async def get_reviews(wine_id: int) -> list[int]:
+        await asyncio.sleep(0.2)
+        return [4, 5, 3]
+
+    app = FastAPI()
+
+    @app.get("/wines/{wine_id}/summary")
+    async def wine_summary(wine_id: int):
+        stock, price, reviews = await asyncio.gather(
+            get_stock(wine_id), get_price(wine_id), get_reviews(wine_id)
+        )
+        return {"stock": stock, "price": price, "rating": sum(reviews) / len(reviews)}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    start = time.perf_counter()
+    print((await client.get("/wines/7/summary")).json())
+    print(f"{time.perf_counter() - start:.2f} s")
+  `}
+  hints={[
+    "Con tres await seguidos funciona, pero tarda 0,6 s.",
+    "asyncio.gather(corrutina1, corrutina2, corrutina3) las ejecuta a la vez y devuelve sus resultados en orden.",
+    "stock, price, reviews = await asyncio.gather(get_stock(wine_id), get_price(wine_id), get_reviews(wine_id))",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _t = time.perf_counter()
+    _r = (await _c.get("/wines/1/summary")).json()
+    _elapsed = time.perf_counter() - _t
+    assert _r == {"stock": 12, "price": 9.5, "rating": 4.0}, "El resumen debe combinar los tres servicios"
+    assert _elapsed < 0.45, f"Ha tardado {_elapsed:.2f} s: las tres llamadas deben ir a la vez (unos 0,2 s), no una detrás de otra (0,6 s)"
+  `}
+>
+Pide los tres datos **a la vez**. La salida muestra el tiempo: unos 0,2 s en vez de 0,6.
+</CodeExercise>
+
+## Una librería síncrona dentro de async def
+
+A veces el endpoint es `async def` (porque hace otras cosas con `await`) pero tiene que llamar a algo síncrono y lento, como el `predict` de un modelo de scikit-learn. La solución es mandar esa llamada al pool de hilos con `run_in_threadpool`, para que no bloquee el loop. Tu TFM lo hace exactamente así en su API.
+
+<CodeExercise
+  id="threadpool"
+  title="No bloquear el loop con un modelo síncrono"
+  starter={`
+    import asyncio
+
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.concurrency import run_in_threadpool
+
+    class SlowModel:
+        def predict(self, alcohol: float) -> int:
+            # Imagina 200 ms de CPU de scikit-learn: síncrono, sin await posible
+            return 7 if alcohol > 12 else 5
+
+    model = SlowModel()
+    app = FastAPI()
+
+    async def log_request(alcohol: float) -> None:
+        await asyncio.sleep(0)   # escribir en un log asíncrono
+
+    @app.get("/predict")
+    async def predict(alcohol: float):
+        await log_request(alcohol)
+        quality = ___
+        return {"quality": quality}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/predict", params={"alcohol": 13})).json())
+  `}
+  solution={`
+    import asyncio
+
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.concurrency import run_in_threadpool
+
+    class SlowModel:
+        def predict(self, alcohol: float) -> int:
+            # Imagina 200 ms de CPU de scikit-learn: síncrono, sin await posible
+            return 7 if alcohol > 12 else 5
+
+    model = SlowModel()
+    app = FastAPI()
+
+    async def log_request(alcohol: float) -> None:
+        await asyncio.sleep(0)   # escribir en un log asíncrono
+
+    @app.get("/predict")
+    async def predict(alcohol: float):
+        await log_request(alcohol)
+        quality = await run_in_threadpool(model.predict, alcohol)
+        return {"quality": quality}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/predict", params={"alcohol": 13})).json())
+  `}
+  hints={[
+    "Llamar a model.predict(alcohol) directamente funciona, pero bloquea el event loop mientras calcula.",
+    "run_in_threadpool recibe la función (sin llamarla) y sus argumentos, y hay que esperarla con await.",
+    "quality = await run_in_threadpool(model.predict, alcohol)",
+  ]}
+  check={`
+    _calls = []
+    _original = run_in_threadpool
+    async def run_in_threadpool(func, *args, **kwargs):
+        _calls.append(getattr(func, "__name__", ""))
+        return await _original(func, *args, **kwargs)
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    assert (await _c.get("/predict", params={"alcohol": 13})).json() == {"quality": 7}, "alcohol=13 debe dar quality 7"
+    assert (await _c.get("/predict", params={"alcohol": 10})).json() == {"quality": 5}, "alcohol=10 debe dar quality 5"
+    assert "predict" in _calls, "model.predict debe ejecutarse con run_in_threadpool, no llamado directamente dentro del async def"
+  `}
+>
+Ejecuta `model.predict` en el pool de hilos desde el `async def`.
+</CodeExercise>
+
+## Tareas después de responder
+
+Hay trabajo que el cliente no necesita esperar: guardar un registro de auditoría, mandar un email, actualizar una estadística. `BackgroundTasks` lo ejecuta **después de enviar la respuesta**:
+
+<CodeExercise
+  id="background"
+  title="Auditoría en segundo plano"
+  starter={`
+    import httpx
+    from fastapi import BackgroundTasks, FastAPI
+
+    AUDIT = []
+
+    def write_audit(user: str, action: str) -> None:
+        AUDIT.append(f"{user}: {action}")
+
+    app = FastAPI()
+
+    @app.post("/predictions")
+    def predict(alcohol: float, background: ___):
+        quality = 7 if alcohol > 12 else 5
+        ___                       # registrar "demo: predict alcohol=<alcohol>" en segundo plano
+        return {"quality": quality}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.post("/predictions", params={"alcohol": 12.5})).json())
+    print(AUDIT)
+  `}
+  solution={`
+    import httpx
+    from fastapi import BackgroundTasks, FastAPI
+
+    AUDIT = []
+
+    def write_audit(user: str, action: str) -> None:
+        AUDIT.append(f"{user}: {action}")
+
+    app = FastAPI()
+
+    @app.post("/predictions")
+    def predict(alcohol: float, background: BackgroundTasks):
+        quality = 7 if alcohol > 12 else 5
+        background.add_task(write_audit, "demo", f"predict alcohol={alcohol}")
+        return {"quality": quality}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.post("/predictions", params={"alcohol": 12.5})).json())
+    print(AUDIT)
+  `}
+  hints={[
+    "FastAPI inyecta el objeto si anotas el parámetro con su clase: background: BackgroundTasks.",
+    "add_task recibe la función (sin llamarla) y sus argumentos.",
+    "background.add_task(write_audit, \"demo\", f\"predict alcohol={alcohol}\")",
+  ]}
+  check={`
+    AUDIT.clear()
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    assert (await _c.post("/predictions", params={"alcohol": 9.5})).json() == {"quality": 5}, "La respuesta no cambia: quality 5 para alcohol 9.5"
+    assert AUDIT == ["demo: predict alcohol=9.5"], "Tras la petición, la auditoría debe tener 'demo: predict alcohol=9.5'"
+  `}
+>
+Registra la auditoría con `BackgroundTasks` en vez de hacerla antes de responder.
+</CodeExercise>
+
+<Callout kind="real" title="Cómo se hace en el trabajo">
+- `BackgroundTasks` corre **en el mismo proceso**: si el servidor se reinicia, la tarea se pierde, y una tarea pesada le quita CPU a las peticiones. Para trabajo largo o que no puede perderse (reentrenar un modelo, procesar un lote, mandar mil emails) se usa una **cola**: Celery, RQ o Dramatiq con Redis, o la cola de tu nube (SQS, Pub/Sub), con *workers* aparte.
+- El GIL hace que ni `async` ni los hilos repartan el **trabajo de CPU** de Python: para eso, varios **procesos** (`uvicorn --workers 4`, o varias réplicas en Kubernetes). Las librerías como NumPy, scikit-learn o PyTorch sueltan el GIL en sus partes en C, así que los hilos ayudan algo con ellas, pero no cuentes con ello.
+- Para un modelo grande en GPU, lo habitual es separarlo en un servidor de inferencia propio (Triton, BentoML, Ray Serve, o vLLM para LLMs) y que la API lo llame con `await`.
+- Las llamadas a otros servicios llevan siempre **timeout** (`httpx.AsyncClient(timeout=5)`): sin él, un servicio colgado deja tus peticiones esperando para siempre.
+</Callout>
+
+## Para llevar
+
+- `async def` + `await` libera el event loop durante las esperas; algo bloqueante dentro de un `async def` lo para entero.
+- `def` va al pool de hilos: es lo correcto para librerías síncronas.
+- `asyncio.gather` para esperas independientes en paralelo.
+- `run_in_threadpool` para llamar a algo síncrono y lento desde un `async def`.
+- `BackgroundTasks` para lo pequeño después de responder; una cola para lo grande. Para CPU, más procesos.

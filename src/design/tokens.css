@@ -61,6 +61,9 @@
   /* The TFM: the graphite blue of a radiograph */
   --subject-tfm: #3b5174;
   --subject-tfm-soft: #e3e9f3;
+  /* Extras (tutorials beyond the master) */
+  --subject-fastapi: #3f7d20;
+  --subject-fastapi-soft: #e6f2dd;
 
   /* Categorical palette for plots (clusters, classes, series) */
   --plot-1: #2f6fed;
@@ -159,6 +162,8 @@
   --subject-razonamiento-soft: #0f2b33;
   --subject-tfm: #a9bcdc;
   --subject-tfm-soft: #1b2539;
+  --subject-fastapi: #9fd67a;
+  --subject-fastapi-soft: #1c2a12;
 
   --plot-1: #6f9bff;
   --plot-2: #ff8f4d;

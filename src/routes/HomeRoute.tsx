@@ -2,7 +2,8 @@ import { ArrowRight } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { Link } from "react-router";
 
-import { subjects, tfm } from "@/content/catalog";
+import { extras, subjects, tfm } from "@/content/catalog";
+import type { Subject } from "@/content/types";
 import {
   ProgressRing,
   resolveLessonKey,
@@ -10,10 +11,47 @@ import {
   subjectColourStyle,
   subjectProgress,
 } from "@/features/catalog";
-import { useProgress } from "@/features/progress";
+import { useProgress, type Progress } from "@/features/progress";
 import { es } from "@/i18n/es";
 
 import styles from "./Pages.module.css";
+
+function SubjectGrid({
+  items,
+  progress,
+}: {
+  items: readonly Subject[];
+  progress: Progress;
+}): ReactNode {
+  return (
+    <ul className={styles.subjectGrid}>
+      {items.map((subject) => {
+        const p = subjectProgress(subject, progress);
+        return (
+          <li key={subject.slug} style={subjectColourStyle(subject.slug)}>
+            <Link to={`/${subject.slug}`} className={styles.subjectCard}>
+              <span className={styles.subjectIcon}>
+                <SubjectIcon slug={subject.slug} />
+              </span>
+              <span className={styles.subjectCode}>{subject.code}</span>
+              <span className={styles.subjectTitle}>{subject.title}</span>
+              <span className={styles.subjectTagline}>{subject.tagline}</span>
+              <span className={styles.subjectFoot}>
+                <span>{es.home.lessons(subject.lessons.length)}</span>
+                <ProgressRing
+                  value={p.lessonsDone}
+                  total={p.lessonsTotal}
+                  size={40}
+                  label={es.home.progress(p.lessonsDone, p.lessonsTotal)}
+                />
+              </span>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 export function HomeRoute(): ReactNode {
   const progress = useProgress();
@@ -50,32 +88,7 @@ export function HomeRoute(): ReactNode {
         <h2 id="asignaturas" className={styles.sectionTitle}>
           {es.home.subjectsHeading}
         </h2>
-        <ul className={styles.subjectGrid}>
-          {subjects.map((subject) => {
-            const p = subjectProgress(subject, progress);
-            return (
-              <li key={subject.slug} style={subjectColourStyle(subject.slug)}>
-                <Link to={`/${subject.slug}`} className={styles.subjectCard}>
-                  <span className={styles.subjectIcon}>
-                    <SubjectIcon slug={subject.slug} />
-                  </span>
-                  <span className={styles.subjectCode}>{subject.code}</span>
-                  <span className={styles.subjectTitle}>{subject.title}</span>
-                  <span className={styles.subjectTagline}>{subject.tagline}</span>
-                  <span className={styles.subjectFoot}>
-                    <span>{es.home.lessons(subject.lessons.length)}</span>
-                    <ProgressRing
-                      value={p.lessonsDone}
-                      total={p.lessonsTotal}
-                      size={40}
-                      label={es.home.progress(p.lessonsDone, p.lessonsTotal)}
-                    />
-                  </span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+        <SubjectGrid items={subjects} progress={progress} />
       </section>
 
       <section aria-labelledby="tfm" style={subjectColourStyle(tfm.slug)}>
@@ -95,6 +108,14 @@ export function HomeRoute(): ReactNode {
             <ArrowRight size={18} aria-hidden="true" />
           </span>
         </Link>
+      </section>
+
+      <section aria-labelledby="extras">
+        <h2 id="extras" className={styles.sectionTitle}>
+          {es.home.extrasHeading}
+        </h2>
+        <p className={styles.sectionLead}>{es.home.extrasLead}</p>
+        <SubjectGrid items={extras} progress={progress} />
       </section>
 
       <section aria-labelledby="como" className={styles.how}>

@@ -1,0 +1,432 @@
+Ahora mismo cualquiera puede pedir predicciones, borrar modelos o ver las predicciones de otros. Esta lección monta lo que tiene casi cualquier API: usuarios con **contraseña guardada como hash**, un **login que devuelve un token**, una dependencia que dice **quién hace la petición** y otra que comprueba **si puede hacerlo**. Vas a construir el token a mano para entender qué es; en el trabajo usarás una librería, pero sabrás qué hace.
+
+## Contraseñas: nunca en claro
+
+Las contraseñas no se guardan, ni cifradas: se guarda un **hash lento con sal**. Con el hash se puede comprobar si una contraseña es la correcta, pero no recuperarla. Y tiene que ser **lento a propósito** (bcrypt, argon2): un SHA-256 se calcula miles de millones de veces por segundo con una GPU, así que si te roban la base de datos, las contraseñas débiles caen en minutos.
+
+```python
+import bcrypt
+
+hashed = bcrypt.hashpw(b"s3creta", bcrypt.gensalt())   # b"$2b$12$<sal><hash>"
+bcrypt.checkpw(b"s3creta", hashed)                       # True
+```
+
+La **sal** (aleatoria, guardada dentro del propio hash) hace que dos usuarios con la misma contraseña tengan hashes distintos. El `12` es el coste: cada punto más duplica el tiempo.
+
+<CodeExercise
+  id="hash"
+  title="Guardar y comprobar contraseñas"
+  starter={`
+    import bcrypt
+
+    # En producción el coste por defecto es 12; aquí 4 para que vaya rápido
+    ROUNDS = 4
+
+    def hash_password(password: str) -> str:
+        return ___
+
+    def verify_password(password: str, hashed: str) -> bool:
+        return ___
+
+    h1 = hash_password("vino-tinto-2024")
+    h2 = hash_password("vino-tinto-2024")
+    print(h1)
+    print(h1 == h2, verify_password("vino-tinto-2024", h1), verify_password("vino-blanco", h1))
+  `}
+  solution={`
+    import bcrypt
+
+    # En producción el coste por defecto es 12; aquí 4 para que vaya rápido
+    ROUNDS = 4
+
+    def hash_password(password: str) -> str:
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=ROUNDS)).decode()
+
+    def verify_password(password: str, hashed: str) -> bool:
+        return bcrypt.checkpw(password.encode(), hashed.encode())
+
+    h1 = hash_password("vino-tinto-2024")
+    h2 = hash_password("vino-tinto-2024")
+    print(h1)
+    print(h1 == h2, verify_password("vino-tinto-2024", h1), verify_password("vino-blanco", h1))
+  `}
+  hints={[
+    "bcrypt trabaja con bytes: password.encode() para entrar, .decode() para guardar el hash como texto.",
+    "hash_password: bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=ROUNDS)).decode()",
+    "verify_password: bcrypt.checkpw(password.encode(), hashed.encode())",
+  ]}
+  check={`
+    _h = hash_password("abc12345")
+    assert isinstance(_h, str) and _h.startswith("$2b$04$"), "El hash debe ser texto y empezar por $2b$04$ (bcrypt, coste 4)"
+    assert "abc12345" not in _h, "La contraseña no puede aparecer en el hash"
+    assert _h != hash_password("abc12345"), "Dos hashes de la misma contraseña deben ser distintos (sal aleatoria)"
+    assert verify_password("abc12345", _h) is True, "La contraseña correcta debe verificar"
+    assert verify_password("abc12346", _h) is False, "Una contraseña distinta no debe verificar"
+  `}
+>
+Implementa las dos funciones. La salida muestra la idea clave: la misma contraseña da **dos hashes distintos**, y los dos verifican.
+</CodeExercise>
+
+<Callout kind="warn" title="El límite de 72 bytes de bcrypt">
+bcrypt solo usa los primeros 72 bytes de la contraseña, y desde la versión 5 lanza `ValueError` si le pasas más. Por eso los proyectos nuevos suelen preferir **argon2** (con `pwdlib` o `argon2-cffi`), que no tiene ese límite y es la recomendación actual de OWASP.
+</Callout>
+
+## Tokens: qué es un JWT
+
+Tras el login, el servidor entrega un **token** que el cliente manda en cada petición en la cabecera `Authorization: Bearer <token>`. El formato más usado es **JWT**: tres partes en base64url separadas por puntos.
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
+.eyJzdWIiOiJhbmEiLCJleHAiOjE3NjcyMjU2MDB9
+.iwdlUIvd-Y4iqSsDMMJakK1MHDaGuwQKfN1p2CG5Dpo
+```
+
+Aquí está partido en tres líneas para que se vea; en realidad va todo seguido. Decodificado:
+
+| Parte | Decodificada |
+|---|---|
+| cabecera | `{"alg":"HS256","typ":"JWT"}` |
+| datos (*payload*) | `{"sub":"ana","exp":1767225600}` (1 de enero de 2026) |
+| firma | `HMAC-SHA256(cabecera + "." + datos, clave)`, aquí con la clave `clave-del-servidor` |
+
+Lo importante:
+
+- Los datos **no están cifrados**: cualquiera puede leerlos decodificando el base64. No pongas nada secreto dentro.
+- Lo que no se puede es **modificarlos**: la firma depende de los datos y de una clave que solo tiene el servidor. Si alguien cambia `"sub": "ana"` por `"sub": "admin"`, la firma deja de coincidir.
+- `exp` (expiración, en segundos desde 1970) limita el daño si un token se filtra.
+
+<CodeExercise
+  id="jwt"
+  title="Un JWT a mano"
+  starter={`
+    import base64
+    import hashlib
+    import hmac
+    import json
+    import time
+
+    def b64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    def b64url_decode(text: str) -> bytes:
+        return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+    def sign(signing_input: str, secret: str) -> str:
+        digest = hmac.new(___, ___, hashlib.sha256).digest()
+        return b64url(digest)
+
+    def create_token(sub: str, secret: str, expires_in: int = 900) -> str:
+        header = {"alg": "HS256", "typ": "JWT"}
+        payload = {"sub": sub, "exp": int(time.time()) + expires_in}
+        parts = [b64url(json.dumps(p, separators=(",", ":")).encode()) for p in (header, payload)]
+        signing_input = ".".join(parts)
+        return signing_input + "." + sign(signing_input, secret)
+
+    def verify_token(token: str, secret: str) -> dict:
+        """Devuelve el payload, o lanza ValueError si el token no es válido."""
+        try:
+            header_b64, payload_b64, signature = token.split(".")
+        except ValueError:
+            raise ValueError("Formato de token inválido")
+        expected = sign(header_b64 + "." + payload_b64, secret)
+        if not ___:                 # compara en tiempo constante
+            raise ValueError("Firma inválida")
+        payload = json.loads(b64url_decode(payload_b64))
+        if ___:                     # caducado
+            raise ValueError("Token caducado")
+        return payload
+
+    token = create_token("ana", "clave-del-servidor")
+    print(token)
+    print(verify_token(token, "clave-del-servidor"))
+  `}
+  solution={`
+    import base64
+    import hashlib
+    import hmac
+    import json
+    import time
+
+    def b64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    def b64url_decode(text: str) -> bytes:
+        return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+    def sign(signing_input: str, secret: str) -> str:
+        digest = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+        return b64url(digest)
+
+    def create_token(sub: str, secret: str, expires_in: int = 900) -> str:
+        header = {"alg": "HS256", "typ": "JWT"}
+        payload = {"sub": sub, "exp": int(time.time()) + expires_in}
+        parts = [b64url(json.dumps(p, separators=(",", ":")).encode()) for p in (header, payload)]
+        signing_input = ".".join(parts)
+        return signing_input + "." + sign(signing_input, secret)
+
+    def verify_token(token: str, secret: str) -> dict:
+        """Devuelve el payload, o lanza ValueError si el token no es válido."""
+        try:
+            header_b64, payload_b64, signature = token.split(".")
+        except ValueError:
+            raise ValueError("Formato de token inválido")
+        expected = sign(header_b64 + "." + payload_b64, secret)
+        if not hmac.compare_digest(signature, expected):                 # compara en tiempo constante
+            raise ValueError("Firma inválida")
+        payload = json.loads(b64url_decode(payload_b64))
+        if payload["exp"] <= time.time():                     # caducado
+            raise ValueError("Token caducado")
+        return payload
+
+    token = create_token("ana", "clave-del-servidor")
+    print(token)
+    print(verify_token(token, "clave-del-servidor"))
+  `}
+  hints={[
+    "hmac.new recibe la clave y el mensaje en bytes: secret.encode() y signing_input.encode().",
+    "Para comparar firmas: hmac.compare_digest(signature, expected). Un == normal tarda distinto según cuántos caracteres coinciden, y eso se puede medir.",
+    "Caducado si payload[\"exp\"] <= time.time().",
+  ]}
+  check={`
+    _si = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ"
+    assert sign(_si, "your-256-bit-secret") == "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", "La firma debe coincidir con el ejemplo oficial de jwt.io (HS256)"
+    _t = create_token("eva", "k")
+    assert verify_token(_t, "k")["sub"] == "eva", "Un token recién creado debe verificar"
+    def _rejects(token, secret):
+        try:
+            verify_token(token, secret)
+        except ValueError:
+            return True
+        return False
+    assert _rejects(_t, "otra-clave"), "Con otra clave, el token debe rechazarse"
+    _h, _p, _s = _t.split(".")
+    _forged = b64url(json.dumps({"sub": "admin", "exp": int(time.time()) + 900}, separators=(",", ":")).encode())
+    assert _rejects(_h + "." + _forged + "." + _s, "k"), "Un payload modificado (sub=admin) debe rechazarse"
+    assert _rejects(create_token("eva", "k", expires_in=-10), "k"), "Un token caducado debe rechazarse"
+    assert _rejects("no.es-un-token", "k"), "Un texto sin tres partes debe rechazarse con ValueError"
+  `}
+>
+Completa la firma y la verificación. La comprobación usa el ejemplo oficial de jwt.io, así que si pasa, tu implementación es compatible con cualquier librería de JWT. También intenta colarte con un token modificado.
+</CodeExercise>
+
+## El usuario actual como dependencia
+
+Con todo lo anterior, la autenticación en FastAPI son dos piezas:
+
+1. **Login**: comprueba usuario y contraseña y devuelve `{"access_token": ..., "token_type": "bearer"}`.
+2. **`get_current_user`**: una dependencia que lee el token de la cabecera, lo verifica y devuelve el usuario, o responde **401**. `OAuth2PasswordBearer` lee la cabecera `Authorization: Bearer ...` por ti (y responde 401 si no está), y además hace que `/docs` muestre el botón *Authorize*.
+
+Y una tercera para los **permisos**: `require_admin` depende de `get_current_user` y responde **403** si el usuario no tiene el rol.
+
+<CodeExercise
+  id="usuario-actual"
+  title="Login, /me y un endpoint de administración"
+  starter={`
+    from typing import Annotated
+
+    import bcrypt
+    import httpx
+    from fastapi import Depends, FastAPI, HTTPException, status
+    from fastapi.security import OAuth2PasswordBearer
+    from pydantic import BaseModel
+
+    # create_token y verify_token son las del ejercicio anterior (simplificadas)
+    import base64, hashlib, hmac, json, time
+    SECRET = "clave-del-servidor"
+    def _b64(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+    def create_token(sub):
+        si = _b64(b'{"alg":"HS256","typ":"JWT"}') + "." + _b64(json.dumps({"sub": sub, "exp": int(time.time()) + 900}).encode())
+        return si + "." + _b64(hmac.new(SECRET.encode(), si.encode(), hashlib.sha256).digest())
+    def verify_token(token):
+        try:
+            h, p, s = token.split(".")
+        except ValueError:
+            raise ValueError("formato")
+        if not hmac.compare_digest(s, _b64(hmac.new(SECRET.encode(), (h + "." + p).encode(), hashlib.sha256).digest())):
+            raise ValueError("firma")
+        payload = json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
+        if payload["exp"] <= time.time():
+            raise ValueError("caducado")
+        return payload
+
+    def _hash(pw): return bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=4)).decode()
+    USERS = {
+        "ana": {"username": "ana", "password_hash": _hash("ana-pass-123"), "role": "admin"},
+        "luis": {"username": "luis", "password_hash": _hash("luis-pass-123"), "role": "user"},
+    }
+
+    class Login(BaseModel):
+        username: str
+        password: str
+
+    app = FastAPI()
+    oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+
+    @app.post("/auth/token")
+    def login(data: Login):
+        user = USERS.get(data.username)
+        # Mismo error para usuario inexistente y contraseña incorrecta: no reveles cuál falló
+        if user is None or not ___:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Usuario o contraseña incorrectos")
+        return {"access_token": ___, "token_type": "bearer"}
+
+    def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> dict:
+        try:
+            payload = ___
+        except ValueError:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                detail="Token inválido",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        user = USERS.get(payload["sub"])
+        if user is None:  # el usuario se borró después de emitir el token
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Token inválido", headers={"WWW-Authenticate": "Bearer"})
+        return user
+
+    CurrentUser = Annotated[dict, Depends(get_current_user)]
+
+    def require_admin(user: CurrentUser) -> dict:
+        if ___:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Hace falta rol de administrador")
+        return user
+
+    @app.get("/me")
+    def me(user: CurrentUser):
+        return {"username": user["username"], "role": user["role"]}
+
+    @app.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])
+    def delete_model(model_id: int):
+        return None
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    token = (await client.post("/auth/token", json={"username": "luis", "password": "luis-pass-123"})).json()["access_token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    print((await client.get("/me", headers=auth)).json())
+    print((await client.delete("/models/1", headers=auth)).status_code)
+  `}
+  solution={`
+    from typing import Annotated
+
+    import bcrypt
+    import httpx
+    from fastapi import Depends, FastAPI, HTTPException, status
+    from fastapi.security import OAuth2PasswordBearer
+    from pydantic import BaseModel
+
+    # create_token y verify_token son las del ejercicio anterior (simplificadas)
+    import base64, hashlib, hmac, json, time
+    SECRET = "clave-del-servidor"
+    def _b64(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+    def create_token(sub):
+        si = _b64(b'{"alg":"HS256","typ":"JWT"}') + "." + _b64(json.dumps({"sub": sub, "exp": int(time.time()) + 900}).encode())
+        return si + "." + _b64(hmac.new(SECRET.encode(), si.encode(), hashlib.sha256).digest())
+    def verify_token(token):
+        try:
+            h, p, s = token.split(".")
+        except ValueError:
+            raise ValueError("formato")
+        if not hmac.compare_digest(s, _b64(hmac.new(SECRET.encode(), (h + "." + p).encode(), hashlib.sha256).digest())):
+            raise ValueError("firma")
+        payload = json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
+        if payload["exp"] <= time.time():
+            raise ValueError("caducado")
+        return payload
+
+    def _hash(pw): return bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=4)).decode()
+    USERS = {
+        "ana": {"username": "ana", "password_hash": _hash("ana-pass-123"), "role": "admin"},
+        "luis": {"username": "luis", "password_hash": _hash("luis-pass-123"), "role": "user"},
+    }
+
+    class Login(BaseModel):
+        username: str
+        password: str
+
+    app = FastAPI()
+    oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+
+    @app.post("/auth/token")
+    def login(data: Login):
+        user = USERS.get(data.username)
+        # Mismo error para usuario inexistente y contraseña incorrecta: no reveles cuál falló
+        if user is None or not bcrypt.checkpw(data.password.encode(), user["password_hash"].encode()):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Usuario o contraseña incorrectos")
+        return {"access_token": create_token(user["username"]), "token_type": "bearer"}
+
+    def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> dict:
+        try:
+            payload = verify_token(token)
+        except ValueError:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                detail="Token inválido",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        user = USERS.get(payload["sub"])
+        if user is None:  # el usuario se borró después de emitir el token
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Token inválido", headers={"WWW-Authenticate": "Bearer"})
+        return user
+
+    CurrentUser = Annotated[dict, Depends(get_current_user)]
+
+    def require_admin(user: CurrentUser) -> dict:
+        if user["role"] != "admin":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Hace falta rol de administrador")
+        return user
+
+    @app.get("/me")
+    def me(user: CurrentUser):
+        return {"username": user["username"], "role": user["role"]}
+
+    @app.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])
+    def delete_model(model_id: int):
+        return None
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    token = (await client.post("/auth/token", json={"username": "luis", "password": "luis-pass-123"})).json()["access_token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    print((await client.get("/me", headers=auth)).json())
+    print((await client.delete("/models/1", headers=auth)).status_code)
+  `}
+  hints={[
+    "La contraseña se comprueba contra el hash: bcrypt.checkpw(data.password.encode(), user[\"password_hash\"].encode()).",
+    "El token del login es create_token(user[\"username\"]), y en get_current_user, payload = verify_token(token).",
+    "require_admin corta con 403 si user[\"role\"] != \"admin\".",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    async def _token(u, p):
+        return await _c.post("/auth/token", json={"username": u, "password": p})
+    assert (await _token("luis", "mal")).status_code == 401, "Contraseña incorrecta: 401"
+    assert (await _token("nadie", "x")).status_code == 401, "Usuario inexistente: 401 (el mismo error)"
+    _r = await _token("ana", "ana-pass-123")
+    assert _r.status_code == 200 and _r.json()["token_type"] == "bearer", "Login correcto: 200 con token_type bearer"
+    _ana = {"Authorization": "Bearer " + _r.json()["access_token"]}
+    _luis = {"Authorization": "Bearer " + (await _token("luis", "luis-pass-123")).json()["access_token"]}
+    assert (await _c.get("/me", headers=_ana)).json() == {"username": "ana", "role": "admin"}, "/me devuelve el usuario del token"
+    assert (await _c.get("/me")).status_code == 401, "Sin token: 401"
+    _bad = await _c.get("/me", headers={"Authorization": "Bearer abc.def.ghi"})
+    assert _bad.status_code == 401 and _bad.headers.get("www-authenticate") == "Bearer", "Token inválido: 401 con WWW-Authenticate: Bearer"
+    assert (await _c.delete("/models/1", headers=_luis)).status_code == 403, "Un usuario sin rol admin: 403"
+    assert (await _c.delete("/models/1", headers=_ana)).status_code == 204, "La administradora puede borrar: 204"
+  `}
+>
+Completa el login, `get_current_user` y `require_admin`. Fíjate en los dos códigos: sin token o con token inválido, **401**; con token válido pero sin permiso, **403**.
+</CodeExercise>
+
+<Callout kind="real" title="Cómo se hace en el trabajo">
+- No escribas tu propio JWT en producción: usa **PyJWT** (`jwt.encode(payload, key, algorithm="HS256")`, `jwt.decode(token, key, algorithms=["HS256"])`), que además comprueba `exp`, `nbf` y los algoritmos permitidos. Fijar `algorithms` evita el ataque clásico del token con `"alg": "none"`.
+- El login del ejercicio recibe JSON, así que el botón *Authorize* de `/docs` no funcionaría con él: ese botón envía un formulario. Para que funcione, el login recibe `form: Annotated[OAuth2PasswordRequestForm, Depends()]`, que necesita el paquete `python-multipart`.
+- En muchas empresas no gestionas contraseñas: la identidad la lleva un proveedor (Auth0, Keycloak, Cognito, Entra ID) y tu API solo **verifica** sus tokens (firmados con RS256 y clave pública).
+- Tokens de acceso **cortos** (15 min) y un *refresh token* para renovarlos; para servicio a servicio, **API keys** guardadas como hash y revocables.
+- Siempre sobre **HTTPS**: un token interceptado vale lo mismo que la contraseña hasta que caduca.
+</Callout>
+
+## Para llevar
+
+- Contraseñas: hash lento con sal (bcrypt, argon2), nunca en claro ni con SHA-256 a secas.
+- Un JWT son datos legibles más una firma: nadie puede modificarlos sin la clave, pero todos pueden leerlos.
+- `get_current_user` como dependencia: lee el token (`OAuth2PasswordBearer`), lo verifica y devuelve el usuario, o 401.
+- Los permisos, otra dependencia encima: 403 si no tiene el rol.
+- En producción, PyJWT o un proveedor de identidad, tokens cortos y HTTPS.

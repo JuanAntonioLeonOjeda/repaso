@@ -8,7 +8,7 @@ import { simulations } from "@/features/simulations";
 
 import { resolveTemarioLink } from "@/features/tfm";
 
-import { sections, subjects } from "./catalog";
+import { extras, sections, subjects } from "./catalog";
 
 const CONTENT_DIR = join(process.cwd(), "src", "content");
 
@@ -28,8 +28,13 @@ describe("content catalog", () => {
     expect(new Set(subjects.map((s) => s.slug)).size).toBe(7);
   });
 
-  it("has the TFM as an extra section", () => {
-    expect(sections.map((s) => s.slug)).toContain("tfm");
+  it("has the TFM and the extras as sections apart from the subjects", () => {
+    expect(sections.map((s) => s.slug)).toEqual([
+      ...subjects.map((s) => s.slug),
+      "tfm",
+      ...extras.map((s) => s.slug),
+    ]);
+    expect(extras.map((s) => s.slug)).toContain("fastapi");
   });
 
   for (const subject of sections) {

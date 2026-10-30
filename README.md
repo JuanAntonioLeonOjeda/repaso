@@ -8,6 +8,9 @@ pista y solución), y notas de cómo se hace cada cosa en un trabajo real.
 - 7 asignaturas · 59 lecciones · 50 simulaciones · 214 ejercicios.
 - Una sección del **TFM** (LumosNet sobre LUMOS): 9 lecciones conectadas con el temario, 8
   simulaciones más y la bitácora de experimentos reevaluada.
+- **Expandir conocimientos**: tutoriales prácticos de lo que el máster no cubrió. El primero,
+  **FastAPI**: 12 lecciones, 2 simulaciones y 47 ejercicios que construyen la API de un modelo
+  de calidad de vinos (con FastAPI de verdad ejecutándose en el navegador, ver ADR-0005).
 - Funciona en local con Docker. Sin cuentas ni servidor: el progreso se guarda en el navegador.
 - El Python de los ejercicios (numpy, pandas, scikit-learn, matplotlib, NLTK, OpenCV…) se ejecuta con
   Pyodide, que se descarga de un CDN la primera vez (hace falta conexión).
@@ -68,10 +71,14 @@ cada ejemplo ejecutable). Necesita un Python con los mismos paquetes que Pyodide
 ```bash
 uv venv .venv-check --python 3.13
 VIRTUAL_ENV=.venv-check uv pip install numpy==2.4.6 pandas==3.0.2 scikit-learn==1.8.0 scipy matplotlib==3.10.8 networkx==3.6.1 pillow \
-  nltk==3.9.4 opencv-python-headless==4.11.0.86 beautifulsoup4==4.14.3
+  nltk==3.9.4 opencv-python-headless==4.11.0.86 beautifulsoup4==4.14.3 \
+  fastapi==0.136.1 starlette==1.0.0 httpx==0.28.1 pydantic==2.12.5 sqlalchemy==2.0.48 bcrypt==5.0.0 anyio==4.13.0
 .venv-check/bin/python scripts/check_exercises.py                  # todo
 .venv-check/bin/python scripts/check_exercises.py refuerzo/02      # una lección
 ```
+
+Como en Pyodide, el código puede usar `await` fuera de una función (los ejercicios de FastAPI
+llaman a la API con `await client.get(...)`): el comprobador lo compila con ese permiso.
 
 ## Cómo está hecho
 

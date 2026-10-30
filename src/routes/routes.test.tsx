@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 
-import { subjects } from "@/content/catalog";
+import { extras, subjects } from "@/content/catalog";
 
 import { routes } from "./routes";
 
@@ -17,6 +17,19 @@ describe("routes", () => {
     for (const subject of subjects) {
       expect(screen.getByRole("link", { name: new RegExp(subject.title) })).toBeInTheDocument();
     }
+  });
+
+  it("home lists the extras under their own heading", () => {
+    renderAt("/");
+    expect(screen.getByRole("heading", { name: "Expandir conocimientos" })).toBeInTheDocument();
+    for (const extra of extras) {
+      expect(screen.getByRole("link", { name: new RegExp(extra.title) })).toBeInTheDocument();
+    }
+  });
+
+  it("an extra is browsed like a subject", () => {
+    renderAt("/fastapi");
+    expect(screen.getByRole("heading", { level: 1, name: "FastAPI" })).toBeInTheDocument();
   });
 
   it("a subject page lists its lessons in order", () => {

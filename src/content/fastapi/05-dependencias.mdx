@@ -1,0 +1,312 @@
+Hay cosas que casi todos los endpoints necesitan: una sesión de base de datos, el usuario autenticado, los parámetros de paginación, el modelo cargado. Copiar ese código en cada función es pedir que un día una se quede sin comprobar el token. FastAPI lo resuelve con la **inyección de dependencias**: declaras *qué* necesita el endpoint y FastAPI se encarga de conseguirlo antes de llamarlo. Es la pieza que más distingue a FastAPI, y la que hace los tests fáciles.
+
+## Depends
+
+Una dependencia es una función normal. Sus parámetros se leen de la petición igual que los de un endpoint (query, cabeceras, cuerpo… o **otras dependencias**):
+
+```python
+from typing import Annotated
+from fastapi import Depends, Query
+
+def pagination(
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict:
+    return {"limit": limit, "offset": offset}
+
+Pagination = Annotated[dict, Depends(pagination)]   # alias reutilizable
+
+@app.get("/models")
+def list_models(page: Pagination): ...
+
+@app.get("/predictions")
+def list_predictions(page: Pagination): ...
+```
+
+Fíjate en que `Depends(pagination)` recibe la función **sin llamarla**: es FastAPI quien la llama en cada petición. Y la documentación de `/docs` muestra `limit` y `offset` en los dos endpoints, porque FastAPI recorre las dependencias.
+
+<CodeExercise
+  id="paginacion"
+  title="Una dependencia de paginación"
+  starter={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI, Query
+
+    app = FastAPI()
+    MODELS = [{"id": i} for i in range(1, 8)]
+    PREDICTIONS = [{"id": i} for i in range(1, 31)]
+
+    def pagination(
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> dict:
+        return {"limit": limit, "offset": offset}
+
+    Pagination = ___
+
+    def paginate(items: list, page: dict) -> dict:
+        start = page["offset"]
+        return {"total": len(items), "items": items[start : start + page["limit"]]}
+
+    @app.get("/models")
+    def list_models(page: Pagination):
+        return paginate(MODELS, page)
+
+    @app.get("/predictions")
+    def list_predictions(___):
+        return paginate(PREDICTIONS, page)
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/predictions", params={"limit": 3, "offset": 27})).json())
+  `}
+  solution={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI, Query
+
+    app = FastAPI()
+    MODELS = [{"id": i} for i in range(1, 8)]
+    PREDICTIONS = [{"id": i} for i in range(1, 31)]
+
+    def pagination(
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> dict:
+        return {"limit": limit, "offset": offset}
+
+    Pagination = Annotated[dict, Depends(pagination)]
+
+    def paginate(items: list, page: dict) -> dict:
+        start = page["offset"]
+        return {"total": len(items), "items": items[start : start + page["limit"]]}
+
+    @app.get("/models")
+    def list_models(page: Pagination):
+        return paginate(MODELS, page)
+
+    @app.get("/predictions")
+    def list_predictions(page: Pagination):
+        return paginate(PREDICTIONS, page)
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/predictions", params={"limit": 3, "offset": 27})).json())
+  `}
+  hints={[
+    "El alias es Annotated[tipo, Depends(función)].",
+    "Pagination = Annotated[dict, Depends(pagination)]",
+    "En el segundo endpoint, el parámetro es igual que en el primero: page: Pagination.",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _r = (await _c.get("/predictions", params={"limit": 3, "offset": 27})).json()
+    assert _r == {"total": 30, "items": [{"id": 28}, {"id": 29}, {"id": 30}]}, "limit=3&offset=27 sobre 30 predicciones: ids 28, 29 y 30"
+    assert len((await _c.get("/models")).json()["items"]) == 7, "Sin parámetros, /models devuelve sus 7 modelos (limit=10)"
+    assert (await _c.get("/models", params={"limit": 100})).status_code == 422, "La validación de la dependencia también aplica: limit=100 da 422"
+    _params = [p["name"] for p in (await _c.get("/openapi.json")).json()["paths"]["/predictions"]["get"]["parameters"]]
+    assert _params == ["limit", "offset"], "/docs debe mostrar limit y offset en /predictions"
+  `}
+>
+Crea el alias `Pagination` y úsalo en los dos listados. La paginación queda definida en un solo sitio: si mañana el máximo pasa a 100, se cambia una línea.
+</CodeExercise>
+
+## Dependencias que protegen
+
+Una dependencia puede **cortar la petición** lanzando `HTTPException`. Es la forma natural de proteger endpoints: si el endpoint la declara, no hay forma de olvidarse de comprobarlo.
+
+Cuando el endpoint no necesita el valor (solo que la comprobación pase), se pone en el decorador: `@app.get(..., dependencies=[Depends(require_api_key)])`.
+
+<CodeExercise
+  id="api-key"
+  title="Una API key en la cabecera"
+  starter={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI, Header, HTTPException, status
+
+    app = FastAPI()
+    API_KEYS = {"k-123": "web-app", "k-456": "batch-job"}
+
+    def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> str:
+        if ___:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key inválida o ausente")
+        return API_KEYS[x_api_key]
+
+    @app.get("/whoami")
+    def whoami(client_name: ___):
+        return {"client": client_name}
+
+    @app.post("/cache/clear", ___)
+    def clear_cache():
+        return {"cleared": True}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/whoami", headers={"X-API-Key": "k-123"})).json())
+    print((await client.post("/cache/clear")).status_code)
+  `}
+  solution={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI, Header, HTTPException, status
+
+    app = FastAPI()
+    API_KEYS = {"k-123": "web-app", "k-456": "batch-job"}
+
+    def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> str:
+        if x_api_key is None or x_api_key not in API_KEYS:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key inválida o ausente")
+        return API_KEYS[x_api_key]
+
+    @app.get("/whoami")
+    def whoami(client_name: Annotated[str, Depends(require_api_key)]):
+        return {"client": client_name}
+
+    @app.post("/cache/clear", dependencies=[Depends(require_api_key)])
+    def clear_cache():
+        return {"cleared": True}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/whoami", headers={"X-API-Key": "k-123"})).json())
+    print((await client.post("/cache/clear")).status_code)
+  `}
+  hints={[
+    "La clave falla si no viene (None) o si no está en API_KEYS.",
+    "En /whoami se necesita el valor: client_name: Annotated[str, Depends(require_api_key)].",
+    "En /cache/clear solo la comprobación: dependencies=[Depends(require_api_key)].",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    assert (await _c.get("/whoami", headers={"X-API-Key": "k-456"})).json() == {"client": "batch-job"}, "Con k-456, /whoami devuelve batch-job"
+    assert (await _c.get("/whoami")).status_code == 401, "Sin API key: 401"
+    assert (await _c.get("/whoami", headers={"X-API-Key": "falsa"})).status_code == 401, "Con una clave que no existe: 401"
+    assert (await _c.post("/cache/clear")).status_code == 401, "/cache/clear también exige la clave"
+    assert (await _c.post("/cache/clear", headers={"X-API-Key": "k-123"})).json() == {"cleared": True}, "Con clave válida, /cache/clear funciona"
+  `}
+>
+Completa la comprobación y protege los dos endpoints: `/whoami` necesita saber qué cliente es, `/cache/clear` solo que la clave sea válida.
+</CodeExercise>
+
+## Dependencias con yield
+
+Para recursos que hay que **abrir y cerrar** (una sesión de base de datos, un fichero, una conexión), la dependencia usa `yield`: lo de antes se ejecuta antes del endpoint, el valor del `yield` es lo que recibe el endpoint, y el `finally` se ejecuta al final **aunque el endpoint falle**.
+
+```python
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db            # ← el endpoint trabaja con db
+    finally:
+        db.close()          # ← siempre se cierra
+```
+
+Dos detalles que conviene saber:
+
+- Si dos dependencias piden la misma (el endpoint pide `get_db` y también `get_repo`, que a su vez pide `get_db`), **se ejecuta una sola vez por petición** y las dos reciben el mismo objeto. Es lo que quieres: una sesión por petición, compartida.
+- Por defecto, el código después del `yield` se ejecuta cuando la respuesta **ya se ha enviado**. Si necesitas cerrar justo al terminar el endpoint, existe `Depends(get_db, scope="function")`.
+
+<Predict
+  id="una-vez"
+  answer={["1", "una"]}
+  explanation="FastAPI cachea el resultado de cada dependencia durante la petición: get_db se ejecuta una vez y su valor se reutiliza para get_repo. Si de verdad quisieras dos ejecuciones, existe Depends(get_db, use_cache=False)."
+  hints={["Las dependencias se cachean dentro de una misma petición."]}
+>
+Un endpoint declara `db: Annotated[Session, Depends(get_db)]` y `repo: Annotated[Repo, Depends(get_repo)]`, y `get_repo` también depende de `get_db`. En una petición, ¿cuántas veces se ejecuta `get_db`?
+</Predict>
+
+## Cambiar dependencias en los tests
+
+La gran ventaja: en los tests puedes **sustituir** cualquier dependencia sin tocar el código de la app, con `app.dependency_overrides`. El modelo real tarda en cargar o llama a un servicio de pago; en el test se cambia por uno falso que responde al instante y siempre igual.
+
+<CodeExercise
+  id="override"
+  title="Un modelo falso para los tests"
+  starter={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI
+
+    class RealModel:
+        def predict(self, alcohol: float) -> int:
+            raise RuntimeError("El modelo real no está disponible en los tests")
+
+    def get_model() -> RealModel:
+        return RealModel()
+
+    app = FastAPI()
+
+    @app.get("/predict")
+    def predict(alcohol: float, model: Annotated[RealModel, Depends(get_model)]):
+        return {"quality": model.predict(alcohol)}
+
+    class FakeModel:
+        def predict(self, alcohol: float) -> int:
+            return 7 if alcohol > 12 else 5
+
+    # Sustituye get_model por una función que devuelva un FakeModel
+    ___
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/predict", params={"alcohol": 13})).json())
+  `}
+  solution={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI
+
+    class RealModel:
+        def predict(self, alcohol: float) -> int:
+            raise RuntimeError("El modelo real no está disponible en los tests")
+
+    def get_model() -> RealModel:
+        return RealModel()
+
+    app = FastAPI()
+
+    @app.get("/predict")
+    def predict(alcohol: float, model: Annotated[RealModel, Depends(get_model)]):
+        return {"quality": model.predict(alcohol)}
+
+    class FakeModel:
+        def predict(self, alcohol: float) -> int:
+            return 7 if alcohol > 12 else 5
+
+    # Sustituye get_model por una función que devuelva un FakeModel
+    app.dependency_overrides[get_model] = lambda: FakeModel()
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/predict", params={"alcohol": 13})).json())
+  `}
+  hints={[
+    "app.dependency_overrides es un dict: clave, la dependencia original; valor, la sustituta.",
+    "La clave es la función get_model (sin llamarla).",
+    "app.dependency_overrides[get_model] = lambda: FakeModel()",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    assert (await _c.get("/predict", params={"alcohol": 13})).json() == {"quality": 7}, "Con el modelo falso, alcohol=13 da 7"
+    assert (await _c.get("/predict", params={"alcohol": 10})).json() == {"quality": 5}, "Con el modelo falso, alcohol=10 da 5"
+    assert get_model in app.dependency_overrides, "La sustitución debe estar en app.dependency_overrides"
+  `}
+>
+Sustituye `get_model` por un modelo falso, sin tocar el endpoint.
+</CodeExercise>
+
+<Callout kind="real" title="Cómo se hace en el trabajo">
+- Las dependencias típicas de un proyecto: `get_db` (sesión), `get_current_user`, `require_role("admin")`, `get_settings`, `get_model`. Se agrupan en un `deps.py` y se exponen como alias (`CurrentUser = Annotated[User, Depends(get_current_user)]`).
+- Si todos los endpoints de un grupo necesitan la misma comprobación, va en el router: `APIRouter(dependencies=[Depends(require_api_key)])` (lección 7).
+- En los tests se limpian las sustituciones al acabar (`app.dependency_overrides.clear()`, normalmente en una fixture), para que un test no contamine al siguiente.
+</Callout>
+
+## Para llevar
+
+- `Depends(funcion)` le pide a FastAPI que ejecute `funcion` antes del endpoint y le pase el resultado; sus parámetros se leen de la petición.
+- Un alias `Annotated[tipo, Depends(...)]` evita repetir.
+- Una dependencia que lanza `HTTPException` protege todos los endpoints que la usan.
+- Con `yield`: abrir antes, cerrar en el `finally`. Se ejecuta una vez por petición aunque la pidan varios.
+- `app.dependency_overrides` sustituye dependencias en los tests sin tocar la app.
