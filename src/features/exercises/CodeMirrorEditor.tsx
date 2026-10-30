@@ -6,6 +6,7 @@ import { useMemo, type ReactNode } from "react";
 import { useTheme } from "@/features/shell";
 import { es } from "@/i18n/es";
 
+import { errorLinesExtension } from "./error-lines";
 import styles from "./Exercise.module.css";
 
 interface Props {
@@ -14,7 +15,10 @@ interface Props {
   isReadOnly?: boolean;
   label?: string;
   onFocus?: () => void;
+  errorLines?: readonly number[] | undefined;
 }
+
+const NO_LINES: readonly number[] = [];
 
 export default function CodeMirrorEditor({
   value,
@@ -22,6 +26,7 @@ export default function CodeMirrorEditor({
   isReadOnly = false,
   label = es.exercise.editorLabel,
   onFocus,
+  errorLines = NO_LINES,
 }: Props): ReactNode {
   const theme = useTheme();
   const extensions = useMemo(
@@ -29,8 +34,9 @@ export default function CodeMirrorEditor({
       python(),
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({ "aria-label": label }),
+      errorLinesExtension(errorLines, styles.errorLine ?? ""),
     ],
-    [label],
+    [label, errorLines],
   );
   return (
     <div className={styles.editor}>

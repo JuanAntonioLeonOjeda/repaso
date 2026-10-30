@@ -7,7 +7,7 @@ import { es } from "@/i18n/es";
 import { CodeEditor } from "./CodeEditor";
 import { dedent } from "./dedent";
 import { RunPanel } from "./RunPanel";
-import { useCodeRunner } from "./useCodeRunner";
+import { errorLines, useCodeRunner } from "./useCodeRunner";
 import styles from "./Exercise.module.css";
 
 interface Props {
@@ -29,7 +29,12 @@ export function RunCode({ code, title = es.exercise.example, files = [] }: Props
         <strong>{title}</strong>
         <span>{es.exercise.exampleHint}</span>
       </div>
-      <CodeEditor value={value} onChange={setValue} onFocus={pythonClient.warmup} />
+      <CodeEditor
+        value={value}
+        onChange={setValue}
+        onFocus={pythonClient.warmup}
+        errorLines={errorLines(state, value)}
+      />
       <div className={styles.actions}>
         {state.isRunning ? (
           <button type="button" className={styles.button} onClick={stop}>

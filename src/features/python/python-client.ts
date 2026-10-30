@@ -23,6 +23,7 @@ const STOPPED: RunOutcome = {
   kind: "error",
   message: "Ejecución detenida.",
   traceback: "",
+  lines: [],
 };
 
 let worker: Worker | null = null;

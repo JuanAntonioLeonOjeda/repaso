@@ -10,7 +10,7 @@ import type { PyodideAPI } from "pyodide";
 import type { PyProxy } from "pyodide/ffi";
 
 import type { RunOutcome, RunRequest, WorkerMessage, WorkerStatus } from "./protocol";
-import { cleanTraceback } from "./traceback";
+import { cleanTraceback, learnerLines } from "./traceback";
 
 // Keep in step with the `pyodide` devDependency, which only provides the types.
 const PYODIDE_VERSION = "314.0.7";
@@ -117,18 +117,22 @@ async function execute(pyodide: PyodideAPI, request: RunRequest): Promise<RunOut
       await pyodide.runPythonAsync(request.code, { globals });
     } catch (error) {
       await pyodide.runPythonAsync(COLLECT_FIGURES);
-      return { kind: "error", ...cleanTraceback(String(error)) };
+      const raw = String(error);
+      return { kind: "error", ...cleanTraceback(raw), lines: learnerLines(raw) };
     }
     if (request.check !== null) {
       try {
-        await pyodide.runPythonAsync(request.check, { globals });
+        // Its own file name keeps the check's frames apart from the learner's `<exec>` ones.
+        await pyodide.runPythonAsync(request.check, { globals, filename: "<check>" });
       } catch (error) {
         const images = toStringList(await pyodide.runPythonAsync(COLLECT_FIGURES));
-        const { message } = cleanTraceback(String(error));
+        const raw = String(error);
+        const { message } = cleanTraceback(raw);
         return {
           kind: "check-failed",
           message: message.replace(/^AssertionError:?\s*/, ""),
           images,
+          lines: learnerLines(raw),
         };
       }
     }
@@ -154,7 +158,7 @@ self.addEventListener("message", (event: MessageEvent<RunRequest | { type: "warm
       post({
         type: "done",
         id: request.id,
-        outcome: { kind: "error", message: String(error), traceback: "" },
+        outcome: { kind: "error", message: String(error), traceback: "", lines: [] },
       });
     });
 });
