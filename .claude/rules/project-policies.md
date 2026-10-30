@@ -7,8 +7,8 @@ description: What this project is, its scope, commands, the Docker rebuild rule,
 ## What this is
 
 **Repaso**: a private study platform to review the subjects of the author's AI master's
-degree (MIAR). Six subjects (supervised, unsupervised, deep learning, reinforcement learning,
-optimisation algorithms, approximate reasoning), each a sequence of lessons that summarise the
+degree (MIAR). Seven subjects (Python for AI, supervised, unsupervised, deep learning,
+reinforcement learning, optimisation algorithms, approximate reasoning), each a sequence of lessons that summarise the
 course material in plain language, with interactive simulations and exercises that run real
 Python in the browser.
 
@@ -22,7 +22,10 @@ Python in the browser.
   `public/tfm-local/` and **never committed or baked into the image** (ADR-0004). Only
   aggregate metrics are committed. Scripts read from `../tfm` and never write there.
 - The original course material is in `Asignaturas/` (slides, notebooks, datasets). It is the
-  **source** for the lessons, is git-ignored and never shipped.
+  **source** for the lessons, is git-ignored and never shipped. Python for AI is the exception:
+  its notebooks, exams and practices live in `../asignaturas/python-para-ia/` (only its PDF is
+  in `Asignaturas/Python para IA/`). That subject is deliberately practical: most exercises
+  are past exam questions.
 
 Priority: **correct and useful content over features**. A wrong formula or a broken exercise
 is a bug of the highest severity; a missing feature is not.
@@ -69,7 +72,8 @@ message that the image was rebuilt (or why it was not).
 - The Pyodide version is pinned in two places that must agree: the `pyodide` devDependency
   (types) and `PYODIDE_VERSION` in `src/features/python/python.worker.ts`. Packages used in
   exercises must exist in that Pyodide release (numpy, pandas, scikit-learn, scipy,
-  matplotlib, networkx, Pillow…); TensorFlow and PyTorch do not.
+  matplotlib, networkx, Pillow, nltk without corpora, opencv-python, beautifulsoup4…);
+  TensorFlow, PyTorch and seaborn do not.
 - When a main dependency is added or upgraded, update its badge in the README.
 
 ## Language

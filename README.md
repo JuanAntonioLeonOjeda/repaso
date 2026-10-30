@@ -5,11 +5,11 @@ asignatura es una serie de lecciones que resumen el temario en lenguaje cercano,
 **simulaciones** que se pueden tocar y **ejercicios con Python real** (en el navegador, con
 pista y solución), y notas de cómo se hace cada cosa en un trabajo real.
 
-- 6 asignaturas · 43 lecciones · 39 simulaciones · 137 ejercicios.
+- 7 asignaturas · 59 lecciones · 50 simulaciones · 214 ejercicios.
 - Una sección del **TFM** (LumosNet sobre LUMOS): 9 lecciones conectadas con el temario, 8
   simulaciones más y la bitácora de experimentos reevaluada.
 - Funciona en local con Docker. Sin cuentas ni servidor: el progreso se guarda en el navegador.
-- El Python de los ejercicios (numpy, pandas, scikit-learn, matplotlib…) se ejecuta con
+- El Python de los ejercicios (numpy, pandas, scikit-learn, matplotlib, NLTK, OpenCV…) se ejecuta con
   Pyodide, que se descarga de un CDN la primera vez (hace falta conexión).
 
 ## MAIN DEPENDENCIES
@@ -67,7 +67,8 @@ cada ejemplo ejecutable). Necesita un Python con los mismos paquetes que Pyodide
 
 ```bash
 uv venv .venv-check --python 3.13
-VIRTUAL_ENV=.venv-check uv pip install numpy==2.4.6 pandas==3.0.2 scikit-learn==1.8.0 scipy matplotlib==3.10.8 networkx==3.6.1 pillow
+VIRTUAL_ENV=.venv-check uv pip install numpy==2.4.6 pandas==3.0.2 scikit-learn==1.8.0 scipy matplotlib==3.10.8 networkx==3.6.1 pillow \
+  nltk==3.9.4 opencv-python-headless==4.11.0.86 beautifulsoup4==4.14.3
 .venv-check/bin/python scripts/check_exercises.py                  # todo
 .venv-check/bin/python scripts/check_exercises.py refuerzo/02      # una lección
 ```
