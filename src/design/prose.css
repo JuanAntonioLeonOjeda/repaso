@@ -94,6 +94,14 @@
   vertical-align: top;
 }
 
+/* Inline code may break anywhere in running text, but in a cell that makes it the column's
+   min-content width and auto layout squeezes code columns to a few characters. The table
+   scrolls horizontally instead. */
+.prose > table code {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
 .prose > table th {
   color: var(--color-ink);
   font-weight: 650;

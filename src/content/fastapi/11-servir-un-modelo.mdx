@@ -1,0 +1,324 @@
+Todo lo anterior converge aquí: una API que recibe las características de un vino y devuelve su calidad estimada, con un modelo de verdad entrenado con el dataset de vinos tintos de la asignatura de Supervisado. Servir un modelo tiene sus propios errores clásicos: cargarlo en cada petición, aceptar datos que el modelo nunca vio, predecir de uno en uno lo que podría ir en lote, o no saber qué versión del modelo dio cada respuesta.
+
+## Entrenar y guardar (fuera de la API)
+
+El entrenamiento **no** se hace en la API: es un script o un notebook aparte que deja un fichero con el modelo. Lo que se guarda es el **pipeline completo** (escalado incluido), para que en producción se aplique exactamente el mismo preprocesado que en entrenamiento.
+
+<RunCode
+  title="Entrenar y guardar el modelo"
+  files={["winequality-red.csv"]}
+  code={`
+    import joblib
+    import pandas as pd
+    from sklearn.linear_model import Ridge
+    from sklearn.metrics import mean_absolute_error
+    from sklearn.model_selection import train_test_split
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    df = pd.read_csv("winequality-red.csv", sep=";")
+    FEATURES = ["alcohol", "volatile acidity", "sulphates", "citric acid"]
+
+    X_train, X_test, y_train, y_test = train_test_split(df[FEATURES], df["quality"], test_size=0.2, random_state=0)
+    model = make_pipeline(StandardScaler(), Ridge()).fit(X_train, y_train)
+    print("MAE en test:", round(mean_absolute_error(y_test, model.predict(X_test)), 3))
+
+    # El artefacto: el pipeline y lo necesario para usarlo bien
+    joblib.dump({"pipeline": model, "features": FEATURES, "version": "ridge-v1"}, "wine-v1.joblib")
+    print(joblib.load("wine-v1.joblib")["version"])
+  `}
+/>
+
+Un MAE de 0,48 significa que el modelo se equivoca en media medio punto de calidad. Con cuatro variables y una regresión lineal no da para más, pero para la API es igual: lo que importa ahora es servirlo bien.
+
+## El endpoint de predicción
+
+Las decisiones, una a una:
+
+- **Cargar una vez**, en el `lifespan` (lección 7).
+- **Esquema de entrada con los rangos de entrenamiento**: el modelo nunca vio un vino de 30 % de alcohol, y su predicción ahí no vale nada. Mejor un 422 que una respuesta inventada.
+- **Los nombres de las columnas** tienen que coincidir con los del entrenamiento (`volatile acidity`, con espacio): el esquema de la API usa `volatile_acidity` y se traduce en un solo sitio.
+- **Devolver la versión del modelo** en cada respuesta.
+- `def`, no `async def`: `predict` de scikit-learn es CPU síncrona (lección 10).
+
+<CodeExercise
+  id="predict"
+  title="POST /predictions con el modelo real"
+  files={["winequality-red.csv"]}
+  starter={`
+    from contextlib import asynccontextmanager
+
+    import httpx
+    import pandas as pd
+    from fastapi import FastAPI, Request
+    from pydantic import BaseModel, Field
+    from sklearn.linear_model import Ridge
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    # Nombre en la API → nombre de la columna con la que se entrenó
+    COLUMNS = {"alcohol": "alcohol", "volatile_acidity": "volatile acidity",
+               "sulphates": "sulphates", "citric_acid": "citric acid"}
+
+    def load_model() -> dict:
+        # En producción: joblib.load(settings.model_path). Aquí entrenamos al arrancar.
+        df = pd.read_csv("winequality-red.csv", sep=";")
+        features = list(COLUMNS.values())
+        pipeline = make_pipeline(StandardScaler(), Ridge()).fit(df[features], df["quality"])
+        return {"pipeline": pipeline, "version": "ridge-v1"}
+
+    class WineSample(BaseModel):
+        alcohol: float = Field(ge=8, le=15)
+        volatile_acidity: float = Field(ge=0, le=2)
+        sulphates: float = Field(ge=0, le=2)
+        citric_acid: float = Field(ge=0, le=1)
+
+    class PredictionOut(BaseModel):
+        quality: int
+        score: float
+        model_version: str
+
+    def to_frame(samples: list[WineSample]) -> pd.DataFrame:
+        return pd.DataFrame([s.model_dump() for s in samples]).rename(columns=___)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.model = ___
+        yield
+
+    app = FastAPI(lifespan=lifespan)
+
+    @app.post("/predictions", response_model=PredictionOut)
+    def predict(sample: WineSample, request: Request):
+        model = request.app.state.model
+        score = float(model["pipeline"].predict(___)[0])
+        quality = ___                     # redondeado y dentro de 3..8, la escala del dataset
+        return {"quality": quality, "score": round(score, 3), "model_version": model["version"]}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    async with app.router.lifespan_context(app):
+        sample = {"alcohol": 12.5, "volatile_acidity": 0.3, "sulphates": 0.8, "citric_acid": 0.4}
+        print((await client.post("/predictions", json=sample)).json())
+  `}
+  solution={`
+    from contextlib import asynccontextmanager
+
+    import httpx
+    import pandas as pd
+    from fastapi import FastAPI, Request
+    from pydantic import BaseModel, Field
+    from sklearn.linear_model import Ridge
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    # Nombre en la API → nombre de la columna con la que se entrenó
+    COLUMNS = {"alcohol": "alcohol", "volatile_acidity": "volatile acidity",
+               "sulphates": "sulphates", "citric_acid": "citric acid"}
+
+    def load_model() -> dict:
+        # En producción: joblib.load(settings.model_path). Aquí entrenamos al arrancar.
+        df = pd.read_csv("winequality-red.csv", sep=";")
+        features = list(COLUMNS.values())
+        pipeline = make_pipeline(StandardScaler(), Ridge()).fit(df[features], df["quality"])
+        return {"pipeline": pipeline, "version": "ridge-v1"}
+
+    class WineSample(BaseModel):
+        alcohol: float = Field(ge=8, le=15)
+        volatile_acidity: float = Field(ge=0, le=2)
+        sulphates: float = Field(ge=0, le=2)
+        citric_acid: float = Field(ge=0, le=1)
+
+    class PredictionOut(BaseModel):
+        quality: int
+        score: float
+        model_version: str
+
+    def to_frame(samples: list[WineSample]) -> pd.DataFrame:
+        return pd.DataFrame([s.model_dump() for s in samples]).rename(columns=COLUMNS)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.model = load_model()
+        yield
+
+    app = FastAPI(lifespan=lifespan)
+
+    @app.post("/predictions", response_model=PredictionOut)
+    def predict(sample: WineSample, request: Request):
+        model = request.app.state.model
+        score = float(model["pipeline"].predict(to_frame([sample]))[0])
+        quality = min(8, max(3, round(score)))
+        return {"quality": quality, "score": round(score, 3), "model_version": model["version"]}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    async with app.router.lifespan_context(app):
+        sample = {"alcohol": 12.5, "volatile_acidity": 0.3, "sulphates": 0.8, "citric_acid": 0.4}
+        print((await client.post("/predictions", json=sample)).json())
+  `}
+  hints={[
+    "rename(columns=COLUMNS) pasa de los nombres de la API a los del entrenamiento.",
+    "En el lifespan: app.state.model = load_model(). En el endpoint, se predice sobre to_frame([sample]).",
+    "quality = min(8, max(3, round(score))): redondear y recortar a la escala.",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    async with app.router.lifespan_context(app):
+        _pipe = app.state.model["pipeline"]
+        _s = {"alcohol": 9.0, "volatile_acidity": 1.0, "sulphates": 0.5, "citric_acid": 0.0}
+        _r = (await _c.post("/predictions", json=_s)).json()
+        _expected = float(_pipe.predict(pd.DataFrame([{"alcohol": 9.0, "volatile acidity": 1.0, "sulphates": 0.5, "citric acid": 0.0}]))[0])
+        assert abs(_r["score"] - round(_expected, 3)) < 1e-9, "score debe ser la predicción del pipeline con las columnas de entrenamiento"
+        assert _r["quality"] == round(_expected) and _r["model_version"] == "ridge-v1", "quality es el score redondeado, y se devuelve la versión"
+        _top = (await _c.post("/predictions", json={"alcohol": 15, "volatile_acidity": 0, "sulphates": 2, "citric_acid": 1})).json()
+        assert 3 <= _top["quality"] <= 8, "quality debe quedar dentro de 3..8 aunque el score se salga"
+        assert (await _c.post("/predictions", json={**_s, "alcohol": 30})).status_code == 422, "Fuera del rango de entrenamiento: 422"
+  `}
+>
+Completa la traducción de columnas, la carga en el `lifespan` y la predicción.
+</CodeExercise>
+
+## Predecir en lote
+
+Un cliente que tiene que puntuar 80 vinos no debería hacer 80 peticiones: cada una paga la red, la validación y la llamada al modelo. Un endpoint de **lote** recibe una lista y llama a `predict` **una sola vez** con todas las filas, que es justo para lo que está optimizado scikit-learn (vectorizado con NumPy). Y la lista lleva un **máximo**, por la misma razón que la paginación.
+
+<CodeExercise
+  id="lote"
+  title="POST /predictions/batch"
+  files={["winequality-red.csv"]}
+  starter={`
+    import httpx
+    import pandas as pd
+    from fastapi import FastAPI
+    from pydantic import BaseModel, Field
+    from sklearn.linear_model import Ridge
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    COLUMNS = {"alcohol": "alcohol", "volatile_acidity": "volatile acidity",
+               "sulphates": "sulphates", "citric_acid": "citric acid"}
+    df = pd.read_csv("winequality-red.csv", sep=";")
+    PIPELINE = make_pipeline(StandardScaler(), Ridge()).fit(df[list(COLUMNS.values())], df["quality"])
+
+    class WineSample(BaseModel):
+        alcohol: float = Field(ge=8, le=15)
+        volatile_acidity: float = Field(ge=0, le=2)
+        sulphates: float = Field(ge=0, le=2)
+        citric_acid: float = Field(ge=0, le=1)
+
+    class Batch(BaseModel):
+        samples: list[WineSample] = Field(___)        # entre 1 y 100 muestras
+
+    app = FastAPI()
+
+    @app.post("/predictions/batch")
+    def predict_batch(batch: Batch):
+        frame = pd.DataFrame([s.model_dump() for s in batch.samples]).rename(columns=COLUMNS)
+        scores = ___                                   # UNA llamada para todas las filas
+        return {"qualities": [min(8, max(3, round(float(s)))) for s in scores]}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    wines = [{"alcohol": a, "volatile_acidity": 0.5, "sulphates": 0.6, "citric_acid": 0.2} for a in (9, 11, 13)]
+    print((await client.post("/predictions/batch", json={"samples": wines})).json())
+  `}
+  solution={`
+    import httpx
+    import pandas as pd
+    from fastapi import FastAPI
+    from pydantic import BaseModel, Field
+    from sklearn.linear_model import Ridge
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    COLUMNS = {"alcohol": "alcohol", "volatile_acidity": "volatile acidity",
+               "sulphates": "sulphates", "citric_acid": "citric acid"}
+    df = pd.read_csv("winequality-red.csv", sep=";")
+    PIPELINE = make_pipeline(StandardScaler(), Ridge()).fit(df[list(COLUMNS.values())], df["quality"])
+
+    class WineSample(BaseModel):
+        alcohol: float = Field(ge=8, le=15)
+        volatile_acidity: float = Field(ge=0, le=2)
+        sulphates: float = Field(ge=0, le=2)
+        citric_acid: float = Field(ge=0, le=1)
+
+    class Batch(BaseModel):
+        samples: list[WineSample] = Field(min_length=1, max_length=100)        # entre 1 y 100 muestras
+
+    app = FastAPI()
+
+    @app.post("/predictions/batch")
+    def predict_batch(batch: Batch):
+        frame = pd.DataFrame([s.model_dump() for s in batch.samples]).rename(columns=COLUMNS)
+        scores = PIPELINE.predict(frame)                                   # UNA llamada para todas las filas
+        return {"qualities": [min(8, max(3, round(float(s)))) for s in scores]}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    wines = [{"alcohol": a, "volatile_acidity": 0.5, "sulphates": 0.6, "citric_acid": 0.2} for a in (9, 11, 13)]
+    print((await client.post("/predictions/batch", json={"samples": wines})).json())
+  `}
+  hints={[
+    "Para listas, Field admite min_length y max_length.",
+    "Field(min_length=1, max_length=100)",
+    "scores = PIPELINE.predict(frame): el DataFrame tiene una fila por muestra.",
+  ]}
+  check={`
+    _calls = []
+    _real_predict = PIPELINE.predict
+    PIPELINE.predict = lambda X: (_calls.append(len(X)), _real_predict(X))[1]
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _w = [{"alcohol": a, "volatile_acidity": 0.5, "sulphates": 0.6, "citric_acid": 0.2} for a in (9, 11, 13)]
+    _r = await _c.post("/predictions/batch", json={"samples": _w})
+    assert _r.status_code == 200 and len(_r.json()["qualities"]) == 3, "Tres muestras, tres calidades"
+    assert _r.json()["qualities"] == sorted(_r.json()["qualities"]), "Con más alcohol (y lo demás igual), la calidad no baja"
+    assert _calls == [3], "predict debe llamarse UNA vez con las 3 filas, no una vez por vino"
+    assert (await _c.post("/predictions/batch", json={"samples": []})).status_code == 422, "Un lote vacío: 422"
+    assert (await _c.post("/predictions/batch", json={"samples": [_w[0]] * 101})).status_code == 422, "Más de 100 muestras: 422"
+    _bad = await _c.post("/predictions/batch", json={"samples": [_w[0], {**_w[1], "alcohol": 40}]})
+    assert _bad.status_code == 422 and _bad.json()["detail"][0]["loc"] == ["body", "samples", 1, "alcohol"], "El error dice qué muestra falló: body.samples.1.alcohol"
+    PIPELINE.predict = _real_predict
+  `}
+>
+Limita el lote a entre 1 y 100 muestras y predice todas con **una** llamada. Mira el último caso de la comprobación: si una muestra es inválida, el 422 dice cuál (`samples`, posición 1, `alcohol`).
+</CodeExercise>
+
+## Saber qué modelo respondió
+
+Dentro de tres meses alguien preguntará por qué el 14 de marzo la API dijo que un vino era un 7. Para contestar hace falta **guardar cada predicción con su entrada y la versión del modelo** (la tabla de la lección 6, con una columna `model_version`).
+
+<Quiz
+  id="monitorizar"
+  options={[
+    "Para cobrar por predicción",
+    "Para poder reproducir cualquier respuesta, comparar versiones y detectar si los datos que llegan se alejan de los de entrenamiento (drift)",
+    "Porque lo exige FastAPI",
+    "Para reentrenar el modelo en cada petición",
+  ]}
+  answer={1}
+  explanation="Con la entrada, la salida y la versión guardadas puedes reproducir una respuesta concreta, comparar ridge-v1 con ridge-v2 sobre el mismo tráfico y vigilar el drift: si de repente llegan vinos con más alcohol del que hubo en entrenamiento, el modelo está extrapolando y conviene saberlo antes que el cliente."
+  hints={["Piensa en qué preguntas te harán cuando el modelo falle en producción."]}
+>
+¿Para qué sirve guardar cada predicción con sus datos de entrada y la versión del modelo?
+</Quiz>
+
+<Temario
+  links={[
+    { to: "supervisado/flujo-de-un-proyecto", why: "La API es la fase de despliegue de CRISP-DM: el modelo deja el notebook." },
+    { to: "supervisado/validacion", why: "El pipeline guardado aplica el mismo preprocesado que en entrenamiento: nada de ajustar el escalador con los datos que llegan." },
+  ]}
+/>
+
+Tu TFM hace esto mismo con LumosNet: modelo cargado en el `lifespan`, covariables validadas por FastAPI y `run_in_threadpool` para la inferencia. Lo tienes en [la lección de despliegue del TFM](/tfm/despliegue).
+
+<Callout kind="real" title="Cómo se hace en el trabajo">
+- El modelo se versiona en un **registro de modelos** (MLflow, Weights & Biases, SageMaker) y la API carga una versión concreta por configuración. Promocionar un modelo es cambiar esa configuración, no el código.
+- Los rangos del esquema salen de los datos de entrenamiento (el script de entrenamiento puede guardar `min` y `max` junto al modelo). Algunos equipos, en vez de rechazar, aceptan y marcan la respuesta como «fuera de distribución».
+- Para cambiar de modelo sin riesgo: **shadow** (el nuevo predice en paralelo sin responder), **canary** (un 5 % del tráfico) o **A/B**. Todo eso solo es posible si cada respuesta lleva su `model_version`.
+- Pickle y joblib ejecutan código al cargar: carga solo modelos de origen confiable. Para intercambiar modelos entre sistemas se usan formatos como ONNX o `skops`.
+</Callout>
+
+## Para llevar
+
+- Entrenar fuera de la API; guardar el pipeline entero (con el preprocesado) y su versión.
+- Cargar una vez en el `lifespan`; el esquema de entrada con los rangos de entrenamiento.
+- `predict` de scikit-learn es CPU síncrona: endpoint `def`.
+- Lotes: una llamada al modelo con todas las filas, con un máximo de tamaño.
+- Cada respuesta con `model_version`, y cada predicción guardada con su entrada.

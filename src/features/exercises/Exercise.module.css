@@ -275,6 +275,13 @@
   line-height: 1.6;
 }
 
+/* A line where the last run failed. Doubled class so it beats the active-line background;
+   the line number is also in the traceback below, so colour is not the only cue. */
+.editor .errorLine.errorLine {
+  background: var(--color-bad-soft);
+  box-shadow: inset 3px 0 var(--color-bad);
+}
+
 .console {
   margin-top: var(--space-3);
   border-radius: var(--radius-sm);

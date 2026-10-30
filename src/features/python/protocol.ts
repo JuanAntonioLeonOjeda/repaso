@@ -12,10 +12,11 @@ export interface RunRequest {
 
 export type WorkerStatus = "idle" | "loading" | "installing" | "ready" | "failed";
 
+/** `lines`: 1-based lines of the learner's code in the traceback (empty for a bare assert). */
 export type RunOutcome =
   | { kind: "ok"; images: string[] }
-  | { kind: "check-failed"; message: string; images: string[] }
-  | { kind: "error"; message: string; traceback: string };
+  | { kind: "check-failed"; message: string; images: string[]; lines: number[] }
+  | { kind: "error"; message: string; traceback: string; lines: number[] };
 
 export type WorkerMessage =
   | { type: "status"; status: WorkerStatus }

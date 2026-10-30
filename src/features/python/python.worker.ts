@@ -10,7 +10,7 @@ import type { PyodideAPI } from "pyodide";
 import type { PyProxy } from "pyodide/ffi";
 
 import type { RunOutcome, RunRequest, WorkerMessage, WorkerStatus } from "./protocol";
-import { cleanTraceback } from "./traceback";
+import { cleanTraceback, learnerLines } from "./traceback";
 
 // Keep in step with the `pyodide` devDependency, which only provides the types.
 const PYODIDE_VERSION = "314.0.7";
@@ -50,7 +50,20 @@ def __collect_figures():
 __collect_figures()
 `;
 
+// WebAssembly Python has no threads, but Starlette runs every `def` endpoint and dependency
+// in a thread pool (anyio.to_thread). Running them inline gives the same results in a
+// single-threaded page; the FastAPI lessons explain what changes on a real server (ADR-0005).
+// The patch lasts for the worker's life (anyio stays imported); exercises load anyio through
+// their imports, so it is in place before the learner's code runs.
+const INLINE_THREADPOOL = `
+import anyio.to_thread
+async def __run_sync_inline(func, *args, abandon_on_cancel=False, cancellable=None, limiter=None):
+    return func(*args)
+anyio.to_thread.run_sync = __run_sync_inline
+`;
+
 let pyodidePromise: Promise<PyodideAPI> | null = null;
+let isThreadpoolInlined = false;
 
 function post(message: WorkerMessage): void {
   self.postMessage(message);
@@ -100,6 +113,10 @@ async function execute(pyodide: PyodideAPI, request: RunRequest): Promise<RunOut
   const source = request.check === null ? request.code : `${request.code}\n${request.check}`;
   setStatus("installing");
   await pyodide.loadPackagesFromImports(source);
+  if (!isThreadpoolInlined && "anyio" in pyodide.loadedPackages) {
+    await pyodide.runPythonAsync(INLINE_THREADPOOL);
+    isThreadpoolInlined = true;
+  }
   await copyDatasets(pyodide, request.files);
   setStatus("ready");
 
@@ -117,18 +134,22 @@ async function execute(pyodide: PyodideAPI, request: RunRequest): Promise<RunOut
       await pyodide.runPythonAsync(request.code, { globals });
     } catch (error) {
       await pyodide.runPythonAsync(COLLECT_FIGURES);
-      return { kind: "error", ...cleanTraceback(String(error)) };
+      const raw = String(error);
+      return { kind: "error", ...cleanTraceback(raw), lines: learnerLines(raw) };
     }
     if (request.check !== null) {
       try {
-        await pyodide.runPythonAsync(request.check, { globals });
+        // Its own file name keeps the check's frames apart from the learner's `<exec>` ones.
+        await pyodide.runPythonAsync(request.check, { globals, filename: "<check>" });
       } catch (error) {
         const images = toStringList(await pyodide.runPythonAsync(COLLECT_FIGURES));
-        const { message } = cleanTraceback(String(error));
+        const raw = String(error);
+        const { message } = cleanTraceback(raw);
         return {
           kind: "check-failed",
           message: message.replace(/^AssertionError:?\s*/, ""),
           images,
+          lines: learnerLines(raw),
         };
       }
     }
@@ -154,7 +175,7 @@ self.addEventListener("message", (event: MessageEvent<RunRequest | { type: "warm
       post({
         type: "done",
         id: request.id,
-        outcome: { kind: "error", message: String(error), traceback: "" },
+        outcome: { kind: "error", message: String(error), traceback: "", lines: [] },
       });
     });
 });

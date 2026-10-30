@@ -1,0 +1,237 @@
+Un modelo que solo vive en un notebook no lo usa nadie. Para que una web, una app móvil u otro servicio le pidan predicciones, el modelo tiene que estar detrás de una **API HTTP**: una dirección a la que se le manda una petición y que devuelve una respuesta en JSON. **FastAPI** es hoy la forma más habitual de hacerlo en Python, y en este tutorial vas a construir con ella una API completa para un modelo de calidad de vinos: usuarios, base de datos, autenticación, tests y despliegue.
+
+## HTTP en cinco minutos
+
+Todo lo que hace una API se reduce a esto: el cliente manda una **petición** y el servidor contesta con una **respuesta**.
+
+```http
+POST /predictions HTTP/1.1          ← método y ruta
+Host: api.example.com
+Content-Type: application/json      ← cabeceras
+Authorization: Bearer eyJhbGciOi...
+
+{"alcohol": 11.2, "sulphates": 0.7} ← cuerpo (opcional)
+```
+
+```http
+HTTP/1.1 201 Created                ← código de estado
+Content-Type: application/json
+
+{"id": 42, "quality": 6}
+```
+
+- El **método** dice qué quieres hacer: `GET` leer, `POST` crear, `PUT` reemplazar, `PATCH` modificar una parte, `DELETE` borrar.
+- La **ruta** dice sobre qué: `/models`, `/models/3`, `/predictions`.
+- El **código de estado** resume cómo fue: `2xx` bien, `4xx` el cliente pidió algo mal, `5xx` el servidor falló.
+- Las **cabeceras** llevan metadatos (formato, autenticación…) y el **cuerpo**, los datos.
+
+<Quiz
+  id="metodos"
+  options={["GET /predictions", "POST /predictions", "PUT /predictions/nueva", "GET /predictions/crear"]}
+  answer={1}
+  explanation="Crear un recurso nuevo en una colección es POST a la colección. GET no debe cambiar nada en el servidor (se puede repetir, cachear o precargar sin consecuencias), y meter verbos en la ruta (/crear) es lo que el método ya expresa."
+  hints={["¿Qué método se usa para crear?"]}
+>
+Un cliente quiere pedir una predicción nueva y que quede guardada. ¿Qué petición es la más correcta?
+</Quiz>
+
+## Tu primera aplicación
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI(title="Wine API")
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+```
+
+Eso es una API entera. El decorador `@app.get("/health")` registra la función como la que responde a `GET /health` (en FastAPI se llama **operación de ruta**, o *endpoint*). Lo que devuelve la función (un `dict`, una lista, un modelo de Pydantic…) FastAPI lo convierte en JSON.
+
+En tu máquina se arranca con un servidor ASGI. Lo más cómodo es el comando de FastAPI:
+
+```bash
+pip install "fastapi[standard]"
+fastapi dev main.py            # recarga al guardar; sirve en http://127.0.0.1:8000 (prueba /docs)
+```
+
+`/docs` es la gran ventaja de FastAPI: una página interactiva con todos tus endpoints, generada sola a partir del código, donde puedes probarlos. Detrás está `/openapi.json`, la descripción de la API en el estándar **OpenAPI**.
+
+## Probarla aquí, en el navegador
+
+Aquí no podemos abrir un puerto, pero no hace falta: `httpx` puede hablar con la aplicación **directamente en memoria**, sin red, con `ASGITransport`. Es el mismo mecanismo que usan los tests.
+
+<RunCode
+  title="Tu primera API, llamada en memoria"
+  code={`
+    import httpx
+    from fastapi import FastAPI
+
+    app = FastAPI(title="Wine API")
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+    r = await client.get("/health")
+    print(r.status_code, r.headers["content-type"], r.json())
+
+    r = await client.get("/helth")      # errata
+    print(r.status_code, r.json())
+  `}
+/>
+
+<Callout kind="note" title="¿Por qué await y no TestClient?">
+En el trabajo probarás con `TestClient` (lección 9), que tiene una interfaz sin `await`. Por dentro usa hilos, y Python en el navegador no tiene hilos. `httpx.AsyncClient` hace lo mismo sin ellos: es la forma que la documentación de FastAPI llama *async tests*. Aquí puedes usar `await` fuera de una función; en un script normal iría dentro de un `async def`.
+</Callout>
+
+<CodeExercise
+  id="health"
+  title="Los dos primeros endpoints"
+  starter={`
+    import httpx
+    from fastapi import FastAPI
+
+    app = FastAPI(title="Wine API", version="0.1.0")
+
+    @app.get("/health")
+    def health():
+        return ___
+
+    # GET / debe devolver {"name": "wine-api", "version": "0.1.0"}
+    ___
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/health")).json())
+    print((await client.get("/")).json())
+  `}
+  solution={`
+    import httpx
+    from fastapi import FastAPI
+
+    app = FastAPI(title="Wine API", version="0.1.0")
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    # GET / debe devolver {"name": "wine-api", "version": "0.1.0"}
+    @app.get("/")
+    def root():
+        return {"name": "wine-api", "version": app.version}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/health")).json())
+    print((await client.get("/")).json())
+  `}
+  hints={[
+    "Un endpoint devuelve un dict y FastAPI lo convierte en JSON.",
+    "Para el segundo: decorador @app.get(\"/\") encima de una función que devuelva el dict.",
+    "La versión ya está en app.version, así no la escribes dos veces.",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _r = await _c.get("/health")
+    assert _r.status_code == 200 and _r.json() == {"status": "ok"}, "GET /health debe responder 200 con {'status': 'ok'}"
+    _r = await _c.get("/")
+    assert _r.status_code == 200, "Falta el endpoint GET /"
+    assert _r.json() == {"name": "wine-api", "version": "0.1.0"}, "GET / debe devolver {'name': 'wine-api', 'version': '0.1.0'}"
+  `}
+>
+Crea `GET /health`, que responda `{"status": "ok"}` (lo usan Docker y los balanceadores para saber si el servicio está vivo), y `GET /`, con el nombre y la versión de la API.
+</CodeExercise>
+
+<Predict
+  id="errata"
+  answer={["404"]}
+  explanation="Ninguna ruta coincide con /helth, así que FastAPI responde 404 Not Found sin llegar a ejecutar tu código. Es un 4xx: el error es del cliente."
+  hints={["Es un 4xx: el cliente pidió algo que no existe."]}
+>
+En el ejemplo de arriba, ¿qué código de estado devuelve `GET /helth`?
+</Predict>
+
+## La documentación sale del código
+
+FastAPI lee los decoradores, los tipos de los parámetros y los modelos de Pydantic y con eso genera el OpenAPI. Por eso en FastAPI **los tipos no son decoración**: validan la entrada, documentan la API y permiten generar clientes automáticamente.
+
+<CodeExercise
+  id="openapi"
+  title="Leer el OpenAPI"
+  starter={`
+    import httpx
+    from fastapi import FastAPI
+
+    app = FastAPI(title="Wine API")
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    @app.get("/models")
+    def list_models():
+        return []
+
+    @app.post("/predictions")
+    def predict():
+        return {"quality": 6}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    spec = (await client.get(___)).json()
+
+    rutas = ___                       # lista ordenada de rutas
+    metodos_predictions = ___         # métodos de /predictions, p. ej. ["post"]
+    print(spec["info"]["title"], rutas, metodos_predictions)
+  `}
+  solution={`
+    import httpx
+    from fastapi import FastAPI
+
+    app = FastAPI(title="Wine API")
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    @app.get("/models")
+    def list_models():
+        return []
+
+    @app.post("/predictions")
+    def predict():
+        return {"quality": 6}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    spec = (await client.get("/openapi.json")).json()
+
+    rutas = sorted(spec["paths"])                       # lista ordenada de rutas
+    metodos_predictions = list(spec["paths"]["/predictions"])  # métodos de /predictions
+    print(spec["info"]["title"], rutas, metodos_predictions)
+  `}
+  hints={[
+    "La especificación está en /openapi.json.",
+    "spec[\"paths\"] es un dict cuyas claves son las rutas.",
+    "spec[\"paths\"][\"/predictions\"] es un dict cuyas claves son los métodos en minúscula.",
+  ]}
+  check={`
+    assert rutas == ["/health", "/models", "/predictions"], "rutas debe ser ['/health', '/models', '/predictions']"
+    assert metodos_predictions == ["post"], "/predictions solo acepta post"
+  `}
+>
+Pide `/openapi.json` y saca de ahí la lista ordenada de rutas y los métodos que acepta `/predictions`. Es lo que hace `/docs` para dibujar la página.
+</CodeExercise>
+
+<Callout kind="real" title="Cómo se hace en el trabajo">
+- La especificación OpenAPI es el **contrato** con quien consume tu API. Los equipos de frontend generan su cliente TypeScript con ella (`openapi-typescript`, `orval`), así que cambiar un campo sin avisar rompe a otros.
+- `fastapi dev` es solo para desarrollo. En producción se usa `fastapi run` o `uvicorn` directamente, sin recarga y con varios procesos (lección 12).
+- La convención REST de **sustantivos en plural y métodos HTTP** (`POST /predictions`, no `/crearPrediccion`) no es un capricho: proxies, cachés y clientes asumen que `GET` no cambia nada.
+</Callout>
+
+## Para llevar
+
+- Una API HTTP es petición (método, ruta, cabeceras, cuerpo) y respuesta (código, cabeceras, cuerpo).
+- En FastAPI, un endpoint es una función con un decorador `@app.get`, `@app.post`…; lo que devuelve se convierte en JSON.
+- `/docs` y `/openapi.json` se generan solos a partir del código y de sus tipos.
+- Para probar sin red: `httpx.AsyncClient` con `ASGITransport` (aquí) o `TestClient` (en tu máquina).
