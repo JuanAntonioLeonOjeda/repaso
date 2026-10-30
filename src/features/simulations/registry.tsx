@@ -16,6 +16,17 @@ function lazySim(load: () => Promise<{ default: ComponentType }>): ComponentType
 
 /** Every simulation a lesson can use, by the name used in MDX (`<KMeansSim />`). */
 export const simulations = {
+  AxisSim: lazySim(() => import("./python/AxisSim")),
+  BroadcastingSim: lazySim(() => import("./python/BroadcastingSim")),
+  GeneratorPipelineSim: lazySim(() => import("./python/GeneratorPipelineSim")),
+  GroupBySim: lazySim(() => import("./python/GroupBySim")),
+  HistogramSim: lazySim(() => import("./python/HistogramSim")),
+  ImageOpsSim: lazySim(() => import("./python/ImageOpsSim")),
+  MergeSim: lazySim(() => import("./python/MergeSim")),
+  MissingValuesSim: lazySim(() => import("./python/MissingValuesSim")),
+  ReferencesSim: lazySim(() => import("./python/ReferencesSim")),
+  SlicingSim: lazySim(() => import("./python/SlicingSim")),
+  TextFrequencySim: lazySim(() => import("./python/TextFrequencySim")),
   GiniSplitSim: lazySim(() => import("./supervised/GiniSplitSim")),
   KFoldSim: lazySim(() => import("./supervised/KFoldSim")),
   KnnSim: lazySim(() => import("./supervised/KnnSim")),
