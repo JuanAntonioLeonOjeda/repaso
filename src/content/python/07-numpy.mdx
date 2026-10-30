@@ -1,0 +1,291 @@
+NumPy es el cimiento de todo el ecosistema: pandas guarda sus columnas en arrays de NumPy, scikit-learn recibe y devuelve arrays, una imagen es un array y un tensor de PyTorch se convierte en uno con `.numpy()`. Su idea es simple: **operar con arrays enteros de golpe, sin bucles de Python**, porque el bucle lo hace C por debajo. Con un millón de números, sumar con un bucle de Python tarda unas cincuenta veces más que `arr.sum()`; puedes medirlo tú con `%timeit` en Jupyter.
+
+## El ndarray
+
+Un `ndarray` es una rejilla de valores **del mismo tipo** (`dtype`) guardados seguidos en memoria. Eso es lo que lo hace rápido, y también lo que lo distingue de una lista.
+
+```python
+import numpy as np
+
+a = np.array([[1, 2, 3], [4, 5, 6]])
+a.shape, a.ndim, a.size, a.dtype      # (2, 3), 2, 6, dtype('int64')
+
+np.zeros((2, 3)); np.ones(4); np.eye(3); np.full((2, 2), 7)
+np.arange(0, 10, 2)                   # [0 2 4 6 8]  (como range: excluye el fin)
+np.linspace(0, 1, 5)                  # [0. 0.25 0.5 0.75 1.]  (incluye el fin)
+
+rng = np.random.default_rng(42)       # generador con semilla: resultados reproducibles
+rng.integers(1, 101, size=50)         # 50 enteros en [1, 100]  (el alto se excluye)
+rng.normal(0, 1, size=(3, 3))
+```
+
+<Callout kind="real" title="default_rng mejor que np.random.randint">
+El curso y los exámenes usan `np.random.randint(1, 101, size=50)`, que sigue funcionando. La recomendación actual de NumPy es crear un generador con `np.random.default_rng(semilla)` y pedirle los números: no depende de un estado global que cualquier otra librería puede alterar, y con la misma semilla obtienes siempre los mismos datos (imprescindible para que un experimento sea reproducible).
+</Callout>
+
+### Cambiar de forma
+
+- `a.reshape(3, 2)` reorganiza sin copiar (un `-1` deja que NumPy calcule esa dimensión: `a.reshape(-1)` lo aplana).
+- `a.T` traspone; `a.ravel()` aplana (vista si puede), `a.flatten()` aplana copiando.
+- `np.concatenate([a, b], axis=0)`, `np.vstack`, `np.hstack` juntan; `np.split` parte.
+- `a[np.newaxis, :]` o `a[:, None]` añaden una dimensión de tamaño 1 (útil para *broadcasting*).
+
+## Indexar: vistas, máscaras e índices
+
+```python
+m = np.arange(12).reshape(3, 4)
+m[1, 2]          # fila 1, columna 2
+m[:, 0]          # primera columna
+m[-1]            # última fila
+m[:2, 1:3]       # submatriz
+m[m > 5]         # máscara booleana: los elementos que cumplen (array 1-D)
+m[[0, 2]]        # filas 0 y 2 (fancy indexing)
+np.where(m > 5, m, 0)   # elegir elemento a elemento: si cumple, m; si no, 0
+```
+
+Para combinar condiciones se usan `&`, `|` y `~` **con paréntesis**: `m[(m > 2) & (m % 2 == 0)]`. `and` y `or` no funcionan con arrays.
+
+<Predict
+  id="vista"
+  answer={["99"]}
+  explanation="El slicing de NumPy devuelve una VISTA: b comparte memoria con a. Modificar b[0] modifica a[1]. Con listas de Python pasaría lo contrario (el slicing copia). Si necesitas independencia: b = a[1:3].copy(). Las máscaras y el fancy indexing, en cambio, sí copian."
+  hints={["¿El slicing de NumPy copia los datos o los comparte?", "b[0] es el mismo hueco de memoria que a[1]."]}
+>
+```python
+a = np.arange(5)      # [0 1 2 3 4]
+b = a[1:3]
+b[0] = 99
+```
+¿Cuánto vale `a[1]`?
+</Predict>
+
+## Operaciones vectorizadas y broadcasting
+
+Los operadores actúan **elemento a elemento**: `a + b`, `a * 2`, `a ** 2`, `np.sqrt(a)`, `np.exp(a)`, `a > 0`. Para el producto de matrices, `a @ b` (o `np.dot`). Cuando las formas no coinciden, NumPy aplica el *broadcasting*:
+
+<BroadcastingSim />
+
+## Agregar a lo largo de un eje
+
+`sum`, `mean`, `std`, `min`, `max`, `argmax`, `cumsum`, `any`, `all`… todas aceptan `axis`. Si tu intuición falla con los ejes, juega con esto:
+
+<AxisSim />
+
+<CodeExercise
+  id="estandarizar"
+  title="Estandarizar columnas sin bucles"
+  starter={`
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    X = rng.normal(loc=[10, 200, -5], scale=[1, 50, 3], size=(1000, 3))
+
+    # z-score por columna: a cada columna, restarle su media y dividir por su desviación
+    Z = ___
+
+    print(Z.mean(axis=0).round(6), Z.std(axis=0).round(6))
+  `}
+  solution={`
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    X = rng.normal(loc=[10, 200, -5], scale=[1, 50, 3], size=(1000, 3))
+
+    Z = (X - X.mean(axis=0)) / X.std(axis=0)
+
+    print(Z.mean(axis=0).round(6), Z.std(axis=0).round(6))
+  `}
+  hints={[
+    "X.mean(axis=0) da la media de cada columna, con forma (3,).",
+    "Por broadcasting, X - X.mean(axis=0) resta a cada fila el vector de medias.",
+    "Z = (X - X.mean(axis=0)) / X.std(axis=0)",
+  ]}
+  check={`
+    assert Z.shape == (1000, 3), f"Z debe tener la forma de X (1000, 3) y tiene {Z.shape}"
+    assert np.allclose(Z.mean(axis=0), 0) and np.allclose(Z.std(axis=0), 1), "Cada columna debe quedar con media 0 y desviación 1 (¿usaste axis=0?)"
+  `}
+>
+Es lo que hace `StandardScaler` de scikit-learn. Hazlo en una línea con *broadcasting*.
+</CodeExercise>
+
+## La pregunta de la matriz (examen)
+
+Aparece casi igual en todas las convocatorias: crear una matriz aleatoria 6×6 de enteros en $[-10, 10]$, restar a cada elemento la media de su columna **redondeada hacia arriba**, cambiar por `NaN` los negativos múltiplos de 3 y eliminar las columnas con dos o más `NaN`.
+
+<Quiz
+  id="nan-entero"
+  options={[
+    "Pone NaN en la primera posición",
+    "Pone 0, que es como NumPy representa NaN en enteros",
+    "Lanza ValueError: un array de enteros no puede guardar NaN",
+    "Convierte el array a float automáticamente",
+  ]}
+  answer={2}
+  explanation="NaN es un valor de coma flotante; un array int64 no tiene dónde guardarlo. En el ejercicio del examen funciona porque restar la media (un float) convierte la matriz a float64 antes de meter los NaN. Si no, hay que convertir antes: m = m.astype(float)."
+>
+`a = np.array([1, 2, 3])` y luego `a[0] = np.nan`. ¿Qué pasa?
+</Quiz>
+
+<CodeExercise
+  id="matriz-examen"
+  title="La matriz 6×6"
+  starter={`
+    import numpy as np
+
+    rng = np.random.default_rng(42)
+    m = rng.integers(-10, 11, size=(6, 6))       # enteros en [-10, 10]
+
+    # 1) restar a cada columna su media redondeada hacia arriba
+    r = m - ___
+
+    # 2) los negativos múltiplos de 3, a NaN
+    r[___] = np.nan
+
+    # 3) quitar las columnas con 2 o más NaN
+    nan_por_columna = ___
+    resultado = r[:, ___]
+
+    print(resultado)
+  `}
+  solution={`
+    import numpy as np
+
+    rng = np.random.default_rng(42)
+    m = rng.integers(-10, 11, size=(6, 6))
+
+    r = m - np.ceil(m.mean(axis=0))
+
+    r[(r < 0) & (r % 3 == 0)] = np.nan
+
+    nan_por_columna = np.isnan(r).sum(axis=0)
+    resultado = r[:, nan_por_columna < 2]
+
+    print(resultado)
+  `}
+  hints={[
+    "La media de cada columna es m.mean(axis=0) y el redondeo hacia arriba, np.ceil.",
+    "La máscara combina dos condiciones con & y paréntesis: (r < 0) & (r % 3 == 0).",
+    "np.isnan(r) da True donde hay NaN; sumado por columnas (axis=0) los cuenta. Quédate con las columnas donde ese conteo es < 2.",
+  ]}
+  check={`
+    esperado = m - np.ceil(m.mean(axis=0))
+    esperado[(esperado < 0) & (esperado % 3 == 0)] = np.nan
+    esperado = esperado[:, np.isnan(esperado).sum(axis=0) < 2]
+    assert resultado.shape == (6, 5), f"Con esta semilla debe quedar una matriz 6×5 (se elimina una columna) y sale {resultado.shape}"
+    assert np.allclose(resultado, esperado, equal_nan=True), "Los valores no coinciden: revisa el redondeo (ceil, no round) y la máscara"
+    assert (np.isnan(resultado).sum(axis=0) < 2).all(), "No debe quedar ninguna columna con 2 o más NaN"
+  `}
+>
+Con NumPy puro. La semilla fija los datos para que el resultado se pueda comprobar.
+</CodeExercise>
+
+## Marcar duplicados
+
+<CodeExercise
+  id="duplicados-numpy"
+  title="Duplicados a partir de la segunda vez"
+  starter={`
+    import numpy as np
+
+    def find_duplicates(a):
+        # np.unique con return_index da la posición de la PRIMERA aparición de cada valor
+        _, primeras = np.unique(a, return_index=True)
+        marcas = np.ones(len(a), dtype=bool)
+        ___
+        return marcas
+
+    numbers = np.array([4, 4, 4, 3, 8, 1, 9, 6, 1, 5, 9, 4, 0, 2])
+    print(find_duplicates(numbers))
+  `}
+  solution={`
+    import numpy as np
+
+    def find_duplicates(a):
+        _, primeras = np.unique(a, return_index=True)
+        marcas = np.ones(len(a), dtype=bool)
+        marcas[primeras] = False
+        return marcas
+
+    numbers = np.array([4, 4, 4, 3, 8, 1, 9, 6, 1, 5, 9, 4, 0, 2])
+    print(find_duplicates(numbers))
+  `}
+  hints={[
+    "Empiezas con todo a True («es duplicado»). ¿Qué posiciones NO son duplicados?",
+    "Las primeras apariciones: pon a False las posiciones de primeras.",
+    "marcas[primeras] = False",
+  ]}
+  check={`
+    expected = np.array([False, True, True, False, False, False, False, False, True, False, True, True, False, False])
+    out = find_duplicates(np.array([4, 4, 4, 3, 8, 1, 9, 6, 1, 5, 9, 4, 0, 2]))
+    assert isinstance(out, np.ndarray) and out.dtype == bool, "Devuelve un array booleano de NumPy"
+    assert np.array_equal(out, expected), f"Esperaba {expected} y sale {out}"
+  `}
+>
+Pregunta del examen de prueba: devuelve un array con `True` en los elementos repetidos a partir de su segunda aparición. (Con pandas sería `pd.Series(a).duplicated()`; aquí, solo NumPy.)
+</CodeExercise>
+
+## Álgebra lineal: resolver sistemas
+
+`np.linalg` tiene `inv`, `det`, `eig`, `norm` y `solve`. Para resolver $A\mathbf{x} = \mathbf{b}$ se usa `solve`, que es más rápido y más estable que calcular la inversa.
+
+<CodeExercise
+  id="sistemas"
+  title="Dos sistemas de ecuaciones (examen)"
+  starter={`
+    import numpy as np
+
+    # Sistema A:  8x + 2y = 11
+    #            -3y + 10x = 44        <- ¡cuidado con el orden de las incógnitas!
+    A = np.array(___)
+    b = np.array([11, 44])
+    sol_a = np.linalg.solve(A, b)
+
+    # Sistema B:  -4z + y = 5
+    #              3y + 2z = -2
+    #             -x - z + 2y = -1     (incógnitas en orden x, y, z)
+    B = np.array(___)
+    c = np.array([5, -2, -1])
+    sol_b = np.linalg.solve(B, c)
+
+    print(sol_a, sol_b)
+    print(np.allclose(A @ sol_a, b), np.allclose(B @ sol_b, c))
+  `}
+  solution={`
+    import numpy as np
+
+    A = np.array([[8, 2], [10, -3]])
+    b = np.array([11, 44])
+    sol_a = np.linalg.solve(A, b)
+
+    B = np.array([[0, 1, -4], [0, 3, 2], [-1, 2, -1]])
+    c = np.array([5, -2, -1])
+    sol_b = np.linalg.solve(B, c)
+
+    print(sol_a, sol_b)
+    print(np.allclose(A @ sol_a, b), np.allclose(B @ sol_b, c))
+  `}
+  hints={[
+    "Cada fila de la matriz son los coeficientes de una ecuación, en el orden de las incógnitas (x, y, z).",
+    "En −3y + 10x = 44 el coeficiente de x es 10 y el de y es −3: fila [10, -3].",
+    "Si una incógnita no aparece, su coeficiente es 0: −4z + y = 5 es la fila [0, 1, -4].",
+  ]}
+  check={`
+    assert np.allclose(sol_a, [2.75, -5.5]), f"El sistema A tiene solución x = 2.75, y = −5.5 y sale {sol_a}"
+    assert np.allclose(sol_b, [2.5, 1 / 7, -17 / 14]), f"El sistema B tiene solución x = 2.5, y = 1/7, z = −17/14 y sale {sol_b}"
+  `}
+>
+Pregunta 4 de la primera convocatoria (mañana). Escribe las matrices de coeficientes; la última línea verifica la solución, como pide el enunciado.
+</CodeExercise>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_08_NumPy.ipynb` (creación, manipulación, índices y slicing, vistas y copias, broadcasting, estadística y álgebra lineal) y la colección `numpy-100` de tu carpeta de la asignatura, con 100 ejercicios graduados y sus soluciones. La matriz 6×6 sale en `2024_25_1.ipynb` y en los dos exámenes de la primera convocatoria.
+</Callout>
+
+## Para llevar
+
+- Un `ndarray` tiene un solo `dtype` y vive seguido en memoria: por eso las operaciones vectorizadas son tan rápidas.
+- El slicing devuelve **vistas**; las máscaras y el *fancy indexing*, copias.
+- Combina condiciones con `&`, `|`, `~` y paréntesis.
+- *Broadcasting*: formas alineadas por la derecha, tamaños iguales o 1.
+- `axis=0` colapsa filas (un resultado por columna); `axis=1`, columnas.
+- `NaN` es float: un array de enteros no puede guardarlo.

@@ -2,6 +2,7 @@ import type { MDXContent } from "mdx/types";
 import type { ComponentType } from "react";
 
 export type SubjectSlug =
+  | "python"
   | "supervisado"
   | "no-supervisado"
   | "deep-learning"

@@ -1,0 +1,227 @@
+Casi todo programa de datos mueve colecciones: una lista de ficheros, un diccionario de parámetros, un conjunto de etiquetas vistas. Elegir bien la colección hace el código más corto **y** más rápido: buscar en una lista de un millón de elementos tarda un millón de pasos; en un `set`, uno.
+
+## Las cuatro colecciones
+
+| | Sintaxis | Ordenada | Mutable | Duplicados | Para qué |
+|---|---|---|---|---|---|
+| `list` | `[1, 2, 2]` | sí | sí | sí | secuencias que crecen |
+| `tuple` | `(1, 2)` | sí | **no** | sí | registros fijos, claves de dict, devolver varios valores |
+| `dict` | `{"a": 1}` | sí (orden de inserción) | sí | claves únicas | buscar por clave |
+| `set` | `{1, 2}` | no | sí | **no** | pertenencia, quitar duplicados, operaciones de conjuntos |
+
+Detalles que caen:
+
+- `{}` es un **dict vacío**; el set vacío es `set()`.
+- Una tupla de un elemento lleva coma: `(5,)`. Sin ella, `(5)` es solo un 5 entre paréntesis.
+- Las claves de un dict tienen que ser **inmutables** (*hashables*): `str`, `int`, `tuple`… nunca una lista.
+- **Desempaquetado**: `x, y = (3, 4)`, `primero, *resto = [1, 2, 3]` y el intercambio `a, b = b, a`.
+
+### Diccionarios: lo que más se usa
+
+```python
+persona = {"nombre": "Ana", "edad": 35}
+persona["ciudad"] = "Valencia"          # añadir o modificar
+persona.get("dni")                      # None en vez de KeyError
+persona.get("dni", "desconocido")       # con valor por defecto
+for clave, valor in persona.items():    # recorrer pares
+    print(clave, valor)
+"edad" in persona                       # ¿existe la clave? (no busca en los valores)
+```
+
+### Sets: pertenencia y álgebra
+
+`a | b` (unión), `a & b` (intersección), `a - b` (diferencia) y `a ^ b` (diferencia simétrica: en uno pero no en los dos). `x in conjunto` es instantáneo, se tenga un elemento o un millón.
+
+<Quiz
+  id="set-ops"
+  options={["{1, 2, 3, 4, 5}", "{3}", "{1, 2, 4, 5}", "{1, 2}"]}
+  answer={2}
+  explanation="^ es la diferencia simétrica: los elementos que están en uno de los dos conjuntos pero no en ambos. El 3 está en los dos, así que sale."
+  hints={["^ no es potencia con sets.", "¿Qué elementos están en exactamente uno de los dos?"]}
+>
+¿Qué da `{1, 2, 3} ^ {3, 4, 5}`?
+</Quiz>
+
+## Indexar y trocear
+
+Las secuencias (`list`, `tuple`, `str`) se indexan desde 0 y admiten índices negativos (`s[-1]` es el último). El *slicing* `s[inicio:fin:paso]` incluye el inicio y **excluye** el fin; cualquiera de los tres se puede omitir.
+
+<SlicingSim />
+
+<Predict
+  id="slice-negativo"
+  answer={["ige", "'ige'", "\"ige\""]}
+  explanation="Con paso −2 se empieza en el índice 8 (la i) y se va hacia atrás de dos en dos, sin llegar al 2: índices 8, 6 y 4, es decir i, g y e."
+  hints={["Con paso negativo se recorre de derecha a izquierda.", "Índices 8, 6, 4… ¿y el 2? El fin nunca se incluye."]}
+>
+Con `s = "abcdefghij"`, ¿qué devuelve `s[8:2:-2]`?
+</Predict>
+
+<Callout kind="warn" title="Trocear una lista copia; trocear un array de NumPy, no">
+`lista[1:4]` crea una lista nueva. En NumPy, `arr[1:4]` es una **vista**: modificarla modifica el array original. Lo verás en la lección de NumPy; si necesitas independencia, `.copy()`.
+</Callout>
+
+## Copias superficiales y profundas
+
+`lista.copy()`, `list(lista)` y `lista[:]` hacen una **copia superficial**: lista nueva, pero los elementos son los mismos objetos. Con listas de números da igual; con listas de listas, no. Para copiar también el interior: `copy.deepcopy(lista)`. Repasa el escenario «Copia superficial» de la simulación de la lección anterior si dudas.
+
+## Comprehensions
+
+Una *comprehension* construye una colección en una línea a partir de otra:
+
+```python
+cuadrados = [x ** 2 for x in range(10)]                 # list
+pares = [x for x in range(10) if x % 2 == 0]            # con filtro
+signos = ["+" if x >= 0 else "-" for x in [3, -1, 0]]   # con if/else (va ANTES del for)
+longitudes = {palabra: len(palabra) for palabra in ["ia", "datos"]}   # dict
+letras = {c for c in "mississippi"}                     # set: {'m', 'i', 's', 'p'}
+```
+
+Fíjate en las dos posiciones del `if`: **al final filtra** (decide qué elementos entran), **delante del `for` con `else` transforma** (decide qué valor toma cada elemento).
+
+<CodeExercise
+  id="en-una-linea"
+  title="En una línea (examen)"
+  starter={`
+    def multiline(i):
+        l = list()
+        for n in range(i):
+            if n % 2 == 0:
+                if n % 3 == 0:
+                    l.append(n // 3)
+                else:
+                    l.append(n // 2)
+        return l
+
+    def oneline(i):
+        return [___ for n in range(i) ___]
+
+    print(oneline(20))
+  `}
+  solution={`
+    def multiline(i):
+        l = list()
+        for n in range(i):
+            if n % 2 == 0:
+                if n % 3 == 0:
+                    l.append(n // 3)
+                else:
+                    l.append(n // 2)
+        return l
+
+    def oneline(i):
+        return [n // 3 if n % 3 == 0 else n // 2 for n in range(i) if n % 2 == 0]
+
+    print(oneline(20))
+  `}
+  hints={[
+    "Hay dos if distintos: uno filtra (n % 2 == 0) y otro elige el valor (n // 3 o n // 2).",
+    "El que filtra va al final; el que elige va delante del for, con su else.",
+    "[n // 3 if n % 3 == 0 else n // 2 for n in range(i) if n % 2 == 0]",
+  ]}
+  check={`
+    for i in [0, 1, 7, 20, 100]:
+        assert oneline(i) == multiline(i), f"Para i={i} esperaba {multiline(i)} y sale {oneline(i)}"
+  `}
+>
+Pregunta del examen de la primera convocatoria: reescribe `multiline` como una sola comprehension.
+</CodeExercise>
+
+## Contar y buscar repetidos
+
+Dos clásicos que aparecen en todos los exámenes y entrevistas.
+
+<CodeExercise
+  id="contar-palabras"
+  title="Contar palabras con un dict"
+  starter={`
+    texto = "el gato y el perro y el pez"
+
+    conteo = {}
+    for palabra in texto.split():
+        conteo[palabra] = ___
+
+    # la palabra más repetida: max sobre las claves, comparando por su conteo
+    mas_comun = max(conteo, key=___)
+    print(conteo, mas_comun)
+  `}
+  solution={`
+    texto = "el gato y el perro y el pez"
+
+    conteo = {}
+    for palabra in texto.split():
+        conteo[palabra] = conteo.get(palabra, 0) + 1
+
+    mas_comun = max(conteo, key=conteo.get)
+    print(conteo, mas_comun)
+  `}
+  hints={[
+    "Si la palabra no está todavía, conteo[palabra] daría KeyError. ¿Qué método devuelve un valor por defecto?",
+    "conteo.get(palabra, 0) + 1",
+    "max(iterable, key=f) compara usando f(elemento). La función que da el conteo de una clave es conteo.get.",
+  ]}
+  check={`
+    assert conteo == {"el": 3, "gato": 1, "y": 2, "perro": 1, "pez": 1}, f"Conteo inesperado: {conteo}"
+    assert mas_comun == "el", "La palabra más repetida es 'el'"
+  `}
+>
+Cuenta cuántas veces aparece cada palabra y encuentra la más frecuente. (En el trabajo usarías `collections.Counter(texto.split()).most_common(1)`, que hace lo mismo.)
+</CodeExercise>
+
+<CodeExercise
+  id="repetido"
+  title="El primer elemento repetido"
+  starter={`
+    def repeated_element(arr):
+        vistos = ___
+        for x in arr:
+            if x in vistos:
+                return x
+            vistos.___(x)
+        return None
+
+    print(repeated_element([4, 8, 0, 3, 6, 2, 1, 5, 3, 9, 7]))
+  `}
+  solution={`
+    def repeated_element(arr):
+        vistos = set()
+        for x in arr:
+            if x in vistos:
+                return x
+            vistos.add(x)
+        return None
+
+    print(repeated_element([4, 8, 0, 3, 6, 2, 1, 5, 3, 9, 7]))
+  `}
+  hints={[
+    "Necesitas una colección donde preguntar «¿ya lo he visto?» sea rápido.",
+    "Un set vacío se crea con set(), no con {}. Para añadir a un set: .add().",
+  ]}
+  check={`
+    assert repeated_element([4, 8, 0, 3, 6, 2, 1, 5, 3, 9, 7]) == 3, "En el ejemplo del examen el repetido es 3"
+    assert repeated_element([1, 2, 3]) is None, "Sin repetidos debe devolver None"
+    assert repeated_element([5, 1, 1, 5]) == 1, "Debe devolver el primero que se REPITE (el 1 se repite antes que el 5)"
+    import time
+    grande = list(range(200_000)) + [199_999]
+    t = time.perf_counter(); repeated_element(grande); t = time.perf_counter() - t
+    assert t < 1, "Con 200.000 elementos debería tardar milisegundos: ¿estás buscando en una lista?"
+  `}
+>
+Ejercicio del examen (primera convocatoria, mañana): devuelve el primer elemento que aparece por segunda vez, en Python puro. Hazlo en una sola pasada con un `set`.
+</CodeExercise>
+
+<Callout kind="real" title="Por qué importa el set">
+La solución que circulaba en el examen guardaba los vistos en una **lista**: `if i not in checked` recorre la lista entera cada vez, así que con n elementos hace del orden de n² comparaciones. Con un `set` cada consulta es casi instantánea (es una tabla hash) y el total es lineal. Con 10 elementos no se nota; con un millón de identificadores de usuario es la diferencia entre un segundo y un día.
+</Callout>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_02_Python101_DataTypes.ipynb` (listas, diccionarios, sets, copias) y la parte de *comprehensions* de `01MIAR_03_Python101_Control.ipynb`. Los ejercicios «en una línea» y «elemento repetido» son de `examenes/01MIAR_Exam_01_A.ipynb` y `01MIAR_Exam_01_B.ipynb`.
+</Callout>
+
+## Para llevar
+
+- `list` para secuencias, `tuple` para registros fijos, `dict` para buscar por clave, `set` para pertenencia y quitar duplicados.
+- El slicing incluye el inicio y excluye el fin; los negativos cuentan desde el final.
+- `copy()` es superficial: las listas de dentro se comparten. `copy.deepcopy` copia todo.
+- En una comprehension, el `if` del final filtra y el `if/else` del principio transforma.
+- `dict.get(k, defecto)` evita `KeyError`; `x in set` es instantáneo.

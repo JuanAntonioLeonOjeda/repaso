@@ -44,6 +44,8 @@
   --color-idea-soft: #efe7f8;
 
   /* Subjects (text-safe on surface) and their tints */
+  --subject-python: #7a6000;
+  --subject-python-soft: #f6eecf;
   --subject-supervisado: #2f55c9;
   --subject-supervisado-soft: #e4eafb;
   --subject-no-supervisado: #7a3fd0;
@@ -141,6 +143,8 @@
   --color-idea: #c8a5f5;
   --color-idea-soft: #261c3a;
 
+  --subject-python: #f0c94a;
+  --subject-python-soft: #2e2610;
   --subject-supervisado: #8ea9ff;
   --subject-supervisado-soft: #1b2648;
   --subject-no-supervisado: #c3a0ff;

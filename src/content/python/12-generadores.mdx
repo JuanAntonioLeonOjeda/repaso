@@ -1,0 +1,314 @@
+Un modelo de visión se entrena con cientos de miles de imágenes que no caben en la memoria. La solución es no cargarlas: **producirlas de una en una (o de lote en lote) justo cuando hacen falta**. Eso es un generador. Es una idea pequeña con un efecto enorme, y en los exámenes de la asignatura siempre cae una pregunta de «escribe un generador que…».
+
+## Iterables, iteradores y yield
+
+Un `for` funciona con cualquier **iterable**: le pide un **iterador** con `iter()` y luego llama a `next()` hasta que salta `StopIteration`. Una función con `yield` es una fábrica de iteradores:
+
+```python
+def cuenta_atras(n):
+    while n > 0:
+        yield n          # entrega un valor y se PAUSA aquí, con sus variables intactas
+        n -= 1
+
+g = cuenta_atras(3)      # no ejecuta nada todavía: crea el generador
+next(g)                  # 3   (ejecuta hasta el primer yield)
+next(g)                  # 2   (sigue desde donde se quedó)
+list(g)                  # [1] (lo que queda)
+next(g)                  # StopIteration: ya se agotó
+```
+
+Tres consecuencias:
+
+- **Perezoso**: no calcula nada hasta que se lo piden. Un generador puede ser **infinito** (`while True: yield ...`) sin colgar el programa.
+- **Memoria constante**: `sum(x * x for x in range(10**8))` no crea una lista de cien millones de elementos.
+- **De un solo uso**: una vez agotado, hay que crear otro.
+
+Las **expresiones generadoras** son comprehensions con paréntesis: `(x * x for x in datos if x > 0)`.
+
+<GeneratorPipelineSim />
+
+## Las preguntas de examen
+
+<CodeExercise
+  id="factores"
+  title="Los factores de un número"
+  starter={`
+    def factor_gen(number):
+        ___
+
+    gen = factor_gen(1000)
+    print([next(gen) for _ in range(16)])
+  `}
+  solution={`
+    def factor_gen(number):
+        for i in range(1, number + 1):
+            if number % i == 0:
+                yield i
+
+    gen = factor_gen(1000)
+    print([next(gen) for _ in range(16)])
+  `}
+  hints={[
+    "Recorre los candidatos de 1 a number (incluido).",
+    "Cuando i divide a number (number % i == 0), entrégalo con yield.",
+  ]}
+  check={`
+    import types
+    assert isinstance(factor_gen(10), types.GeneratorType), "factor_gen debe ser un generador (usa yield, no return de una lista)"
+    expected_output = [1, 2, 4, 5, 8, 10, 20, 25, 40, 50, 100, 125, 200, 250, 500, 1000]
+    assert list(factor_gen(1000)) == expected_output, f"Los factores de 1000 son {expected_output}"
+    assert list(factor_gen(1)) == [1] and list(factor_gen(13)) == [1, 13], "Casos límite: 1 → [1], 13 → [1, 13]"
+  `}
+>
+Pregunta 4 de la primera convocatoria (noche): un generador que produzca todos los factores (divisores) de un número.
+</CodeExercise>
+
+<CodeExercise
+  id="frange"
+  title="frange: un arange infinito"
+  starter={`
+    import math
+
+    def frange(init, step):
+        ___
+
+    g = frange(10.6, 0.8)
+    print([round(next(g), 2) for _ in range(5)])
+  `}
+  solution={`
+    import math
+
+    def frange(init, step):
+        i = 0
+        while True:
+            yield init + i * step
+            i += 1
+
+    g = frange(10.6, 0.8)
+    print([round(next(g), 2) for _ in range(5)])
+  `}
+  hints={[
+    "Infinito: while True con un yield dentro.",
+    "Sumar el paso una y otra vez (x += step) acumula error de redondeo; calcular init + i * step, no.",
+  ]}
+  check={`
+    g = frange(10.6, 0.8)
+    numbers = [next(g) for _ in range(10)]
+    for i, n in enumerate(numbers):
+        assert math.isclose(n, 10.6 + 0.8 * i), f"El elemento {i} debería ser {10.6 + 0.8 * i} y es {n}"
+    g = frange(0.0, 0.1)
+    for _ in range(1000):
+        x = next(g)
+    assert x == 0.0 + 999 * 0.1, f"El elemento 1000 debería ser exactamente 0.0 + 999 * 0.1 = 99.9 y es {x!r}: sumar el paso una y otra vez acumula error"
+  `}
+>
+Pregunta 7 del examen de prueba: como `np.arange`, pero sin fin y en Python puro. Debe aguantar mil llamadas sin que el error de coma flotante se acumule.
+</CodeExercise>
+
+<CodeExercise
+  id="primos"
+  title="El siguiente primo, para siempre"
+  starter={`
+    def prime_number():
+        primos = []                     # los primos encontrados, para probar divisores
+        n = 2
+        while True:
+            if all(___ for p in primos if p * p <= n):
+                primos.append(n)
+                yield n
+            n += 1
+
+    g = prime_number()
+    print([next(g) for _ in range(10)])
+  `}
+  solution={`
+    def prime_number():
+        primos = []
+        n = 2
+        while True:
+            if all(n % p != 0 for p in primos if p * p <= n):
+                primos.append(n)
+                yield n
+            n += 1
+
+    g = prime_number()
+    print([next(g) for _ in range(10)])
+  `}
+  hints={[
+    "n es primo si ningún primo anterior lo divide.",
+    "Basta con probar los primos p con p·p ≤ n: si n tuviera un divisor mayor que √n, tendría otro menor.",
+    "La condición dentro de all: n % p != 0",
+  ]}
+  check={`
+    g = prime_number()
+    primeros = [next(g) for _ in range(10)]
+    assert primeros == [2, 3, 5, 7, 11, 13, 17, 19, 23, 29], f"Los 10 primeros primos son 2…29 y salen {primeros}"
+    g = prime_number()
+    for _ in range(1000):
+        p = next(g)
+    assert p == 7919, f"El primo número 1000 es 7919 y sale {p}"
+  `}
+>
+Pregunta 2 de la segunda convocatoria: cada llamada a `next` devuelve el siguiente primo, empezando por el 2, sin límite.
+</CodeExercise>
+
+<CodeExercise
+  id="sort-by"
+  title="Filas ordenadas, de una en una"
+  starter={`
+    import pandas as pd
+
+    def sort_by(df, column):
+        ___
+
+    players = pd.DataFrame({
+        "Name": ["LeBron James", "Anthony Davis", "D'Angelo Russell", "Austin Reaves", "Jaxson Hayes", "Christian Wood"],
+        "Weight": [224, 198, 203, 235, 212, 196],
+        "Points": [25, 48, 12, 29, 51, 3],
+    })
+    for fila in sort_by(players, "Points"):
+        print(fila["Name"], fila["Points"])
+  `}
+  solution={`
+    import pandas as pd
+
+    def sort_by(df, column):
+        for _, row in df.sort_values(column, ascending=False).iterrows():
+            yield row
+
+    players = pd.DataFrame({
+        "Name": ["LeBron James", "Anthony Davis", "D'Angelo Russell", "Austin Reaves", "Jaxson Hayes", "Christian Wood"],
+        "Weight": [224, 198, 203, 235, 212, 196],
+        "Points": [25, 48, 12, 29, 51, 3],
+    })
+    for fila in sort_by(players, "Points"):
+        print(fila["Name"], fila["Points"])
+  `}
+  hints={[
+    "Ordena con sort_values(column, ascending=False).",
+    "iterrows() recorre las filas como pares (índice, Series).",
+    "for _, row in ...iterrows(): yield row",
+  ]}
+  check={`
+    import types
+    g = sort_by(players, "Points")
+    assert isinstance(g, types.GeneratorType), "sort_by debe ser un generador"
+    assert [int(r["Weight"]) for r in g] == [212, 198, 235, 224, 203, 196], "Ordenados por puntos de mayor a menor, los pesos son 212, 198, 235, 224, 203, 196"
+  `}
+>
+Pregunta 2 de la primera convocatoria (tarde): un generador `sort_by(df, column)` que entregue las filas de mayor a menor según una columna.
+</CodeExercise>
+
+## Pipelines con generadores
+
+Encadenar generadores da *pipelines* de datos que procesan ficheros de cualquier tamaño con memoria constante: cada línea atraviesa todas las etapas antes de leer la siguiente. Es el ejemplo del notebook del curso:
+
+<RunCode
+  title="Un pipeline que lee, parte, convierte y filtra"
+  code={`
+    import random
+
+    # Creamos un CSV de prueba
+    random.seed(0)
+    with open("ventas.csv", "w") as f:
+        f.write("item,cantidad,precio\\n")
+        for _ in range(100_000):
+            f.write(f"{random.choice(['Coffee', 'Tea', 'Cake'])},{random.randint(1, 5)},{random.choice([1.5, 2.0, 3.0])}\\n")
+
+    lineas = (linea.rstrip("\\n") for linea in open("ventas.csv"))      # 1. leer
+    campos = (linea.split(",") for linea in lineas)                    # 2. partir
+    cabecera = next(campos)
+    filas = (dict(zip(cabecera, c)) for c in campos)                   # 3. a dict
+    cafes = (f for f in filas if f["item"] == "Coffee")                # 4. filtrar
+    importes = (int(f["cantidad"]) * float(f["precio"]) for f in cafes)
+
+    print("Facturación de café:", sum(importes))   # solo aquí empieza a leerse el fichero
+  `}
+/>
+
+Para lo cotidiano, el módulo `itertools` tiene las piezas hechas: `count()` (contador infinito), `islice(g, n)` (los n primeros de un generador), `chain(a, b)` (uno detrás de otro), `batched(it, n)` (lotes de n, desde Python 3.12), `groupby`, `accumulate`…
+
+## Generadores para entrenar modelos
+
+Keras entrena con lo que le des a `model.fit`: arrays enteros o un generador que entregue lotes `(X_lote, y_lote)`. Para imágenes en disco, el curso usa `ImageDataGenerator` con `flow_from_directory` (lee carpetas, una por clase) o `flow` (a partir de arrays), y le añade **aumentaciones**: giros, desplazamientos, zoom, brillo, volteos… cada época el modelo ve versiones un poco distintas de cada imagen, lo que reduce el sobreajuste.
+
+<CodeExercise
+  id="lotes"
+  title="Un generador de lotes con aumentación"
+  starter={`
+    import numpy as np
+
+    def batches(X, y, batch_size, rng):
+        """Una época: lotes barajados; cada imagen se voltea en horizontal con probabilidad 0.5."""
+        orden = rng.permutation(len(X))
+        for inicio in range(0, len(X), batch_size):
+            idx = orden[___]
+            Xb = X[idx].copy()                       # copia: no tocar los datos originales
+            voltear = rng.random(len(idx)) < 0.5
+            Xb[voltear] = Xb[voltear][:, :, ___]     # invierte el eje de las columnas
+            yield Xb, y[idx]
+
+    rng = np.random.default_rng(0)
+    X = np.arange(10 * 2 * 3).reshape(10, 2, 3)      # 10 «imágenes» de 2x3
+    y = np.arange(10)
+    for Xb, yb in batches(X, y, 4, rng):
+        print(Xb.shape, yb)
+  `}
+  solution={`
+    import numpy as np
+
+    def batches(X, y, batch_size, rng):
+        """Una época: lotes barajados; cada imagen se voltea en horizontal con probabilidad 0.5."""
+        orden = rng.permutation(len(X))
+        for inicio in range(0, len(X), batch_size):
+            idx = orden[inicio:inicio + batch_size]
+            Xb = X[idx].copy()
+            voltear = rng.random(len(idx)) < 0.5
+            Xb[voltear] = Xb[voltear][:, :, ::-1]
+            yield Xb, y[idx]
+
+    rng = np.random.default_rng(0)
+    X = np.arange(10 * 2 * 3).reshape(10, 2, 3)
+    y = np.arange(10)
+    for Xb, yb in batches(X, y, 4, rng):
+        print(Xb.shape, yb)
+  `}
+  hints={[
+    "Los índices del lote son el trozo de orden que va de inicio a inicio + batch_size (el último lote puede ser más corto).",
+    "Para voltear en horizontal se invierte el último eje: [:, :, ::-1].",
+  ]}
+  check={`
+    rng = np.random.default_rng(1)
+    lotes = list(batches(X, y, 4, rng))
+    assert [len(yb) for _, yb in lotes] == [4, 4, 2], "Con 10 muestras y lotes de 4 salen lotes de 4, 4 y 2"
+    assert sorted(np.concatenate([yb for _, yb in lotes]).tolist()) == list(range(10)), "En una época cada muestra debe salir exactamente una vez"
+    for Xb, yb in lotes:
+        for img, etiqueta in zip(Xb, yb):
+            original = X[etiqueta]
+            assert np.array_equal(img, original) or np.array_equal(img, original[:, ::-1]), "Cada imagen debe ser la original o su volteo horizontal, con su etiqueta"
+    assert np.array_equal(X, np.arange(60).reshape(10, 2, 3)), "El generador no debe modificar X"
+  `}
+>
+Lo que hace por dentro un `ImageDataGenerator` con `horizontal_flip=True`, en NumPy: barajar, cortar en lotes y aumentar al vuelo.
+</CodeExercise>
+
+<Callout kind="real" title="Lo que se usa hoy en lugar de ImageDataGenerator">
+`ImageDataGenerator` está **obsoleto** en Keras 3. Hoy se hace así:
+
+- **Keras / TensorFlow**: `keras.utils.image_dataset_from_directory("datos/", image_size=(224, 224), batch_size=32)` para leer, y las aumentaciones como **capas** del modelo (`layers.RandomFlip`, `layers.RandomRotation`, `layers.RandomZoom`), que se activan solo al entrenar. Para un generador propio, se hereda de `keras.utils.PyDataset` (el antiguo `Sequence`) con `__len__` y `__getitem__`. Y `tf.data` para *pipelines* rápidos con `map`, `shuffle`, `batch` y `prefetch`.
+- **PyTorch**: una clase `Dataset` (con `__len__` y `__getitem__`) y un `DataLoader` que hace lotes, baraja y carga en paralelo con `num_workers`; las aumentaciones, con `torchvision.transforms.v2`.
+
+La idea es la misma de esta lección: los datos se producen por lotes y bajo demanda.
+</Callout>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_13_Generators.ipynb` (generadores, `send`, expresiones generadoras, *pipelines*, entrenar con generadores, `flow_from_directory`, `flow`, aumentaciones y un generador propio de Keras) y el capítulo 7 del PDF. Las preguntas de examen son de `Examen-Python-2024-2025-1aConvocatoria.pdf`, `01MIAR_Exam_01_B.ipynb`, `01MIAR_Exam_Demo.ipynb` y la segunda convocatoria.
+</Callout>
+
+## Para llevar
+
+- `yield` convierte una función en un generador: entrega un valor y se pausa con su estado.
+- Los generadores son perezosos, pueden ser infinitos y usan memoria constante; se agotan tras un uso.
+- Para un generador infinito: `while True` + `yield`; calcula `init + i * step` en vez de acumular.
+- Encadenar generadores da *pipelines* que procesan ficheros de cualquier tamaño.
+- Entrenar por lotes bajo demanda (con aumentación al vuelo) es la misma idea: hoy, `image_dataset_from_directory` + capas de aumentación, o `Dataset` + `DataLoader` en PyTorch.

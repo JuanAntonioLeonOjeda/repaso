@@ -1,0 +1,194 @@
+Python es el idioma de la IA: casi todo lo que harás en el máster (NumPy, pandas, scikit-learn, Keras, PyTorch) se escribe en Python. No porque sea el lenguaje más rápido, sino porque es **fácil de leer, tiene librerías para todo** y las partes lentas están escritas en C por debajo. Esta lección repasa lo básico con lupa: los tipos, los operadores y, sobre todo, **qué es de verdad una variable**, que es de donde salen la mitad de los bugs.
+
+## Cómo se ejecuta Python
+
+Python es un lenguaje **interpretado**: el intérprete lee tu código, lo compila a *bytecode* (los `.pyc` de `__pycache__`) y una máquina virtual lo ejecuta línea a línea. Tienes tres formas de usarlo:
+
+- **REPL** (escribir `python` en la terminal): para probar una línea.
+- **Scripts** (`python script.py`): para programas que se ejecutan de principio a fin.
+- **Jupyter**: celdas que comparten memoria. Cómodo para explorar, peligroso si ejecutas las celdas en desorden.
+
+<Callout kind="real" title="Jupyter para explorar, scripts para producción">
+En un equipo de datos se explora en notebooks, pero lo que se queda (limpieza, entrenamiento, una API) pasa a módulos `.py` con tests. Un truco: antes de entregar un notebook, **Kernel → Restart & Run All**. Si falla, dependía del orden en que ejecutaste las celdas.
+</Callout>
+
+## Tipos básicos
+
+Python es de **tipado dinámico**: el tipo va con el objeto, no con la variable. `type(x)` te lo dice.
+
+| Tipo | Ejemplo | Ojo con |
+|---|---|---|
+| `int` | `42`, `10**100` | no tiene límite de tamaño |
+| `float` | `3.14`, `1e-3` | `0.1 + 0.2 != 0.3` (usa `math.isclose`) |
+| `bool` | `True`, `False` | es un subtipo de `int`: `True + True == 2` |
+| `str` | `"hola"`, `'hola'` | inmutable; `"a" * 3 == "aaa"` |
+| `NoneType` | `None` | «no hay valor»; se compara con `is None` |
+
+Las conversiones son explícitas: `int("42")`, `float("3.5")`, `str(7)`. `int("3.5")` da `ValueError` y `int(3.9)` **trunca** a 3.
+
+### Los operadores que más confunden
+
+- `/` siempre da `float`: `7 / 2 == 3.5`.
+- `//` es la **división entera hacia abajo** (*floor*): `7 // 2 == 3`, pero `-7 // 2 == -4`.
+- `%` es el resto, con el signo del divisor: `-7 % 2 == 1`. Así se cumple siempre `a == (a // b) * b + a % b`.
+- `**` es la potencia: `2 ** 10 == 1024`.
+
+<Predict
+  id="floor-negativo"
+  answer={["-4"]}
+  explanation="// redondea hacia abajo (hacia menos infinito), no hacia cero. -3,5 hacia abajo es -4. Por eso -7 % 2 es 1: -4·2 + 1 = -7."
+  hints={["7 / 2 = 3,5. ¿Y −7 / 2?", "Redondear «hacia abajo» un número negativo lo aleja del cero."]}
+>
+¿Qué da `-7 // 2` en Python?
+</Predict>
+
+### Strings y f-strings
+
+Los strings se indexan y se trocean como las listas, y tienen métodos para todo: `.lower()`, `.strip()`, `.split(" - ")`, `.replace()`, `.startswith()`, `.join()`. Para construir textos con valores, las **f-strings**:
+
+```python
+media = 23.4567
+print(f"Media: {media:.2f}")      # Media: 23.46
+print(f"{'item':<8}|{42:>5}")     # alinear a la izquierda / derecha
+print(f"{media=}")                # media=23.4567 (útil para depurar)
+```
+
+## Variables: etiquetas, no cajas
+
+Aquí está lo importante. En Python, `a = [1, 2, 3]` **no mete una lista en `a`**: crea un objeto lista y le pega la etiqueta `a`. `b = a` pega una segunda etiqueta **al mismo objeto**. Nada se copia nunca al asignar.
+
+- `==` compara **valores**: ¿contienen lo mismo?
+- `is` compara **identidad**: ¿son el mismo objeto? (`id(a) == id(b)`)
+
+Si el objeto es **mutable** (`list`, `dict`, `set`, un `ndarray`, un `DataFrame`), cambiarlo por un nombre se ve por todos. Si es **inmutable** (`int`, `float`, `str`, `tuple`), «cambiarlo» crea un objeto nuevo y mueve la etiqueta.
+
+<ReferencesSim />
+
+<Callout kind="warn" title="«is» solo para None">
+`a is b` con números o strings puede darte `True` o `False` según detalles internos: CPython reutiliza los enteros entre −5 y 256 y algunos strings cortos, así que `x = 256; y = 256; x is y` es `True`, pero con 257 puede no serlo. **Usa `==` para comparar valores** y deja `is` para `None` (`if x is None:`).
+</Callout>
+
+<Quiz
+  id="alias"
+  options={[
+    "[1, 2, 3]",
+    "[1, 2, 3, 4]",
+    "Da error: no se puede modificar a a través de b",
+    "Depende de si se ejecuta en Jupyter",
+  ]}
+  answer={1}
+  explanation="b = a no copia: a y b son el mismo objeto. b.append(4) modifica ese objeto, así que a también «ve» el 4. Para una copia independiente: b = a.copy()."
+  hints={["¿Cuántas listas hay en memoria después de b = a?"]}
+>
+```python
+a = [1, 2, 3]
+b = a
+b.append(4)
+print(a)
+```
+¿Qué se imprime?
+</Quiz>
+
+## Buscar el bug
+
+Este es un ejercicio de examen (primera convocatoria, tarde): alguien intentó separar una lista mezclada de enteros y strings en dos listas, una con todo como `int` y otra con todo como `str`, pero no le salía.
+
+<CodeExercise
+  id="separador"
+  title="Arregla el separador"
+  starter={`
+    def separador(lista):
+        listaint = listastr = []      # ¿cuántas listas hay aquí?
+        for x in lista:
+            listaint.append(int(x))
+            listastr.append(str(x))
+        return listaint, listastr
+
+    loriginal = ["0", 1, 2, "3", "4", 5, "6", 7, 8, 9]
+    listaint, listastr = separador(loriginal)
+    print(listaint)
+    print(listastr)
+  `}
+  solution={`
+    def separador(lista):
+        listaint = []
+        listastr = []
+        for x in lista:
+            listaint.append(int(x))
+            listastr.append(str(x))
+        return listaint, listastr
+
+    loriginal = ["0", 1, 2, "3", "4", 5, "6", 7, 8, 9]
+    listaint, listastr = separador(loriginal)
+    print(listaint)
+    print(listastr)
+  `}
+  hints={[
+    "Imprime las dos listas: ¿por qué tienen 20 elementos cada una?",
+    "listaint = listastr = [] crea UNA lista con dos nombres.",
+    "Crea dos listas distintas: listaint = [] y, en otra línea, listastr = [].",
+  ]}
+  check={`
+    assert listaint == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "listaint debería tener los 10 números como int"
+    assert listastr == ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"], "listastr debería tener los 10 números como str"
+    assert listaint is not listastr, "Las dos listas tienen que ser objetos distintos"
+    assert loriginal == ["0", 1, 2, "3", "4", 5, "6", 7, 8, 9], "La lista original no debe cambiar"
+  `}
+>
+La asignación encadenada `a = b = []` es la trampa. Corrígela para que las dos listas sean independientes.
+</CodeExercise>
+
+## Formatear una tabla
+
+<CodeExercise
+  id="f-strings"
+  title="Un ticket con f-strings"
+  starter={`
+    ticket = [("Coffee", 2, 2.0), ("Cake", 1, 3.0), ("Sandwich", 3, 4.0)]
+
+    lineas = []
+    for item, cantidad, precio in ticket:
+        # item alineado a la izquierda en 10 caracteres, cantidad a la derecha en 3,
+        # total con 2 decimales a la derecha en 7. Ejemplo: "Coffee      2   4.00"
+        lineas.append(f"___")
+
+    total = sum(c * p for _, c, p in ticket)
+    lineas.append(f"TOTAL {total:>14.2f}")
+    print("\\n".join(lineas))
+  `}
+  solution={`
+    ticket = [("Coffee", 2, 2.0), ("Cake", 1, 3.0), ("Sandwich", 3, 4.0)]
+
+    lineas = []
+    for item, cantidad, precio in ticket:
+        lineas.append(f"{item:<10}{cantidad:>3}{cantidad * precio:>7.2f}")
+
+    total = sum(c * p for _, c, p in ticket)
+    lineas.append(f"TOTAL {total:>14.2f}")
+    print("\\n".join(lineas))
+  `}
+  hints={[
+    "Dentro de las llaves: {valor:formato}. < alinea a la izquierda y > a la derecha.",
+    "{item:<10} ocupa 10 caracteres; {x:>7.2f} es un float con 2 decimales en 7 caracteres.",
+    "f\"{item:<10}{cantidad:>3}{cantidad * precio:>7.2f}\"",
+  ]}
+  check={`
+    assert lineas[0] == "Coffee      2   4.00", "Primera línea esperada: 'Coffee      2   4.00' y has puesto " + repr(lineas[0])
+    assert lineas[2] == "Sandwich    3  12.00", "La línea del sandwich debería ser 'Sandwich    3  12.00'"
+    assert all(len(l) == 20 for l in lineas), "Todas las líneas deberían medir 20 caracteres"
+  `}
+>
+Completa la f-string para que el ticket salga en columnas.
+</CodeExercise>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_01_Python101.ipynb` (intérprete, REPL, Jupyter y la comparación de velocidad entre Python puro y NumPy) y `01MIAR_02_Python101_DataTypes.ipynb` (literales, tipos, conversiones, operadores y la caché de enteros entre −5 y 256).
+</Callout>
+
+## Para llevar
+
+- Python es interpretado y de tipado dinámico: el tipo va con el objeto.
+- `/` da float, `//` redondea hacia abajo (también con negativos) y `%` sigue al divisor.
+- Una variable es una etiqueta: asignar nunca copia. Con mutables, dos nombres pueden cambiar el mismo objeto.
+- `==` compara valores; `is` compara identidad y se usa con `None`.
+- Las f-strings (`f"{x:.2f}"`) son la forma moderna de formatear.
