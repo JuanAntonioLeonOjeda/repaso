@@ -5,3 +5,6 @@ coverage
 .env
 # Course material (slides, notebooks, videos): source for the lessons, not part of the repo.
 Asignaturas/
+
+# TFM images from LUMOS patients: generated locally by scripts/tfm/export_assets.py, never committed.
+public/tfm-local/

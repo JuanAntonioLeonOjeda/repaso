@@ -17,6 +17,7 @@ export const es = {
     title: "Repaso",
     lead: "Lo que el máster contó en diapositivas, contado como lo contaría un compañero: con ejemplos, simulaciones que puedes tocar y ejercicios con Python de verdad.",
     subjectsHeading: "Asignaturas",
+    tfmHeading: "Trabajo Fin de Máster",
     lessons: (n: number): string => `${n} lecciones`,
     progress: (done: number, total: number): string => `${done} de ${total} completadas`,
     continueLabel: "Seguir por donde ibas",

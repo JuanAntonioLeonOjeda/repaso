@@ -1,6 +1,6 @@
 # ADR-0003: Learning progress in localStorage
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-29
 
 ## Context

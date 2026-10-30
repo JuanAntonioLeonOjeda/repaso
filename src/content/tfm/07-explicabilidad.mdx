@@ -1,0 +1,99 @@
+En medicina, un modelo que acierta sin poder explicar dónde mira no se usa. Tu TFM incluye **Grad-CAM** (`evaluation/gradcam.py`, con la librería `pytorch-grad-cam`) para las dos cabezas, y lo reutiliza después para algo ingenioso: generar cajas para entrenar un detector (lección siguiente).
+
+## Cómo funciona Grad-CAM
+
+Para una capa convolucional con mapas de activación $A^k$ (un mapa por canal $k$) y una salida $y$ (el logit de la clase, o la BMD):
+
+1. Calcula el **gradiente** de la salida respecto a cada mapa: $\frac{\partial y}{\partial A^k}$.
+2. Promédialo espacialmente: el **peso** del canal, $\alpha_k = \text{media}\left(\frac{\partial y}{\partial A^k}\right)$. Mide cuánto empuja ese canal la predicción.
+3. Suma los mapas ponderados y quédate con lo positivo: $L = \text{ReLU}\left(\sum_k \alpha_k A^k\right)$.
+4. Reescala $L$ al tamaño de la imagen y superponlo.
+
+El TFM usa por defecto **HiResCAM**, una variante que multiplica gradiente y activación elemento a elemento antes de sumar (más fiel al modelo en algunos casos), sobre el último bloque de `layer4`.
+
+<CodeExercise
+  id="gradcam-numpy"
+  title="Grad-CAM con numpy"
+  starter={`
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    A = rng.random((4, 7, 7))            # activaciones: 4 canales de 7×7 (como layer4)
+    dY_dA = np.zeros((4, 7, 7))          # gradientes de la salida respecto a cada canal
+    dY_dA[1] = 0.8                       # el canal 1 empuja mucho la predicción
+    dY_dA[3] = -0.5                      # el canal 3 la frena
+
+    alpha = dY_dA.mean(axis=(___, ___))  # 1) un peso por canal: media espacial del gradiente
+    cam = np.___(0, np.tensordot(alpha, A, axes=1))   # 2) suma ponderada + ReLU
+    cam = cam / cam.max()                # 3) normalizar a [0, 1]
+
+    print("pesos:", alpha.round(2))
+    print("forma del mapa:", cam.shape)
+  `}
+  solution={`
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    A = rng.random((4, 7, 7))            # activaciones: 4 canales de 7×7 (como layer4)
+    dY_dA = np.zeros((4, 7, 7))          # gradientes de la salida respecto a cada canal
+    dY_dA[1] = 0.8                       # el canal 1 empuja mucho la predicción
+    dY_dA[3] = -0.5                      # el canal 3 la frena
+
+    alpha = dY_dA.mean(axis=(1, 2))  # 1) un peso por canal: media espacial del gradiente
+    cam = np.maximum(0, np.tensordot(alpha, A, axes=1))   # 2) suma ponderada + ReLU
+    cam = cam / cam.max()                # 3) normalizar a [0, 1]
+
+    print("pesos:", alpha.round(2))
+    print("forma del mapa:", cam.shape)
+  `}
+  hints={["Los ejes espaciales son el 1 y el 2 (el 0 es el canal).", "La ReLU es el máximo con 0, elemento a elemento: np.maximum."]}
+  check={`
+    assert np.allclose(alpha, [0, 0.8, 0, -0.5]), "Los pesos son la media del gradiente de cada canal"
+    esperado = np.maximum(0, 0.8 * A[1] - 0.5 * A[3])
+    assert np.allclose(cam, esperado / esperado.max()), "El mapa es ReLU(Σ α_k · A_k), normalizado"
+  `}
+>
+Implementa los tres pasos con activaciones y gradientes ya calculados (en PyTorch salen de *hooks* en la capa elegida).
+</CodeExercise>
+
+## Lo que mira LumosNet
+
+<GradCamSim />
+
+<LocalImage
+  asset="gradcam-grid"
+  alt="Rejilla de mapas Grad-CAM de varios pacientes"
+  caption="Rejilla de Grad-CAM generada por evaluation/heatmap_grid.py (modelo sin covariables)."
+/>
+
+<Callout kind="warn" title="Lo que Grad-CAM no dice">
+Un mapa sobre la columna **no demuestra** que el modelo razone como un radiólogo: indica qué zonas influyen en la salida, no qué rasgo (densidad trabecular, forma, grosor cortical) usa. Y en `layer4` la resolución es de 7×7: cada celda abarca unos 32 píxeles. Úsalo para detectar errores groseros (un modelo que mira la etiqueta impresa en la placa o el borde del colimador, un clásico atajo en imagen médica), no como prueba de validez clínica.
+</Callout>
+
+<Quiz
+  id="atajo"
+  options={[
+    "Que el modelo es muy bueno porque mira detalles finos",
+    "Que puede estar usando un atajo (algo del hospital o del equipo correlacionado con la clase) y hay que revisarlo antes de fiarse",
+    "Que hay que usar una capa más temprana",
+    "Nada: Grad-CAM no es fiable en las esquinas",
+  ]}
+  answer={1}
+  explanation="Los marcadores de texto, reglas y bordes de la placa no contienen información sobre la densidad ósea; si el modelo los usa, está aprendiendo una correlación espuria (por ejemplo, un equipo que se usa más en una consulta de osteoporosis). Es uno de los fallos más documentados de los modelos médicos."
+>
+Si el Grad-CAM de muchos pacientes con osteoporosis se concentrara en la esquina donde está la marca «L» del técnico, ¿qué indicaría?
+</Quiz>
+
+<Temario
+  links={[
+    { to: "deep-learning/redes-convolucionales", why: "Mapas de activación, canales y resolución de cada etapa." },
+    { to: "deep-learning/entrenar-una-red", why: "Backpropagation: Grad-CAM usa los mismos gradientes que el entrenamiento." },
+    { to: "deep-learning/vision-avanzada", why: "De la clasificación a la localización: el puente hacia la detección." },
+  ]}
+/>
+
+## Para llevar
+
+- Grad-CAM: pesos = media del gradiente por canal; mapa = ReLU de la suma ponderada.
+- `layer4`: grueso (7×7) pero semántico; las capas tempranas son finas pero ruidosas.
+- Sirve para detectar atajos, no para demostrar que el modelo es clínicamente válido.

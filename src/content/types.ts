@@ -2,7 +2,13 @@ import type { MDXContent } from "mdx/types";
 import type { ComponentType } from "react";
 
 export type SubjectSlug =
-  "supervisado" | "no-supervisado" | "deep-learning" | "refuerzo" | "optimizacion" | "razonamiento";
+  | "supervisado"
+  | "no-supervisado"
+  | "deep-learning"
+  | "refuerzo"
+  | "optimizacion"
+  | "razonamiento"
+  | "tfm";
 
 export interface Lesson {
   slug: string;

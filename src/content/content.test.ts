@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 import { illustrations } from "@/features/illustrations";
 import { simulations } from "@/features/simulations";
 
-import { subjects } from "./catalog";
+import { resolveTemarioLink } from "@/features/tfm";
+
+import { sections, subjects } from "./catalog";
 
 const CONTENT_DIR = join(process.cwd(), "src", "content");
 
@@ -26,7 +28,11 @@ describe("content catalog", () => {
     expect(new Set(subjects.map((s) => s.slug)).size).toBe(6);
   });
 
-  for (const subject of subjects) {
+  it("has the TFM as an extra section", () => {
+    expect(sections.map((s) => s.slug)).toContain("tfm");
+  });
+
+  for (const subject of sections) {
     describe(subject.title, () => {
       // Naming convention: lesson n lives in `NN-<slug>.mdx`, so order and slug stay in sync.
       const fileOf = (slug: string, i: number): string =>
@@ -58,6 +64,11 @@ describe("content catalog", () => {
           );
           const known = new Set([...Object.keys(simulations), ...Object.keys(illustrations)]);
           expect(used.filter((name) => !known.has(name))).toEqual([]);
+        });
+
+        it(`${lesson.slug}: every "Del temario" link points to an existing lesson`, () => {
+          const targets = [...source.matchAll(/\bto: "([^"]+)"/g)].map((m) => m[1] ?? "");
+          expect(targets.filter((to) => resolveTemarioLink(to) === null)).toEqual([]);
         });
 
         it(`${lesson.slug}: every code exercise has a solution and a way to check it`, () => {

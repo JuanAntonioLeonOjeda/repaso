@@ -2,7 +2,7 @@ import { ArrowRight } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { Link } from "react-router";
 
-import { subjects } from "@/content/catalog";
+import { subjects, tfm } from "@/content/catalog";
 import {
   ProgressRing,
   resolveLessonKey,
@@ -76,6 +76,25 @@ export function HomeRoute(): ReactNode {
             );
           })}
         </ul>
+      </section>
+
+      <section aria-labelledby="tfm" style={subjectColourStyle(tfm.slug)}>
+        <h2 id="tfm" className={styles.sectionTitle}>
+          {es.home.tfmHeading}
+        </h2>
+        <Link to={`/${tfm.slug}`} className={styles.tfmCard}>
+          <span className={styles.subjectIcon}>
+            <SubjectIcon slug={tfm.slug} size={64} />
+          </span>
+          <span className={styles.tfmText}>
+            <span className={styles.subjectTitle}>{tfm.title}</span>
+            <span className={styles.subjectTagline}>{tfm.tagline}</span>
+          </span>
+          <span className={styles.tfmMeta}>
+            {es.home.lessons(tfm.lessons.length)}
+            <ArrowRight size={18} aria-hidden="true" />
+          </span>
+        </Link>
       </section>
 
       <section aria-labelledby="como" className={styles.how}>

@@ -97,6 +97,25 @@ export function SubjectIcon({ slug, size = 56 }: { slug: SubjectSlug; size?: num
           <path d="M8 30 L48 30" strokeDasharray="3 4" />
         </svg>
       );
+    case "tfm":
+      return (
+        <svg {...common}>
+          {[8, 19, 30, 41].map((y, i) => (
+            <rect
+              key={y}
+              x={18}
+              y={y}
+              width={20}
+              height={8}
+              rx={3}
+              fill="currentColor"
+              fillOpacity={0.15 + i * 0.2}
+            />
+          ))}
+          <path d="M28 4 V52" strokeDasharray="2 3" opacity={0.5} />
+          <path d="M42 12 l8 -6 M42 24 l8 -6" opacity={0.6} />
+        </svg>
+      );
     default: {
       const unreachable: never = slug;
       return unreachable;

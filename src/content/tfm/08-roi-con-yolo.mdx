@@ -1,0 +1,121 @@
+La memoria descartó el ROI fijo porque recortar no aportaba. Aun así, el código del TFM fue más allá: entrenó un **detector YOLO de la columna lumbar** sin anotar a mano desde cero, usando Grad-CAM para generar las primeras cajas. Es un ejemplo práctico de **pseudo-etiquetado** que merece la pena entender.
+
+## El ROI fijo y sus límites
+
+El primer ROI era una franja vertical fija del 25 al 75% del ancho, decidida mirando 18 pacientes (la columna aparecía entre el 40 y el 60%). Es barato, pero falla con escoliosis o pacientes descentrados: no se adapta a cada imagen.
+
+<LocalImage asset="roi-grid" alt="Radiografías AP con líneas al 30, 40, 50, 60 y 70% del ancho" caption="La muestra usada para decidir la franja del ROI fijo." />
+
+## De Grad-CAM a cajas (auto-etiquetado)
+
+`yolo/auto_label.py`, para cada radiografía AP:
+
+1. Calcula el Grad-CAM del modelo y lo **umbraliza** (≥ 0,5).
+2. Se queda con la **mayor componente conexa** y su caja, con un margen del 8%.
+3. Aplica **filtros de plausibilidad**: área entre el 3 y el 75% de la imagen, centro en la franja central (30–70% del ancho) y caja más alta que ancha (la columna es vertical).
+4. Las cajas que pasan se revisan; las que no, se descartan o se corrigen a mano en **makesense.ai** (`export_review.py` → `reintegrate.py`).
+
+En la revisión, **342** cajas se corrigieron a mano y **461** se descartaron por los filtros (la causa más frecuente, 191 casos: "demasiado ancha para ser columna").
+
+<CodeExercise
+  id="caja-desde-mapa"
+  title="Una caja a partir de un mapa de calor"
+  starter={`
+    import numpy as np
+
+    def caja(cam, umbral=0.5):
+        """Caja (x0, y0, x1, y1) de los píxeles con valor ≥ umbral, o None si no hay ninguno."""
+        ys, xs = np.where(cam >= ___)
+        if len(xs) == 0:
+            return None
+        return xs.min(), ys.min(), xs.max() + 1, ys.max() + ___
+
+    def plausible(x0, y0, x1, y1, ancho):
+        centro = (x0 + x1) / 2 / ancho
+        alto_ancho = (y1 - y0) / (x1 - x0)
+        return 0.3 <= centro <= 0.7 and alto_ancho >= ___
+
+    cam = np.zeros((20, 20))
+    cam[3:17, 8:12] = 0.9            # una zona vertical y centrada: parece una columna
+    b = caja(cam)
+    print(b, plausible(*b, ancho=20))
+  `}
+  solution={`
+    import numpy as np
+
+    def caja(cam, umbral=0.5):
+        """Caja (x0, y0, x1, y1) de los píxeles con valor ≥ umbral, o None si no hay ninguno."""
+        ys, xs = np.where(cam >= umbral)
+        if len(xs) == 0:
+            return None
+        return xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
+
+    def plausible(x0, y0, x1, y1, ancho):
+        centro = (x0 + x1) / 2 / ancho
+        alto_ancho = (y1 - y0) / (x1 - x0)
+        return 0.3 <= centro <= 0.7 and alto_ancho >= 1.0
+
+    cam = np.zeros((20, 20))
+    cam[3:17, 8:12] = 0.9            # una zona vertical y centrada: parece una columna
+    b = caja(cam)
+    print(b, plausible(*b, ancho=20))
+  `}
+  hints={["Los píxeles que cuentan son los que superan el umbral.", "El límite superior de la caja es exclusivo: +1 también en y.", "La columna es vertical: alto/ancho de al menos 1."]}
+  check={`
+    assert tuple(int(v) for v in caja(cam)) == (8, 3, 12, 17), "La caja debería ser (8, 3, 12, 17)"
+    assert plausible(8, 3, 12, 17, 20) and not plausible(0, 8, 14, 12, 20), "Una caja ancha y descentrada no es plausible"
+    assert caja(np.zeros((5, 5))) is None
+  `}
+>
+Versión simplificada de `extract_bbox_from_cam` + `check_bbox` (sin componentes conexas ni margen).
+</CodeExercise>
+
+## El detector y el recorte
+
+Con esas cajas se entrenó **YOLOv8n** (el más pequeño de la familia) 100 épocas a 224×224: 337 imágenes de entrenamiento y 64 de validación. En validación alcanzó **precisión 0,846, recall 0,770, mAP@0,5 de 0,812** y mAP@0,5:0,95 de 0,324: encuentra bien la columna, pero ajusta las cajas con poca exactitud a umbrales de IoU altos.
+
+<LocalImage asset="yolo-results" alt="Curvas de entrenamiento del detector YOLO" caption="Entrenamiento del detector (results.png de Ultralytics)." />
+
+Después, `data/variants/roi_yolo.py` recorta la AP solo si el detector tiene confianza ≥ 0,5. Resultado: solo se recortaron **529 de las 1.616 imágenes** (la confianza media fue 0,53, muy pegada al umbral), y el modelo entrenado con ese dataset rindió **peor** que con la imagen completa (0,554 frente a 0,669 de accuracy por paciente).
+
+<Quiz
+  id="pseudo-etiquetado"
+  options={[
+    "Que el detector aprende de las cajas de Grad-CAM y por tanto hereda sus sesgos; por eso hacen falta los filtros y la revisión humana",
+    "Que YOLO no necesita etiquetas",
+    "Que Grad-CAM y YOLO hacen lo mismo",
+    "Que con pseudo-etiquetas siempre se mejora el modelo original",
+  ]}
+  answer={0}
+  explanation="El pseudo-etiquetado es barato, pero el modelo nuevo aprende lo que el viejo creía, incluidos sus errores. Los filtros de plausibilidad y la corrección manual son lo que hace que las etiquetas sean mejores que el mapa de calor de partida."
+>
+¿Cuál es el riesgo principal de entrenar el detector con cajas generadas por Grad-CAM?
+</Quiz>
+
+<Predict
+  id="iou-columna"
+  answer={["0.5", "0,5", "1/2"]}
+  tolerance={0.005}
+  explanation="Intersección: en x de 12 a 20 (8) y en y de 5 a 30 (25): 200. Cada caja mide 10 × 30 = 300. Unión = 300 + 300 − 200 = 400. IoU = 200 / 400 = 0,5: justo el umbral con el que se calcula el mAP@0,5."
+  hints={["Primero la intersección: el solape en x por el solape en y.", "IoU = intersección / (área A + área B − intersección)."]}
+>
+La caja real de la columna va de (10, 0) a (20, 30) y la predicha de (12, 5) a (22, 35). ¿Cuál es su IoU?
+</Predict>
+
+<Callout kind="real">
+El patrón Grad-CAM → cajas → revisión humana → detector es una forma real de reducir el coste de anotación (*weak supervision*). Hoy también se haría con modelos de segmentación generalistas (como SAM) para proponer máscaras que una persona solo valida. Y la conclusión de tu TFM es valiosa en sí misma: **aislar la zona diagnóstica no siempre ayuda**, porque el contexto de la imagen también es información.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/vision-avanzada", why: "Detección de objetos, YOLO, IoU, NMS y mAP." },
+    { to: "no-supervisado/probabilistico-y-semisupervisado", why: "Pseudo-etiquetado: un modelo etiqueta datos para entrenar a otro." },
+    { to: "supervisado/extraccion-de-caracteristicas", why: "Segmentar por umbral y describir la forma (área, centro, relación de aspecto)." },
+  ]}
+/>
+
+## Para llevar
+
+- ROI fijo: barato pero rígido. ROI con YOLO: adaptativo, a partir de cajas de Grad-CAM filtradas y revisadas.
+- YOLOv8n: mAP@0,5 = 0,81, pero baja confianza en muchas imágenes (solo 529 recortes).
+- Recortar empeoró el clasificador: el contexto también informa.

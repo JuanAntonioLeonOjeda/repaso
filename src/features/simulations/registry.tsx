@@ -55,4 +55,12 @@ export const simulations = {
   DempsterShaferSim: lazySim(() => import("./reasoning/DempsterShaferSim")),
   FuzzySetsSim: lazySim(() => import("./reasoning/FuzzySetsSim")),
   MamdaniSim: lazySim(() => import("./reasoning/MamdaniSim")),
+  ClaheSim: lazySim(() => import("./tfm/ClaheSim")),
+  ClassWeightsSim: lazySim(() => import("./tfm/ClassWeightsSim")),
+  GradCamSim: lazySim(() => import("./tfm/GradCamSim")),
+  LayerExplorerSim: lazySim(() => import("./tfm/LayerExplorerSim")),
+  LossBalanceSim: lazySim(() => import("./tfm/LossBalanceSim")),
+  LrScheduleSim: lazySim(() => import("./tfm/LrScheduleSim")),
+  PatientAggregationSim: lazySim(() => import("./tfm/PatientAggregationSim")),
+  TScoreSim: lazySim(() => import("./tfm/TScoreSim")),
 } satisfies Record<string, ComponentType>;

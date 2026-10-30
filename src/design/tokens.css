@@ -56,6 +56,9 @@
   --subject-optimizacion-soft: #dcf2ea;
   --subject-razonamiento: #0b7489;
   --subject-razonamiento-soft: #dbf0f4;
+  /* The TFM: the graphite blue of a radiograph */
+  --subject-tfm: #3b5174;
+  --subject-tfm-soft: #e3e9f3;
 
   /* Categorical palette for plots (clusters, classes, series) */
   --plot-1: #2f6fed;
@@ -150,6 +153,8 @@
   --subject-optimizacion-soft: #0f2e25;
   --subject-razonamiento: #6bd3e8;
   --subject-razonamiento-soft: #0f2b33;
+  --subject-tfm: #a9bcdc;
+  --subject-tfm-soft: #1b2539;
 
   --plot-1: #6f9bff;
   --plot-2: #ff8f4d;

@@ -1,9 +1,9 @@
-import { subjects } from "@/content/catalog";
+import { sections } from "@/content/catalog";
 import type { Lesson, Subject } from "@/content/types";
 import { exerciseKey, lessonKey, type Progress } from "@/features/progress";
 
 export function findSubject(slug: string | undefined): Subject | undefined {
-  return subjects.find((s) => s.slug === slug);
+  return sections.find((s) => s.slug === slug);
 }
 
 export function findLesson(

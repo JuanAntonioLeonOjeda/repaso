@@ -1,0 +1,128 @@
+Evaluar bien es lo que convierte una cifra en una conclusión. El TFM toma dos decisiones acertadas: **evaluar por paciente** y **medir la variabilidad con validación cruzada**.
+
+## Por paciente, no por imagen
+
+`aggregate_by_patient` (en `evaluation/evaluate.py`) promedia las probabilidades de las dos radiografías de cada paciente y la BMD predicha, y saca un único diagnóstico. Es lo que haría un radiólogo: mirar las dos vistas antes de decidir.
+
+<PatientAggregationSim />
+
+Con el modelo final, la accuracy pasa de **0,627 por imagen** a **0,669 por paciente**: unos 4 puntos gratis, solo por combinar las vistas.
+
+<CodeExercise
+  id="agregar"
+  title="Agregación por paciente"
+  starter={`
+    import numpy as np
+    import pandas as pd
+
+    # Predicciones por imagen: dos vistas por paciente
+    df = pd.DataFrame({
+        "patient_id": [1, 1, 2, 2, 3, 3],
+        "label":      [1, 1, 0, 0, 2, 2],
+        "p0": [0.20, 0.45, 0.70, 0.40, 0.10, 0.30],
+        "p1": [0.50, 0.40, 0.20, 0.45, 0.50, 0.20],
+        "p2": [0.30, 0.15, 0.10, 0.15, 0.40, 0.50],
+    })
+
+    agg = df.groupby("patient_id").agg(
+        label=("label", "first"),
+        p0=("p0", ___), p1=("p1", ___), p2=("p2", ___),
+    )
+    agg["pred"] = agg[["p0", "p1", "p2"]].values.argmax(axis=1)
+
+    acc_imagen = (df[["p0", "p1", "p2"]].values.argmax(axis=1) == df["label"]).mean()
+    acc_paciente = (agg["pred"] == agg["label"]).mean()
+    print(agg)
+    print(f"Por imagen: {acc_imagen:.3f} · por paciente: {acc_paciente:.3f}")
+  `}
+  solution={`
+    import numpy as np
+    import pandas as pd
+
+    # Predicciones por imagen: dos vistas por paciente
+    df = pd.DataFrame({
+        "patient_id": [1, 1, 2, 2, 3, 3],
+        "label":      [1, 1, 0, 0, 2, 2],
+        "p0": [0.20, 0.45, 0.70, 0.40, 0.10, 0.30],
+        "p1": [0.50, 0.40, 0.20, 0.45, 0.50, 0.20],
+        "p2": [0.30, 0.15, 0.10, 0.15, 0.40, 0.50],
+    })
+
+    agg = df.groupby("patient_id").agg(
+        label=("label", "first"),
+        p0=("p0", "mean"), p1=("p1", "mean"), p2=("p2", "mean"),
+    )
+    agg["pred"] = agg[["p0", "p1", "p2"]].values.argmax(axis=1)
+
+    acc_imagen = (df[["p0", "p1", "p2"]].values.argmax(axis=1) == df["label"]).mean()
+    acc_paciente = (agg["pred"] == agg["label"]).mean()
+    print(agg)
+    print(f"Por imagen: {acc_imagen:.3f} · por paciente: {acc_paciente:.3f}")
+  `}
+  hints={["Se promedian las probabilidades: la función de agregación es 'mean'."]}
+  check={`
+    assert list(agg["pred"]) == [1, 0, 2], "Promediando, los tres pacientes quedan bien clasificados"
+    assert abs(acc_imagen - 0.5) < 1e-9 and acc_paciente == 1.0, "Por imagen se aciertan 3 de 6; por paciente, 3 de 3"
+  `}
+>
+Implementa la agregación como en el TFM. En este ejemplo, cada vista por separado falla a menudo, pero el promedio acierta a los tres pacientes.
+</CodeExercise>
+
+## Métricas
+
+Para la clasificación: accuracy, **F1 macro** (todas las clases pesan igual), **AUC macro uno-contra-resto** y **sensibilidad/especificidad por clase**. Para la regresión: **RMSE** y **correlación de Pearson (PCC)** entre BMD real y predicha.
+
+<Callout kind="idea" title="La sensibilidad en osteoporosis es la que importa">
+En un cribado, el error caro es el **falso negativo grave**: decirle a alguien con osteoporosis que está bien. Por eso la memoria destaca la sensibilidad en osteoporosis por encima de la accuracy, y por eso el modelo final (0,853 en esa clase) es defendible aunque su accuracy global no sea la mejor de la bitácora.
+</Callout>
+
+## Validación cruzada: ¿cuánto varía?
+
+`evaluation/cross_validation.py` repite el entrenamiento por fases en **5 bolsas** de train+val, **separadas por paciente** y estratificadas, y evalúa cada modelo sobre el **mismo test fijo**:
+
+| Métrica (test, por paciente) | Media ± desviación (5 bolsas) |
+|---|---|
+| Accuracy | 0,625 ± 0,107 |
+| F1 macro | 0,609 ± 0,151 |
+| AUC macro | 0,805 ± 0,074 |
+| RMSE BMD | 0,154 ± 0,021 |
+| PCC BMD | 0,657 ± 0,148 |
+
+La bolsa 3 se detuvo en la **época 3** y se quedó en 0,438 de accuracy: un entrenamiento que no arrancó. Sin ella, las otras cuatro están entre 0,64 y 0,69.
+
+<Quiz
+  id="cv-lectura"
+  options={[
+    "Que el modelo final tiene una accuracy de 0,625",
+    "Que con estos datos el resultado depende bastante de qué pacientes caen en entrenamiento, y que hay entrenamientos inestables (bolsa 3)",
+    "Que la validación cruzada no sirve con imágenes",
+    "Que el test fijo está mal construido",
+  ]}
+  answer={1}
+  explanation="Una desviación de ±0,11 en accuracy es grande: las comparaciones de 1–3 puntos de la bitácora quedan dentro de ese ruido. Y la bolsa 3 muestra que la parada temprana puede cortar un entrenamiento que aún no había despegado (convendría un mínimo de épocas o más paciencia)."
+>
+¿Qué te dice principalmente esta tabla?
+</Quiz>
+
+<Predict
+  id="auc-azar"
+  answer={["0.5", "0,5"]}
+  explanation="Un AUC de 0,5 es el de un clasificador aleatorio; 1 es perfecto. El AUC medio de 0,805 indica que las probabilidades ordenan bastante bien a los pacientes aunque la clase final (argmax) se equivoque a menudo entre clases vecinas."
+  hints={["¿Qué área deja la diagonal de la curva ROC?"]}
+>
+¿Qué AUC tendría un modelo que asignara probabilidades al azar?
+</Predict>
+
+<Temario
+  links={[
+    { to: "supervisado/validacion", why: "Validación cruzada por grupos y estimar la variabilidad, no solo la media." },
+    { to: "supervisado/metricas", why: "F1 macro, AUC, sensibilidad y especificidad por clase, y elegir la métrica por el coste del error." },
+    { to: "razonamiento/incertidumbre-y-bayes", why: "En un cribado real, la prevalencia determina cuántas alertas serán falsas." },
+  ]}
+/>
+
+## Para llevar
+
+- Diagnóstico por paciente promediando las dos vistas: +4 puntos con el modelo final.
+- La métrica clave es la sensibilidad en osteoporosis (0,853 con el modelo final).
+- La validación cruzada muestra ±0,11 de variación en accuracy: las diferencias pequeñas no son concluyentes.

@@ -1,0 +1,116 @@
+Con pocos datos y un backbone preentrenado, **cómo** se entrena importa tanto como el modelo. `training/train.py` reúne cuatro decisiones: la estrategia de fine-tuning, la pérdida multitarea, el balanceo de clases y la parada temprana.
+
+## Fine-tuning: por fases o diferencial
+
+Las dos estrategias de `training/strategies/` vienen de ULMFiT (Howard y Ruder, 2018):
+
+- **Diferencial** (`differential`): todo se entrena desde la primera época, pero el backbone con un learning rate 10 veces menor (1e-4) que las cabezas (1e-3). Aprende rápido, pero las cabezas aleatorias del principio mandan gradientes enormes al backbone.
+- **Por fases** (`phased`): durante `freeze_epochs = 8` el backbone está **congelado** y solo aprenden las cabezas (lr 1e-3). Después se descongela todo y se sigue con lr 1e-4 para todo el modelo (con un optimizador Adam nuevo).
+
+<LrScheduleSim />
+
+En tu TFM, la estrategia por fases generalizó mejor en test, y es la base de todos los experimentos posteriores. La memoria lo explica bien: congelar al principio **protege los pesos preentrenados** del "olvido catastrófico" cuando hay pocos datos.
+
+## Una pérdida para dos tareas
+
+$$L = \text{CE}(\text{logits}, y) + \lambda \cdot \text{MSE}(\widehat{\text{BMD}}, \text{BMD}), \qquad \lambda = 10$$
+
+La escala importa: la BMD vale alrededor de 1 y los errores son de décimas, así que su MSE es diminuto (≈ 0,02–0,04) frente a una entropía cruzada de ≈ 1. Sin el factor 10, la regresión apenas aportaría gradiente.
+
+<LossBalanceSim />
+
+## Balanceo de clases
+
+Hay 314 imágenes de osteoporosis frente a ~410 de las otras clases. El TFM probó a pesar la entropía cruzada (`--class-weighting`):
+
+- **inverse**: peso ∝ 1 / frecuencia, normalizado para que la media sea 1.
+- **effective** (Cui et al., 2019): con el "número efectivo de muestras" $E_n = \frac{1 - \beta^n}{1 - \beta}$ y peso ∝ $1/E_n$ (β = 0,999). Con clases grandes, añadir ejemplos aporta cada vez menos información nueva; esta fórmula lo modela y corrige con más suavidad.
+
+<ClassWeightsSim />
+
+<Predict
+  id="peso-inverso"
+  answer={["1.20", "1,20", "1.2", "1,2"]}
+  tolerance={0.005}
+  explanation="Peso inverso = total / (clases · n_c) = 1131 / (3 · 314) = 1131 / 942 ≈ 1,20. Las otras clases quedan algo por debajo de 1 (≈ 0,93 y 0,92)."
+  hints={["En train hay 406 + 411 + 314 = 1131 imágenes.", "peso = total / (3 · n_clase)"]}
+>
+Con el esquema inverso, ¿qué peso recibe la clase osteoporosis (314 imágenes de 1.131)?
+</Predict>
+
+<CodeExercise
+  id="pesos-efectivos"
+  title="Pesos por número efectivo"
+  starter={`
+    import numpy as np
+
+    def pesos_efectivos(counts, beta=0.999):
+        counts = np.asarray(counts, dtype=float)
+        efectivo = (1 - beta ** counts) / (1 - beta)      # número efectivo de muestras
+        pesos = 1 / ___
+        return pesos / pesos.sum() * ___                 # normaliza: la media de los pesos es 1
+
+    counts = [406, 411, 314]
+    print(np.round(pesos_efectivos(counts), 4))
+  `}
+  solution={`
+    import numpy as np
+
+    def pesos_efectivos(counts, beta=0.999):
+        counts = np.asarray(counts, dtype=float)
+        efectivo = (1 - beta ** counts) / (1 - beta)      # número efectivo de muestras
+        pesos = 1 / efectivo
+        return pesos / pesos.sum() * len(counts)                 # normaliza: la media de los pesos es 1
+
+    counts = [406, 411, 314]
+    print(np.round(pesos_efectivos(counts), 4))
+  `}
+  hints={["El peso es inversamente proporcional al número efectivo.", "Para que la media sea 1, la suma debe ser igual al número de clases."]}
+  check={`
+    w = pesos_efectivos(counts)
+    assert abs(w.mean() - 1) < 1e-9, "La media de los pesos debe ser 1"
+    assert w[2] > w[0] > w[1], "La clase con menos imágenes debe pesar más"
+    inv = np.array([1131 / (3 * c) for c in counts])
+    assert w[2] / w[1] < inv[2] / inv[1], "El número efectivo corrige con más suavidad que el inverso"
+  `}
+>
+Implementa la fórmula de `compute_class_weights` (esquema `effective`). El test comprueba que corrige menos que el inverso.
+</CodeExercise>
+
+## Parada temprana
+
+Hasta 50 épocas, pero el entrenamiento se detiene si la pérdida de validación no mejora en **7 épocas** (`PATIENCE = 7`), y se guarda el checkpoint de la mejor. La memoria lo destaca como uno de los hallazgos más importantes: **la diferencia entre estrategias dependió más de la parada temprana que de la propia estrategia**; sin ella, las dos sobreajustaban a partir de la época 13–19.
+
+<Quiz
+  id="early-stopping"
+  options={[
+    "Entrenar siempre 50 épocas para comparar en igualdad",
+    "Parar cuando la pérdida de entrenamiento deja de bajar",
+    "Vigilar la pérdida de validación y quedarse con el checkpoint de la mejor época",
+    "Vigilar la accuracy de test y parar cuando sea máxima",
+  ]}
+  answer={2}
+  explanation="La pérdida de validación es la estimación honesta del error en datos no vistos durante el entrenamiento. La de entrenamiento siempre baja; y usar el test para decidir cuándo parar lo convertiría en validación."
+>
+¿Qué hace la parada temprana del TFM?
+</Quiz>
+
+<Callout kind="real">
+Detalles que un revisor técnico valorará: semilla fija (`set_seed(42)`), `drop_last` en el loader de train (evita lotes de 1 con BatchNorm), el optimizador nuevo al descongelar y las estadísticas de covariables guardadas junto al checkpoint. Lo que se echaría en falta en un entorno profesional: registrar cada experimento con su configuración (MLflow o Weights & Biases) en vez de carpetas `v0`…`v8`, porque así es como se pierden resultados (lo verás en la bitácora).
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/augmentation-y-transfer-learning", why: "Congelar el backbone primero y hacer fine-tuning con lr bajo después." },
+    { to: "deep-learning/optimizadores-y-regularizacion", why: "Adam, learning rate, curvas de aprendizaje y early stopping." },
+    { to: "deep-learning/entrenar-una-red", why: "Entropía cruzada para la clase y MSE para la BMD." },
+    { to: "supervisado/metricas", why: "Con clases desbalanceadas, la accuracy engaña: F1 macro y sensibilidad por clase." },
+  ]}
+/>
+
+## Para llevar
+
+- Por fases: 8 épocas con el backbone congelado (lr 1e-3) y luego todo a 1e-4. Generalizó mejor que el diferencial.
+- L = CE + 10 · MSE: el factor compensa la escala diminuta del error de la BMD.
+- Pesos de clase inverso y efectivo (β = 0,999); el efectivo corrige con más suavidad.
+- Parada temprana con paciencia 7: la pieza que más influyó en el resultado.
