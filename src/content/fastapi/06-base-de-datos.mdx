@@ -1,0 +1,483 @@
+Hasta ahora los datos vivían en un `dict`: al reiniciar el servidor, desaparecen, y con varios procesos cada uno tendría el suyo. Las predicciones, los usuarios y los modelos registrados tienen que ir a una **base de datos**. En Python, lo estándar es **SQLAlchemy 2.0**: defines las tablas como clases y escribes las consultas en Python, y SQLAlchemy genera el SQL para SQLite, PostgreSQL o la que uses.
+
+## Tablas como clases
+
+```python
+from sqlalchemy import String, create_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+
+engine = create_engine("sqlite:///wine.db")     # en producción: "postgresql+psycopg://..."
+SessionLocal = sessionmaker(engine)
+
+class Base(DeclarativeBase):
+    pass
+
+class Prediction(Base):
+    __tablename__ = "predictions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    alcohol: Mapped[float]
+    quality: Mapped[int]
+    model_name: Mapped[str] = mapped_column(String(50))
+
+Base.metadata.create_all(engine)                # crea las tablas que falten
+```
+
+`Mapped[int]` es a la vez la anotación de tipo para tu editor y la definición de la columna (`NOT NULL`; `Mapped[int | None]` la haría opcional).
+
+## Una sesión por petición
+
+Una **sesión** es una conversación con la base de datos: agrupa cambios y los confirma (`commit`) o los descarta (`rollback`) juntos. La regla es **una sesión por petición**, abierta al empezar y cerrada al acabar. Es exactamente el patrón de la dependencia con `yield` de la lección anterior:
+
+```python
+def get_session():
+    with SessionLocal() as session:   # el with la cierra siempre
+        yield session
+
+SessionDep = Annotated[Session, Depends(get_session)]
+```
+
+Y para devolver objetos de SQLAlchemy con un modelo de Pydantic, este necesita `from_attributes=True` (lee `p.quality` en vez de `p["quality"]`):
+
+```python
+class PredictionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    alcohol: float
+    quality: int
+    model_name: str
+```
+
+<Quiz
+  id="sesion-por-peticion"
+  options={[
+    "Porque abrir una sesión es muy lento",
+    "Porque si dos peticiones comparten sesión, el commit o el rollback de una afecta a los cambios a medias de la otra",
+    "Porque SQLite no permite más de una sesión",
+    "Porque FastAPI lo exige",
+  ]}
+  answer={1}
+  explanation="La sesión acumula los cambios pendientes y el estado de los objetos cargados. Compartida entre peticiones simultáneas, el commit de una confirmaría cambios a medio hacer de otra, y un rollback desharía trabajo ajeno. Una sesión por petición aísla cada operación; las conexiones sí se reutilizan, a través del pool del engine."
+  hints={["Piensa en dos peticiones a la vez, una de las cuales falla a mitad."]}
+>
+¿Por qué una sesión por petición y no una global para toda la app?
+</Quiz>
+
+## Crear y leer
+
+Crear es `add` + `commit`; `refresh` recarga el objeto para tener lo que puso la base de datos (el `id`). Leer por clave primaria es `session.get`, que devuelve `None` si no existe.
+
+<CodeExercise
+  id="crear-y-leer"
+  title="Guardar y recuperar predicciones"
+  starter={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI, HTTPException, status
+    from pydantic import BaseModel, ConfigDict, Field
+    from sqlalchemy import String, create_engine
+    from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    # SQLite en memoria, compartida por todas las sesiones (lo habitual en los tests)
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SessionLocal = sessionmaker(engine)
+
+    class Base(DeclarativeBase):
+        pass
+
+    class Prediction(Base):
+        __tablename__ = "predictions"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        alcohol: Mapped[float]
+        quality: Mapped[int]
+        model_name: Mapped[str] = mapped_column(String(50))
+
+    Base.metadata.create_all(engine)
+
+    def get_session():
+        with SessionLocal() as session:
+            yield session
+
+    SessionDep = Annotated[Session, Depends(get_session)]
+
+    class WineSample(BaseModel):
+        alcohol: float = Field(ge=8, le=15)
+
+    class PredictionRead(BaseModel):
+        model_config = ConfigDict(___)
+        id: int
+        alcohol: float
+        quality: int
+        model_name: str
+
+    app = FastAPI()
+
+    @app.post("/predictions", response_model=PredictionRead, status_code=status.HTTP_201_CREATED)
+    def create_prediction(sample: WineSample, session: SessionDep):
+        prediction = Prediction(alcohol=sample.alcohol, quality=round(sample.alcohol / 2), model_name="fake-v1")
+        ___   # añadir, confirmar y recargar
+        return prediction
+
+    @app.get("/predictions/{prediction_id}", response_model=PredictionRead)
+    def get_prediction(prediction_id: int, session: SessionDep):
+        prediction = ___
+        if prediction is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Predicción no encontrada")
+        return prediction
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.post("/predictions", json={"alcohol": 12.4})
+    print(r.status_code, r.json())
+    print((await client.get(f"/predictions/{r.json()['id']}")).json())
+  `}
+  solution={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI, HTTPException, status
+    from pydantic import BaseModel, ConfigDict, Field
+    from sqlalchemy import String, create_engine
+    from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    # SQLite en memoria, compartida por todas las sesiones (lo habitual en los tests)
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SessionLocal = sessionmaker(engine)
+
+    class Base(DeclarativeBase):
+        pass
+
+    class Prediction(Base):
+        __tablename__ = "predictions"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        alcohol: Mapped[float]
+        quality: Mapped[int]
+        model_name: Mapped[str] = mapped_column(String(50))
+
+    Base.metadata.create_all(engine)
+
+    def get_session():
+        with SessionLocal() as session:
+            yield session
+
+    SessionDep = Annotated[Session, Depends(get_session)]
+
+    class WineSample(BaseModel):
+        alcohol: float = Field(ge=8, le=15)
+
+    class PredictionRead(BaseModel):
+        model_config = ConfigDict(from_attributes=True)
+        id: int
+        alcohol: float
+        quality: int
+        model_name: str
+
+    app = FastAPI()
+
+    @app.post("/predictions", response_model=PredictionRead, status_code=status.HTTP_201_CREATED)
+    def create_prediction(sample: WineSample, session: SessionDep):
+        prediction = Prediction(alcohol=sample.alcohol, quality=round(sample.alcohol / 2), model_name="fake-v1")
+        session.add(prediction)
+        session.commit()
+        session.refresh(prediction)
+        return prediction
+
+    @app.get("/predictions/{prediction_id}", response_model=PredictionRead)
+    def get_prediction(prediction_id: int, session: SessionDep):
+        prediction = session.get(Prediction, prediction_id)
+        if prediction is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Predicción no encontrada")
+        return prediction
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.post("/predictions", json={"alcohol": 12.4})
+    print(r.status_code, r.json())
+    print((await client.get(f"/predictions/{r.json()['id']}")).json())
+  `}
+  hints={[
+    "Para leer atributos de un objeto ORM: ConfigDict(from_attributes=True).",
+    "Crear son tres líneas: session.add(prediction), session.commit(), session.refresh(prediction).",
+    "Leer por clave primaria: session.get(Prediction, prediction_id).",
+  ]}
+  check={`
+    Base.metadata.drop_all(engine); Base.metadata.create_all(engine)
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _r = await _c.post("/predictions", json={"alcohol": 13})
+    assert _r.status_code == 201, "Crear una predicción responde 201"
+    assert _r.json() == {"id": 1, "alcohol": 13.0, "quality": 6, "model_name": "fake-v1"}, "La respuesta debe incluir el id que asignó la base de datos"
+    with SessionLocal() as _s:
+        assert _s.get(Prediction, 1) is not None, "La predicción debe quedar guardada (¿falta el commit?)"
+    _r = await _c.get("/predictions/1")
+    assert _r.status_code == 200 and _r.json()["quality"] == 6, "GET /predictions/1 devuelve la predicción guardada"
+    assert (await _c.get("/predictions/99")).status_code == 404, "Una predicción inexistente: 404"
+  `}
+>
+Completa la creación y la lectura. La base de datos es SQLite en memoria, la forma habitual de probar sin un servidor de base de datos.
+</CodeExercise>
+
+## Consultar: select
+
+Las consultas se construyen con `select()` y se encadenan filtros, orden y paginación. `session.scalars(stmt).all()` devuelve la lista de objetos:
+
+```python
+stmt = (
+    select(Prediction)
+    .where(Prediction.quality >= 6)
+    .order_by(Prediction.id.desc())
+    .offset(0)
+    .limit(20)
+)
+predictions = session.scalars(stmt).all()
+total = session.scalar(select(func.count()).select_from(Prediction))
+```
+
+<CodeExercise
+  id="listar"
+  title="Listado con filtro, orden y total"
+  starter={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI, Query
+    from sqlalchemy import create_engine, func, select
+    from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SessionLocal = sessionmaker(engine)
+
+    class Base(DeclarativeBase):
+        pass
+
+    class Prediction(Base):
+        __tablename__ = "predictions"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        quality: Mapped[int]
+
+    Base.metadata.create_all(engine)
+    with SessionLocal() as s:
+        s.add_all([Prediction(quality=q) for q in [5, 6, 7, 4, 6, 8, 5, 6]])
+        s.commit()
+
+    def get_session():
+        with SessionLocal() as session:
+            yield session
+
+    app = FastAPI()
+
+    @app.get("/predictions")
+    def list_predictions(
+        session: Annotated[Session, Depends(get_session)],
+        min_quality: int = 0,
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        where = Prediction.quality >= min_quality
+        stmt = select(Prediction).where(where).order_by(___).offset(___).limit(___)
+        items = session.scalars(stmt).all()
+        total = session.scalar(select(func.count()).select_from(Prediction).where(___))
+        return {"total": total, "items": [{"id": p.id, "quality": p.quality} for p in items]}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/predictions", params={"min_quality": 6, "limit": 2})).json())
+  `}
+  solution={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI, Query
+    from sqlalchemy import create_engine, func, select
+    from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SessionLocal = sessionmaker(engine)
+
+    class Base(DeclarativeBase):
+        pass
+
+    class Prediction(Base):
+        __tablename__ = "predictions"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        quality: Mapped[int]
+
+    Base.metadata.create_all(engine)
+    with SessionLocal() as s:
+        s.add_all([Prediction(quality=q) for q in [5, 6, 7, 4, 6, 8, 5, 6]])
+        s.commit()
+
+    def get_session():
+        with SessionLocal() as session:
+            yield session
+
+    app = FastAPI()
+
+    @app.get("/predictions")
+    def list_predictions(
+        session: Annotated[Session, Depends(get_session)],
+        min_quality: int = 0,
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        where = Prediction.quality >= min_quality
+        stmt = select(Prediction).where(where).order_by(Prediction.id.desc()).offset(offset).limit(limit)
+        items = session.scalars(stmt).all()
+        total = session.scalar(select(func.count()).select_from(Prediction).where(where))
+        return {"total": total, "items": [{"id": p.id, "quality": p.quality} for p in items]}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/predictions", params={"min_quality": 6, "limit": 2})).json())
+  `}
+  hints={[
+    "Las más recientes primero: order_by(Prediction.id.desc()).",
+    "offset(offset) y limit(limit) con los parámetros de la query.",
+    "El total usa el mismo filtro (where) pero sin paginar, para que el cliente sepa cuántas páginas hay.",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _r = (await _c.get("/predictions", params={"min_quality": 6, "limit": 2})).json()
+    assert _r == {"total": 5, "items": [{"id": 8, "quality": 6}, {"id": 6, "quality": 8}]}, "min_quality=6&limit=2: total 5, y las dos más recientes (ids 8 y 6)"
+    _r = (await _c.get("/predictions", params={"min_quality": 6, "limit": 2, "offset": 2})).json()
+    assert [p["id"] for p in _r["items"]] == [5, 3], "La segunda página (offset=2) son los ids 5 y 3"
+    assert (await _c.get("/predictions")).json()["total"] == 8, "Sin filtro hay 8 predicciones"
+  `}
+>
+Completa el listado: más recientes primero, paginado, y con el **total** de resultados del filtro (sin paginar).
+</CodeExercise>
+
+## Cuando la base de datos dice que no
+
+Una restricción `unique=True` hace que la base de datos rechace duplicados lanzando `IntegrityError`. Hay que capturarlo, deshacer la transacción y responder **409**. Comprobar antes con un `SELECT` no basta: entre la consulta y el `INSERT` puede colarse otra petición.
+
+<CodeExercise
+  id="unico"
+  title="Email único: de IntegrityError a 409"
+  starter={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI, HTTPException, status
+    from pydantic import BaseModel
+    from sqlalchemy import String, create_engine
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SessionLocal = sessionmaker(engine)
+
+    class Base(DeclarativeBase):
+        pass
+
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        email: Mapped[str] = mapped_column(String(255), ___)
+
+    Base.metadata.create_all(engine)
+
+    def get_session():
+        with SessionLocal() as session:
+            yield session
+
+    class UserCreate(BaseModel):
+        email: str
+
+    app = FastAPI()
+
+    @app.post("/users", status_code=status.HTTP_201_CREATED)
+    def create_user(data: UserCreate, session: Annotated[Session, Depends(get_session)]):
+        user = User(email=data.email)
+        session.add(user)
+        try:
+            session.commit()
+        except IntegrityError:
+            ___
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Ese email ya está registrado")
+        return {"id": user.id, "email": user.email}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.post("/users", json={"email": "ana@example.com"})).status_code)
+    print((await client.post("/users", json={"email": "ana@example.com"})).json())
+  `}
+  solution={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI, HTTPException, status
+    from pydantic import BaseModel
+    from sqlalchemy import String, create_engine
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SessionLocal = sessionmaker(engine)
+
+    class Base(DeclarativeBase):
+        pass
+
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        email: Mapped[str] = mapped_column(String(255), unique=True)
+
+    Base.metadata.create_all(engine)
+
+    def get_session():
+        with SessionLocal() as session:
+            yield session
+
+    class UserCreate(BaseModel):
+        email: str
+
+    app = FastAPI()
+
+    @app.post("/users", status_code=status.HTTP_201_CREATED)
+    def create_user(data: UserCreate, session: Annotated[Session, Depends(get_session)]):
+        user = User(email=data.email)
+        session.add(user)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Ese email ya está registrado")
+        return {"id": user.id, "email": user.email}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.post("/users", json={"email": "ana@example.com"})).status_code)
+    print((await client.post("/users", json={"email": "ana@example.com"})).json())
+  `}
+  hints={[
+    "La restricción va en la columna: mapped_column(String(255), unique=True).",
+    "Tras un error, la transacción queda inválida: hay que deshacerla antes de seguir.",
+    "session.rollback()",
+  ]}
+  check={`
+    Base.metadata.drop_all(engine); Base.metadata.create_all(engine)
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    assert (await _c.post("/users", json={"email": "luis@example.com"})).status_code == 201, "El primer alta funciona"
+    _r = await _c.post("/users", json={"email": "luis@example.com"})
+    assert _r.status_code == 409 and _r.json() == {"detail": "Ese email ya está registrado"}, "El email repetido debe dar 409, no 500"
+    assert (await _c.post("/users", json={"email": "eva@example.com"})).json()["id"] == 2, "Tras el 409, la API sigue funcionando y el siguiente alta recibe id 2"
+  `}
+>
+Marca el email como único y convierte el `IntegrityError` en un 409.
+</CodeExercise>
+
+<Callout kind="real" title="Cómo se hace en el trabajo">
+- **PostgreSQL** en producción, y SQLite (en memoria o en fichero) solo para tests o prototipos. Ojo: SQLite tolera cosas que PostgreSQL no; los tests de integración serios usan el mismo motor que producción (con Docker o `testcontainers`).
+- Las tablas no se crean con `create_all`: se versionan con **Alembic**, que genera migraciones (`alembic revision --autogenerate`) y las aplica en cada despliegue. Cambiar el esquema sin migraciones es como no usar git.
+- La lógica de acceso a datos suele ir en funciones o clases aparte (`crud.py`, *repositories*) que reciben la sesión, para que los endpoints queden finos y se puedan probar por separado.
+- **SQLModel**, del mismo autor que FastAPI, une el modelo de SQLAlchemy y el de Pydantic en una sola clase. Es cómodo en proyectos pequeños; en grandes, mucha gente prefiere separarlos.
+- Con endpoints `async def` se usa el motor asíncrono (`create_async_engine`, `AsyncSession`, drivers `asyncpg` o `psycopg`). Con el motor síncrono, los endpoints van con `def` (lección 10 explica por qué).
+</Callout>
+
+## Para llevar
+
+- Tablas como clases con `Mapped[...]` y `mapped_column`; el `engine` habla con la base de datos.
+- Una sesión por petición, como dependencia con `yield`.
+- Crear: `add`, `commit`, `refresh`. Leer: `session.get` o `select(...)` con `where`, `order_by`, `offset`, `limit`.
+- `ConfigDict(from_attributes=True)` para devolver objetos ORM con Pydantic.
+- Las restricciones de la base de datos (`unique`) son la última palabra: captura `IntegrityError`, `rollback` y 409.

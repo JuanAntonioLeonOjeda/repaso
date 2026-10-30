@@ -1,0 +1,284 @@
+Una API se juzga tanto por cómo falla como por cómo funciona. Si pides un modelo que no existe y te llega un `500 Internal Server Error`, no sabes si el fallo es tuyo o del servidor; si te llega un `404` con `"Modelo 99 no encontrado"`, sí. Esta lección va de devolver **el código correcto con un mensaje útil**, y de entender en qué punto del camino de una petición sale cada error.
+
+## Los códigos que vas a usar
+
+| Código | Nombre | Cuándo |
+|---|---|---|
+| 200 | OK | lectura o actualización correcta |
+| 201 | Created | se ha creado algo (`POST`) |
+| 204 | No Content | correcto y sin nada que devolver (`DELETE`) |
+| 400 | Bad Request | petición mal formada, o una regla de negocio que no encaja en otro código (FastAPI usa 422 para el esquema) |
+| 401 | Unauthorized | no sé quién eres: falta el token o no es válido |
+| 403 | Forbidden | sé quién eres, pero no puedes hacer esto |
+| 404 | Not Found | el recurso no existe |
+| 409 | Conflict | choca con el estado actual (ese email ya existe) |
+| 422 | Unprocessable Content | los datos no cumplen el esquema (lo pone FastAPI) |
+| 500 | Internal Server Error | un bug tuyo que nadie capturó |
+| 503 | Service Unavailable | ahora no puedo (el modelo aún se está cargando) |
+
+<Quiz
+  id="codigos"
+  options={["401", "403", "404", "422"]}
+  answer={1}
+  explanation="El token es válido, así que sabemos quién es: no es un 401. Simplemente no tiene permiso para esa operación: 403 Forbidden. Algunas APIs responden 404 en estos casos para no revelar que el recurso existe, pero el código «honesto» es 403."
+  hints={["¿Sabemos quién es el usuario?"]}
+>
+Un usuario con un token válido, pero sin rol de administrador, intenta borrar un modelo. ¿Qué código le devuelves?
+</Quiz>
+
+## HTTPException
+
+Para cortar la petición con un código y un mensaje, se **lanza** `HTTPException`. Al lanzarla (no devolverla) da igual lo profundo que estés: FastAPI la captura y la convierte en la respuesta.
+
+```python
+from fastapi import HTTPException, status
+
+@app.get("/models/{model_id}")
+def get_model(model_id: int):
+    if model_id not in MODELS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Modelo {model_id} no encontrado")
+    return MODELS[model_id]
+```
+
+Las constantes de `status` (`status.HTTP_404_NOT_FOUND`) se leen mejor que el número suelto y el editor las autocompleta.
+
+<CodeExercise
+  id="not-found"
+  title="404, 409 y 204"
+  starter={`
+    import httpx
+    from fastapi import FastAPI, HTTPException, status
+    from pydantic import BaseModel
+
+    app = FastAPI()
+    MODELS = {1: {"id": 1, "name": "ridge"}}
+
+    class ModelCreate(BaseModel):
+        name: str
+
+    @app.get("/models/{model_id}")
+    def get_model(model_id: int):
+        if model_id not in MODELS:
+            ___
+        return MODELS[model_id]
+
+    @app.post("/models", status_code=status.HTTP_201_CREATED)
+    def create_model(data: ModelCreate):
+        if any(m["name"] == data.name for m in MODELS.values()):
+            ___
+        new_id = max(MODELS, default=0) + 1
+        MODELS[new_id] = {"id": new_id, "name": data.name}
+        return MODELS[new_id]
+
+    @app.delete("/models/{model_id}", status_code=___)
+    def delete_model(model_id: int):
+        if MODELS.pop(model_id, None) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Modelo {model_id} no encontrado")
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.get("/models/99")
+    print(r.status_code, r.json())
+  `}
+  solution={`
+    import httpx
+    from fastapi import FastAPI, HTTPException, status
+    from pydantic import BaseModel
+
+    app = FastAPI()
+    MODELS = {1: {"id": 1, "name": "ridge"}}
+
+    class ModelCreate(BaseModel):
+        name: str
+
+    @app.get("/models/{model_id}")
+    def get_model(model_id: int):
+        if model_id not in MODELS:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Modelo {model_id} no encontrado")
+        return MODELS[model_id]
+
+    @app.post("/models", status_code=status.HTTP_201_CREATED)
+    def create_model(data: ModelCreate):
+        if any(m["name"] == data.name for m in MODELS.values()):
+            raise HTTPException(status.HTTP_409_CONFLICT, detail=f"Ya existe un modelo llamado {data.name}")
+        new_id = max(MODELS, default=0) + 1
+        MODELS[new_id] = {"id": new_id, "name": data.name}
+        return MODELS[new_id]
+
+    @app.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_model(model_id: int):
+        if MODELS.pop(model_id, None) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Modelo {model_id} no encontrado")
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.get("/models/99")
+    print(r.status_code, r.json())
+  `}
+  hints={[
+    "raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f\"Modelo {model_id} no encontrado\")",
+    "Un nombre repetido choca con lo que ya existe: HTTP_409_CONFLICT.",
+    "Borrar sin devolver nada: status.HTTP_204_NO_CONTENT.",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    MODELS.clear(); MODELS[1] = {"id": 1, "name": "ridge"}
+    _r = await _c.get("/models/99")
+    assert _r.status_code == 404 and _r.json() == {"detail": "Modelo 99 no encontrado"}, "GET de un id inexistente: 404 con detail 'Modelo 99 no encontrado'"
+    _r = await _c.post("/models", json={"name": "ridge"})
+    assert _r.status_code == 409, "Crear un modelo con un nombre que ya existe: 409 Conflict"
+    _r = await _c.post("/models", json={"name": "gbm"})
+    assert _r.status_code == 201 and _r.json() == {"id": 2, "name": "gbm"}, "Un nombre nuevo se crea con 201"
+    _r = await _c.delete("/models/2")
+    assert _r.status_code == 204 and _r.content == b"", "Borrar responde 204 sin cuerpo"
+    assert (await _c.delete("/models/2")).status_code == 404, "Borrar dos veces: la segunda es 404"
+  `}
+>
+Completa los tres casos: el modelo que no existe (**404**), el nombre repetido (**409**) y el borrado (**204**, sin cuerpo).
+</CodeExercise>
+
+## El camino de una petición
+
+¿En qué orden se comprueban las cosas? Importa, porque **la primera etapa que falla decide el código**. Prueba cada petición:
+
+<RequestLifecycleSim />
+
+<Quiz
+  id="orden-401"
+  options={["401: las dependencias (el token) se resuelven antes de validar el cuerpo", "422: el cuerpo se valida primero", "Los dos errores juntos en la misma respuesta", "400"]}
+  answer={0}
+  explanation="FastAPI ejecuta las dependencias (como la que comprueba el token) y después valida los parámetros y el cuerpo del endpoint. Sin token, la dependencia corta con 401 y el cuerpo ni se mira. Solo un JSON roto (que ni siquiera se puede leer) se rechaza antes, con 422. La excepción: si la propia dependencia tiene parámetros inválidos, no se ejecuta y sus errores salen en el mismo 422 que los del cuerpo."
+  hints={["Mira el orden de las cajas en la simulación."]}
+>
+`POST /predictions` sin token **y** con `alcohol = −3`. ¿Qué responde?
+</Quiz>
+
+## Tus propias excepciones
+
+Lanzar `HTTPException` desde la lógica de negocio la ata a HTTP. Lo más limpio es que la lógica lance **excepciones propias** (`ModelNotReady`, `QuotaExceeded`) y registrar un **manejador** que las traduce a una respuesta. Así todos los errores tienen el mismo formato, se lancen donde se lancen.
+
+```python
+class ModelNotReady(Exception):
+    def __init__(self, name: str):
+        self.name = name
+
+@app.exception_handler(ModelNotReady)
+async def model_not_ready_handler(request: Request, exc: ModelNotReady):
+    return JSONResponse(status_code=503, content={...}, headers={"Retry-After": "30"})
+```
+
+<CodeExercise
+  id="handler"
+  title="Un manejador para un error propio"
+  starter={`
+    import httpx
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse
+
+    class ModelNotReady(Exception):
+        def __init__(self, name: str):
+            self.name = name
+
+    app = FastAPI()
+    LOADED = {"ridge"}
+
+    def predict_with(name: str) -> int:
+        if name not in LOADED:
+            raise ModelNotReady(name)
+        return 6
+
+    ___
+    async def model_not_ready_handler(request: Request, exc: ModelNotReady):
+        return JSONResponse(
+            status_code=___,
+            content={"error": {"code": "model_not_ready", "message": f"El modelo {exc.name} se está cargando"}},
+            headers=___,
+        )
+
+    @app.get("/predict/{name}")
+    def predict(name: str):
+        return {"quality": predict_with(name)}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.get("/predict/gbm")
+    print(r.status_code, r.headers.get("retry-after"), r.json())
+  `}
+  solution={`
+    import httpx
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse
+
+    class ModelNotReady(Exception):
+        def __init__(self, name: str):
+            self.name = name
+
+    app = FastAPI()
+    LOADED = {"ridge"}
+
+    def predict_with(name: str) -> int:
+        if name not in LOADED:
+            raise ModelNotReady(name)
+        return 6
+
+    @app.exception_handler(ModelNotReady)
+    async def model_not_ready_handler(request: Request, exc: ModelNotReady):
+        return JSONResponse(
+            status_code=503,
+            content={"error": {"code": "model_not_ready", "message": f"El modelo {exc.name} se está cargando"}},
+            headers={"Retry-After": "30"},
+        )
+
+    @app.get("/predict/{name}")
+    def predict(name: str):
+        return {"quality": predict_with(name)}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.get("/predict/gbm")
+    print(r.status_code, r.headers.get("retry-after"), r.json())
+  `}
+  hints={[
+    "El decorador es @app.exception_handler(ModelNotReady).",
+    "«Ahora no puedo, vuelve luego» es 503 Service Unavailable.",
+    "Las cabeceras son un dict: {\"Retry-After\": \"30\"} (segundos, como texto).",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _r = await _c.get("/predict/gbm")
+    assert _r.status_code == 503, "Un modelo sin cargar debe responder 503"
+    assert _r.json() == {"error": {"code": "model_not_ready", "message": "El modelo gbm se está cargando"}}, "El cuerpo debe tener el formato de error de la API"
+    assert _r.headers.get("retry-after") == "30", "Falta la cabecera Retry-After: 30"
+    assert (await _c.get("/predict/ridge")).json() == {"quality": 6}, "Un modelo cargado predice con normalidad"
+  `}
+>
+Registra un manejador que convierta `ModelNotReady` en un **503** con el formato de error de la API y la cabecera `Retry-After`, que le dice al cliente cuándo reintentar.
+</CodeExercise>
+
+## Y el 500
+
+Una excepción que nadie captura (un `KeyError`, una división entre cero) acaba en un **500** con el texto `Internal Server Error`, sin detalles. Eso es lo correcto: el traceback va a **tus logs**, no al cliente, porque puede revelar rutas, consultas o datos.
+
+<Callout kind="note" title="En los tests, el 500 se convierte en excepción">
+Ni `TestClient` ni `ASGITransport` te devuelven un 500 por defecto: **relanzan la excepción** en el test, para que veas el traceback. Si quieres comprobar la respuesta que vería el cliente, usa `ASGITransport(app=app, raise_app_exceptions=False)` o `TestClient(app, raise_server_exceptions=False)`.
+</Callout>
+
+<Predict
+  id="bug-500"
+  answer={["500"]}
+  explanation="Un KeyError sin capturar llega hasta el manejador de errores más externo de Starlette, que responde 500 Internal Server Error, sin el traceback. Con raise_app_exceptions=False el cliente de pruebas ve exactamente eso."
+  hints={["Es un error del servidor, no del cliente: un 5xx."]}
+>
+Un endpoint hace `return {}["x"]`. Con `ASGITransport(app=app, raise_app_exceptions=False)`, ¿qué código ve el cliente?
+</Predict>
+
+<Callout kind="real" title="Cómo se hace en el trabajo">
+- Un **formato de error único** en toda la API (`{"error": {"code", "message"}}`, o el estándar RFC 9457 *Problem Details*, con `type`, `title`, `status` y `detail`). El frontend lo trata en un solo sitio.
+- Los `code` legibles por máquina (`model_not_ready`) importan más que el mensaje: el mensaje cambia o se traduce; el código no.
+- Los 500 se monitorizan (Sentry, alertas en los logs). Un 4xx es normal; una subida de 500 es un incidente.
+- No uses 200 con `{"ok": false}`: proxies, reintentos y métricas confían en el código de estado.
+</Callout>
+
+## Para llevar
+
+- Cada situación tiene su código: 201 al crear, 204 al borrar, 401 sin identidad, 403 sin permiso, 404 si no existe, 409 si choca, 422 si el esquema falla.
+- `raise HTTPException(status, detail=...)` corta la petición desde cualquier sitio.
+- Orden: rutas → dependencias → validación → endpoint → `response_model`. La primera que falla decide (si una dependencia tiene sus propios parámetros inválidos, su error se junta con los de validación en un 422).
+- Excepciones propias + `@app.exception_handler` dan un formato de error coherente.
+- Un 500 es un bug: detalles a los logs, nunca al cliente.

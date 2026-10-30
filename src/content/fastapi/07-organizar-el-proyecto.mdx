@@ -1,0 +1,375 @@
+Un `main.py` con cuarenta endpoints, los modelos de la base de datos, los esquemas y la configuración es manejable una semana. Después, cada cambio es buscar en un fichero de mil líneas. Esta lección es la estructura que vas a encontrarte (y montar) en un proyecto real: **routers** para dividir la API, **configuración** desde variables de entorno y **lifespan** para lo que se prepara una vez al arrancar, como cargar el modelo.
+
+## Una estructura que escala
+
+```
+wine-api/
+├── app/
+│   ├── main.py            # crea la app, incluye los routers, lifespan
+│   ├── config.py          # Settings: lo que cambia entre entornos
+│   ├── db.py              # engine, SessionLocal, get_session
+│   ├── deps.py            # dependencias compartidas (SessionDep, CurrentUser…)
+│   ├── models.py          # tablas de SQLAlchemy
+│   ├── schemas.py         # modelos de Pydantic (entrada/salida)
+│   ├── ml.py              # cargar el modelo y predecir
+│   └── routers/
+│       ├── models.py      # /models
+│       ├── predictions.py # /predictions
+│       └── users.py       # /users, /auth
+├── tests/
+├── pyproject.toml
+└── Dockerfile
+```
+
+No es la única forma (en proyectos grandes se agrupa por dominio: `predictions/router.py`, `predictions/schemas.py`…), pero la idea es la misma: **cada fichero, una responsabilidad**.
+
+## APIRouter
+
+Un `APIRouter` es una mini-app: se le añaden endpoints igual que a `app` y luego se incluye en la app con un prefijo. Todo lo que tengan en común los endpoints del grupo (prefijo, etiquetas para `/docs`, dependencias) se declara una vez en el router.
+
+```python
+# app/routers/models.py
+router = APIRouter(prefix="/models", tags=["models"])
+
+@router.get("")            # → GET /models
+def list_models(): ...
+
+@router.get("/{model_id}") # → GET /models/{model_id}
+def get_model(model_id: int): ...
+
+# app/main.py
+app.include_router(models.router)
+```
+
+<CodeExercise
+  id="routers"
+  title="Dividir la API en routers"
+  starter={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException
+
+    def require_api_key(x_api_key: Annotated[str | None, Header()] = None):
+        if x_api_key != "k-123":
+            raise HTTPException(401, detail="API key inválida")
+
+    # Router público de modelos: GET /models y GET /models/{model_id}
+    models_router = APIRouter(prefix=___, tags=["models"])
+
+    @models_router.get("")
+    def list_models():
+        return [{"id": 1}]
+
+    @models_router.get("/{model_id}")
+    def get_model(model_id: int):
+        return {"id": model_id}
+
+    # Router de administración: todos sus endpoints exigen la API key
+    admin_router = APIRouter(prefix="/admin", tags=["admin"], dependencies=___)
+
+    @admin_router.post("/reload")
+    def reload_models():
+        return {"reloaded": True}
+
+    app = FastAPI()
+    ___
+    ___
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print(sorted((await client.get("/openapi.json")).json()["paths"]))
+    print((await client.post("/admin/reload")).status_code)
+  `}
+  solution={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException
+
+    def require_api_key(x_api_key: Annotated[str | None, Header()] = None):
+        if x_api_key != "k-123":
+            raise HTTPException(401, detail="API key inválida")
+
+    # Router público de modelos: GET /models y GET /models/{model_id}
+    models_router = APIRouter(prefix="/models", tags=["models"])
+
+    @models_router.get("")
+    def list_models():
+        return [{"id": 1}]
+
+    @models_router.get("/{model_id}")
+    def get_model(model_id: int):
+        return {"id": model_id}
+
+    # Router de administración: todos sus endpoints exigen la API key
+    admin_router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_api_key)])
+
+    @admin_router.post("/reload")
+    def reload_models():
+        return {"reloaded": True}
+
+    app = FastAPI()
+    app.include_router(models_router)
+    app.include_router(admin_router)
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print(sorted((await client.get("/openapi.json")).json()["paths"]))
+    print((await client.post("/admin/reload")).status_code)
+  `}
+  hints={[
+    "El prefijo del router de modelos es \"/models\".",
+    "Las dependencias de un router son una lista: dependencies=[Depends(require_api_key)].",
+    "app.include_router(models_router) y app.include_router(admin_router).",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _spec = (await _c.get("/openapi.json")).json()
+    assert sorted(_spec["paths"]) == ["/admin/reload", "/models", "/models/{model_id}"], "Rutas esperadas: /admin/reload, /models y /models/{model_id}"
+    assert _spec["paths"]["/models"]["get"]["tags"] == ["models"], "Los endpoints de modelos llevan la etiqueta models"
+    assert (await _c.get("/models/3")).json() == {"id": 3}, "GET /models/3 es público"
+    assert (await _c.post("/admin/reload")).status_code == 401, "Sin API key, /admin/reload da 401"
+    assert (await _c.post("/admin/reload", headers={"X-API-Key": "k-123"})).json() == {"reloaded": True}, "Con la API key, /admin/reload funciona"
+  `}
+>
+Completa los dos routers y inclúyelos. La protección del router de administración se declara **una vez**, en el router: un endpoint nuevo bajo `/admin` queda protegido sin acordarse de nada.
+</CodeExercise>
+
+## Configuración desde el entorno
+
+La URL de la base de datos, la clave para firmar tokens o la ruta del modelo **cambian entre tu portátil, los tests y producción**, y algunas son secretas. No van en el código: van en **variables de entorno**, y la app las lee en un objeto `Settings`.
+
+En un proyecto real se usa `pydantic-settings`, que hace todo esto solo (lee las variables, valida los tipos, admite un fichero `.env`):
+
+```python
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    database_url: str = "sqlite:///wine.db"   # lee DATABASE_URL si existe
+    secret_key: str                            # obligatoria: sin ella, la app no arranca
+    model_path: str = "models/wine-v1.joblib"
+```
+
+Aquí no tenemos `pydantic-settings`, pero la idea se puede hacer con Pydantic y `os.environ`. Lo importante es el patrón: **una función cacheada** que construye la configuración una vez, usada como dependencia (y por tanto sustituible en los tests).
+
+<CodeExercise
+  id="settings"
+  title="Settings como dependencia"
+  starter={`
+    import os
+    from functools import lru_cache
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI
+    from pydantic import BaseModel
+
+    class Settings(BaseModel):
+        environment: str = "dev"
+        model_path: str
+        max_batch_size: int = 100
+
+    ___
+    def get_settings() -> Settings:
+        # Lee del entorno: MODEL_PATH es obligatoria, el resto tiene valor por defecto
+        values = {"model_path": os.environ.get("MODEL_PATH")}
+        if "MAX_BATCH_SIZE" in os.environ:
+            values["max_batch_size"] = os.environ["MAX_BATCH_SIZE"]
+        if "ENVIRONMENT" in os.environ:
+            values["environment"] = os.environ["ENVIRONMENT"]
+        return Settings(**values)
+
+    app = FastAPI()
+
+    @app.get("/info")
+    def info(settings: ___):
+        return {"environment": settings.environment, "max_batch_size": settings.max_batch_size}
+
+    os.environ["MODEL_PATH"] = "models/wine-v1.joblib"
+    os.environ["MAX_BATCH_SIZE"] = "50"
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/info")).json())
+  `}
+  solution={`
+    import os
+    from functools import lru_cache
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI
+    from pydantic import BaseModel
+
+    class Settings(BaseModel):
+        environment: str = "dev"
+        model_path: str
+        max_batch_size: int = 100
+
+    @lru_cache
+    def get_settings() -> Settings:
+        # Lee del entorno: MODEL_PATH es obligatoria, el resto tiene valor por defecto
+        values = {"model_path": os.environ.get("MODEL_PATH")}
+        if "MAX_BATCH_SIZE" in os.environ:
+            values["max_batch_size"] = os.environ["MAX_BATCH_SIZE"]
+        if "ENVIRONMENT" in os.environ:
+            values["environment"] = os.environ["ENVIRONMENT"]
+        return Settings(**values)
+
+    app = FastAPI()
+
+    @app.get("/info")
+    def info(settings: Annotated[Settings, Depends(get_settings)]):
+        return {"environment": settings.environment, "max_batch_size": settings.max_batch_size}
+
+    os.environ["MODEL_PATH"] = "models/wine-v1.joblib"
+    os.environ["MAX_BATCH_SIZE"] = "50"
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/info")).json())
+  `}
+  hints={[
+    "Para no releer el entorno en cada petición, la función se cachea: @lru_cache encima.",
+    "El parámetro del endpoint es una dependencia: Annotated[Settings, Depends(get_settings)].",
+    "Pydantic convierte el texto \"50\" de la variable de entorno en el int 50.",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    get_settings.cache_clear()
+    os.environ["MODEL_PATH"] = "m.joblib"; os.environ["MAX_BATCH_SIZE"] = "25"; os.environ.pop("ENVIRONMENT", None)
+    assert (await _c.get("/info")).json() == {"environment": "dev", "max_batch_size": 25}, "Debe leer MAX_BATCH_SIZE=25 del entorno (como int) y environment por defecto dev"
+    os.environ["MAX_BATCH_SIZE"] = "999"
+    assert (await _c.get("/info")).json()["max_batch_size"] == 25, "get_settings debe estar cacheada (@lru_cache): no relee el entorno en cada petición"
+    assert hasattr(get_settings, "cache_clear"), "Falta @lru_cache en get_settings"
+    app.dependency_overrides[get_settings] = lambda: Settings(environment="test", model_path="fake")
+    assert (await _c.get("/info")).json() == {"environment": "test", "max_batch_size": 100}, "Como es una dependencia, los tests pueden sustituirla"
+    app.dependency_overrides.clear()
+  `}
+>
+Cachea `get_settings` y úsala como dependencia en `/info`. La comprobación también la sustituye, como harías en un test.
+</CodeExercise>
+
+## Lifespan: lo que se hace una vez
+
+Cargar un modelo puede tardar segundos y ocupar cientos de MB: no se hace en cada petición. Se hace **una vez al arrancar**, en el `lifespan`, una función que se ejecuta hasta el `yield` al arrancar y después del `yield` al apagar:
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    app.state.model = load_model(settings.model_path)   # al arrancar
+    yield
+    app.state.model = None                              # al apagar (cerrar conexiones…)
+
+app = FastAPI(lifespan=lifespan)
+
+@app.post("/predictions")
+def predict(sample: WineSample, request: Request):
+    return {"quality": request.app.state.model.predict(sample)}
+```
+
+<Callout kind="note" title="El lifespan en los tests">
+`ASGITransport` no ejecuta el lifespan por sí solo. Aquí lo arrancamos a mano con `async with app.router.lifespan_context(app):`. En tu máquina, `TestClient` lo ejecuta si lo usas como gestor de contexto: `with TestClient(app) as client:`. Sin el `with`, el modelo no se carga y el test falla de forma confusa.
+</Callout>
+
+<CodeExercise
+  id="lifespan"
+  title="Cargar el modelo al arrancar"
+  starter={`
+    from contextlib import asynccontextmanager
+
+    import httpx
+    from fastapi import FastAPI, Request
+
+    LOG = []
+
+    class WineModel:
+        def __init__(self, version: str):
+            LOG.append(f"cargado {version}")
+            self.version = version
+
+        def predict(self, alcohol: float) -> int:
+            return 7 if alcohol > 12 else 5
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        ___                       # cargar WineModel("v1") en app.state.model
+        yield
+        LOG.append("apagado")
+
+    app = FastAPI(lifespan=___)
+
+    @app.get("/predict")
+    def predict(alcohol: float, request: Request):
+        model = ___
+        return {"quality": model.predict(alcohol), "model_version": model.version}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    async with app.router.lifespan_context(app):
+        for alcohol in [10, 13, 11]:
+            print((await client.get("/predict", params={"alcohol": alcohol})).json())
+    print(LOG)
+  `}
+  solution={`
+    from contextlib import asynccontextmanager
+
+    import httpx
+    from fastapi import FastAPI, Request
+
+    LOG = []
+
+    class WineModel:
+        def __init__(self, version: str):
+            LOG.append(f"cargado {version}")
+            self.version = version
+
+        def predict(self, alcohol: float) -> int:
+            return 7 if alcohol > 12 else 5
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.model = WineModel("v1")
+        yield
+        LOG.append("apagado")
+
+    app = FastAPI(lifespan=lifespan)
+
+    @app.get("/predict")
+    def predict(alcohol: float, request: Request):
+        model = request.app.state.model
+        return {"quality": model.predict(alcohol), "model_version": model.version}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    async with app.router.lifespan_context(app):
+        for alcohol in [10, 13, 11]:
+            print((await client.get("/predict", params={"alcohol": alcohol})).json())
+    print(LOG)
+  `}
+  hints={[
+    "Lo que va antes del yield se ejecuta al arrancar: app.state.model = WineModel(\"v1\").",
+    "La app recibe la función: FastAPI(lifespan=lifespan).",
+    "Desde el endpoint, la app está en request.app: request.app.state.model.",
+  ]}
+  check={`
+    LOG.clear()
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    async with app.router.lifespan_context(app):
+        _a = (await _c.get("/predict", params={"alcohol": 13})).json()
+        _b = (await _c.get("/predict", params={"alcohol": 9})).json()
+    assert _a == {"quality": 7, "model_version": "v1"} and _b["quality"] == 5, "Las predicciones deben usar el modelo cargado"
+    assert LOG == ["cargado v1", "apagado"], "El modelo se carga UNA vez al arrancar (no en cada petición) y al final se ejecuta el apagado"
+  `}
+>
+Carga el modelo en el `lifespan` y úsalo desde el endpoint. Fíjate en el `LOG` final: tres peticiones, **una** carga.
+</CodeExercise>
+
+<Callout kind="real" title="Cómo se hace en el trabajo">
+- `@app.on_event("startup")` y `"shutdown"` están obsoletos: verás código antiguo con ellos, pero lo nuevo usa `lifespan`.
+- Los secretos nunca en el repositorio: variables de entorno inyectadas por la plataforma (Kubernetes *secrets*, AWS Secrets Manager, las variables de tu PaaS). El `.env` es solo para desarrollo y va en `.gitignore`.
+- La configuración se valida **al arrancar**: si falta `SECRET_KEY`, mejor que la app no arranque a que falle a las tres de la mañana en la primera petición que la usa.
+- Un `app.state.model` funciona, pero muchos equipos prefieren una dependencia `get_model` que lo lea de ahí: el endpoint queda más claro y el test puede sustituirlo con `dependency_overrides`.
+</Callout>
+
+## Para llevar
+
+- Estructura por responsabilidades: routers, esquemas, modelos de BD, dependencias, configuración.
+- `APIRouter(prefix=..., tags=..., dependencies=[...])` agrupa endpoints; `app.include_router` los añade.
+- Configuración desde variables de entorno, en un `Settings` validado y cacheado, usado como dependencia.
+- `lifespan` prepara lo caro una vez al arrancar (el modelo) y lo libera al apagar.
+- En tests, el lifespan hay que arrancarlo: `with TestClient(app)` o `lifespan_context`.

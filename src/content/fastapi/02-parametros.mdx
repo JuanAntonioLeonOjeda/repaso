@@ -1,0 +1,227 @@
+Una API casi nunca devuelve siempre lo mismo: quiere *el modelo 3*, *las 20 primeras predicciones*, *solo los modelos en producción*. Esa información viaja en la petición de tres formas: en la **ruta**, en la **query** (`?limit=20`) y en las **cabeceras**. En FastAPI basta con declararlas como parámetros de la función, con su tipo, y FastAPI las lee, las convierte y las valida.
+
+## Parámetros de ruta
+
+```python
+@app.get("/models/{model_id}")
+def get_model(model_id: int):
+    return {"id": model_id}
+```
+
+`{model_id}` en la ruta y `model_id: int` en la función son el mismo parámetro. El tipo no es decorativo: en la URL todo es texto (`"3"`), y FastAPI lo convierte a `int`. Si no puede (`/models/abc`), responde **422** sin ejecutar tu función.
+
+<Predict
+  id="tipo-ruta"
+  answer={["422"]}
+  explanation="'abc' no se puede convertir a int, así que FastAPI responde 422 (Unprocessable Content) con el detalle del error de validación. Tu función ni se ejecuta. Ojo: no es 404, porque la ruta /models/{model_id} sí coincide."
+  hints={["La ruta coincide; lo que falla es convertir el valor.", "Es el código de los errores de validación."]}
+>
+Con ese endpoint, ¿qué código de estado devuelve `GET /models/abc`?
+</Predict>
+
+## Parámetros de query
+
+Cualquier parámetro de la función que **no** esté en la ruta se lee de la query string. Con valor por defecto es opcional; sin él, obligatorio.
+
+```python
+@app.get("/models")
+def list_models(stage: str | None = None, limit: int = 10):
+    ...
+# GET /models?stage=prod&limit=5   → stage="prod", limit=5
+# GET /models                      → stage=None,   limit=10
+```
+
+Para añadir restricciones se usa `Annotated` con `Query` (o `Path`, `Header`…). El tipo sigue siendo el primero; lo demás son metadatos que FastAPI usa para validar y documentar:
+
+```python
+from typing import Annotated, Literal
+from fastapi import Query
+
+def list_models(
+    stage: Literal["dev", "prod"] | None = None,          # solo esos valores
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,        # 1 ≤ limit ≤ 50
+    offset: Annotated[int, Query(ge=0)] = 0,
+): ...
+```
+
+<CodeExercise
+  id="listar-modelos"
+  title="Listar modelos con filtro y paginación"
+  starter={`
+    from typing import Annotated, Literal
+
+    import httpx
+    from fastapi import FastAPI, Query
+
+    MODELS = [
+        {"id": 1, "name": "ridge", "stage": "prod"},
+        {"id": 2, "name": "random-forest", "stage": "dev"},
+        {"id": 3, "name": "gbm", "stage": "dev"},
+        {"id": 4, "name": "ridge-v2", "stage": "prod"},
+    ]
+
+    app = FastAPI()
+
+    @app.get("/models")
+    def list_models(
+        stage: ___ = None,
+        limit: Annotated[int, ___] = 10,
+        offset: Annotated[int, ___] = 0,
+    ):
+        found = [m for m in MODELS if stage is None or m["stage"] == stage]
+        return ___
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/models", params={"stage": "dev"})).json())
+    print((await client.get("/models", params={"limit": 2, "offset": 1})).json())
+  `}
+  solution={`
+    from typing import Annotated, Literal
+
+    import httpx
+    from fastapi import FastAPI, Query
+
+    MODELS = [
+        {"id": 1, "name": "ridge", "stage": "prod"},
+        {"id": 2, "name": "random-forest", "stage": "dev"},
+        {"id": 3, "name": "gbm", "stage": "dev"},
+        {"id": 4, "name": "ridge-v2", "stage": "prod"},
+    ]
+
+    app = FastAPI()
+
+    @app.get("/models")
+    def list_models(
+        stage: Literal["dev", "prod"] | None = None,
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        found = [m for m in MODELS if stage is None or m["stage"] == stage]
+        return found[offset : offset + limit]
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/models", params={"stage": "dev"})).json())
+    print((await client.get("/models", params={"limit": 2, "offset": 1})).json())
+  `}
+  hints={[
+    "stage solo puede ser 'dev' o 'prod', o no venir: Literal[...] | None.",
+    "Las restricciones numéricas van en Query(ge=..., le=...).",
+    "La página es un slicing: found[offset : offset + limit].",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _ids = lambda r: [m["id"] for m in r.json()]
+    assert _ids(await _c.get("/models")) == [1, 2, 3, 4], "Sin parámetros devuelve todos (limit=10, offset=0)"
+    assert _ids(await _c.get("/models", params={"stage": "dev"})) == [2, 3], "stage=dev filtra los modelos 2 y 3"
+    assert _ids(await _c.get("/models", params={"limit": 2, "offset": 1})) == [2, 3], "limit=2&offset=1 devuelve los ids 2 y 3"
+    assert (await _c.get("/models", params={"stage": "test"})).status_code == 422, "stage=test no es válido: 422"
+    assert (await _c.get("/models", params={"limit": 0})).status_code == 422, "limit=0 está fuera de rango (ge=1): 422"
+    assert (await _c.get("/models", params={"limit": 51})).status_code == 422, "limit=51 está fuera de rango (le=50): 422"
+    assert (await _c.get("/models", params={"offset": -1})).status_code == 422, "offset=-1 no es válido (ge=0): 422"
+  `}
+>
+Completa `GET /models`: filtro opcional por `stage` (solo `dev` o `prod`), `limit` entre 1 y 50 (10 por defecto) y `offset` mayor o igual que 0.
+</CodeExercise>
+
+<Callout kind="warn" title="Pon siempre un límite">
+Un listado sin `limit` máximo es una invitación a que alguien pida un millón de filas y tumbe la base de datos. Por eso `le=50`: el cliente puede pedir menos, pero nunca todo de golpe.
+</Callout>
+
+## El orden de las rutas importa
+
+FastAPI prueba las rutas **en el orden en que las declaras** y se queda con la primera que encaja.
+
+```python
+@app.get("/models/{model_id}")
+def get_model(model_id: int): ...
+
+@app.get("/models/latest")
+def latest_model(): ...
+```
+
+<Quiz
+  id="orden-rutas"
+  options={[
+    "200, con el último modelo",
+    "404, porque latest no es un id",
+    "422, porque /models/{model_id} encaja primero y 'latest' no es un int",
+    "FastAPI da error al arrancar por rutas ambiguas",
+  ]}
+  answer={2}
+  explanation="/models/latest encaja con el patrón /models/{model_id}, que está declarado antes; FastAPI intenta convertir 'latest' a int y responde 422. latest_model nunca se alcanza. La solución: declarar las rutas fijas (/models/latest) antes que las que tienen parámetros."
+  hints={["¿Qué ruta encaja primero con /models/latest?"]}
+>
+Con esas dos rutas, en ese orden, ¿qué responde `GET /models/latest`?
+</Quiz>
+
+## Cabeceras
+
+Las cabeceras se declaran con `Header()`. FastAPI convierte el nombre: el parámetro `x_request_id` lee la cabecera `X-Request-ID` (guiones por guiones bajos, sin distinguir mayúsculas).
+
+<CodeExercise
+  id="cabeceras"
+  title="Leer cabeceras"
+  starter={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import FastAPI, Header
+
+    app = FastAPI()
+
+    @app.get("/whoami")
+    def whoami(
+        user_agent: Annotated[str | None, ___] = None,
+        x_request_id: ___ = None,
+    ):
+        return {"user_agent": user_agent, "request_id": x_request_id}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/whoami", headers={"X-Request-ID": "abc-123"})).json())
+  `}
+  solution={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import FastAPI, Header
+
+    app = FastAPI()
+
+    @app.get("/whoami")
+    def whoami(
+        user_agent: Annotated[str | None, Header()] = None,
+        x_request_id: Annotated[str | None, Header()] = None,
+    ):
+        return {"user_agent": user_agent, "request_id": x_request_id}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.get("/whoami", headers={"X-Request-ID": "abc-123"})).json())
+  `}
+  hints={[
+    "Sin Header(), FastAPI buscaría user_agent en la query string.",
+    "Los dos parámetros son Annotated[str | None, Header()] = None.",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _r = (await _c.get("/whoami", headers={"X-Request-ID": "r-1", "User-Agent": "mi-cliente/1.0"})).json()
+    assert _r == {"user_agent": "mi-cliente/1.0", "request_id": "r-1"}, "Debe leer User-Agent y X-Request-ID de las cabeceras"
+    _r = (await _c.get("/whoami", params={"x_request_id": "q"})).json()
+    assert _r["request_id"] is None, "x_request_id debe leerse de la cabecera, no de la query"
+  `}
+>
+Haz que `/whoami` lea las cabeceras `User-Agent` y `X-Request-ID` (ambas opcionales).
+</CodeExercise>
+
+<Callout kind="real" title="Cómo se hace en el trabajo">
+- **Ruta** para identificar un recurso (`/models/3`), **query** para filtrar, ordenar y paginar (`?stage=prod&limit=20`), **cabeceras** para lo transversal: autenticación, idioma, el id de traza de la petición.
+- `Annotated[...]` es la forma recomendada desde FastAPI 0.95: la firma sigue siendo Python normal y puedes reutilizar el tipo (`Limit = Annotated[int, Query(ge=1, le=50)]`) en varios endpoints.
+- Pon siempre las rutas fijas antes que las paramétricas, y nombra los ids con su tipo (`model_id: int`, o `UUID` si usas UUID): el 422 de `/models/latest` es un bug clásico.
+</Callout>
+
+## Para llevar
+
+- Los parámetros de la función son la entrada: si están en la ruta, de la ruta; si no, de la query; con `Header()`, de las cabeceras.
+- El tipo convierte y valida; si falla, 422 sin ejecutar tu código.
+- `Annotated[tipo, Query(ge=..., le=...)]` añade restricciones, y `Literal[...]` limita los valores posibles.
+- Rutas fijas antes que las que tienen parámetros.
+- Todo listado lleva paginación con un máximo.

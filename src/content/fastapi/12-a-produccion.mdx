@@ -1,0 +1,331 @@
+La API funciona en tu portátil con `fastapi dev`. En producción hay que pensar en otras cosas: cuántos procesos, cómo se empaqueta, quién puede llamarla desde un navegador, cómo se sigue una petición en los logs, cómo cambiar la API sin romper a sus clientes. Esta última lección es la lista de lo que separa una demo de un servicio.
+
+## Servidor y procesos
+
+FastAPI es la aplicación; quien escucha en el puerto es un **servidor ASGI**, normalmente **Uvicorn**.
+
+```bash
+fastapi run app/main.py --port 8000 --workers 4
+# equivalente:
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+Cada *worker* es un **proceso** con su propio Python, su event loop y su copia del modelo en memoria. Es la forma de usar varios núcleos (el GIL impide hacerlo con hilos, lección 10). Una regla de partida es un worker por núcleo; si el modelo es grande, la memoria pone el límite antes.
+
+<Quiz
+  id="workers"
+  options={[
+    "Subir el pool de hilos a 200",
+    "Pasar todos los endpoints a async def",
+    "Más procesos: --workers 4 en esa máquina, o más réplicas del contenedor",
+    "Usar BackgroundTasks para las predicciones",
+  ]}
+  answer={2}
+  explanation="El cuello de botella es CPU de Python: los hilos se turnan por el GIL y async no reparte cálculo, solo esperas. Con 4 núcleos ociosos, 4 procesos (o 4 réplicas detrás de un balanceador) multiplican la capacidad. Cada uno carga su copia del modelo, así que vigila la memoria."
+  hints={["La CPU está al 100 % en un núcleo y los otros tres ociosos: ¿qué reparte trabajo entre núcleos en Python?"]}
+>
+En una máquina de 4 núcleos, la API de predicción va lenta con mucho tráfico; el perfil muestra un núcleo al 100 % calculando `predict` y los otros tres ociosos. ¿Qué haces?
+</Quiz>
+
+En Kubernetes o similares, lo habitual es **un proceso por contenedor** y escalar con réplicas: el orquestador reparte el tráfico y reinicia lo que falla.
+
+## Empaquetar con Docker
+
+```dockerfile
+FROM python:3.13-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt   # incluye "fastapi[standard]", que trae el comando fastapi
+COPY app ./app
+COPY models ./models
+RUN useradd --create-home api
+USER api                                              # nunca como root
+EXPOSE 8000
+CMD ["fastapi", "run", "app/main.py", "--port", "8000"]    # un proceso: se escala con réplicas
+```
+
+Y dos endpoints para el orquestador: **liveness** (`/health`: el proceso responde) y **readiness** (`/ready`: el modelo está cargado y la base de datos responde). Si la readiness falla, el balanceador deja de mandarle tráfico sin matar el contenedor.
+
+## CORS: quién puede llamarte desde un navegador
+
+Si el frontend vive en `https://app.example.com` y la API en `https://api.example.com`, el navegador **no deja** que el JavaScript de la web lea las respuestas de la API, salvo que la API diga explícitamente que ese origen está permitido. Eso es CORS, y en FastAPI es un middleware:
+
+<CodeExercise
+  id="cors"
+  title="Permitir solo tu frontend"
+  starter={`
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=___,                      # solo el frontend de desarrollo: http://localhost:5173
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+    @app.get("/models")
+    def list_models():
+        return [{"id": 1}]
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    # El navegador pregunta antes (preflight) con OPTIONS
+    r = await client.options("/models", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "GET"})
+    print(r.status_code, r.headers.get("access-control-allow-origin"))
+    r = await client.get("/models", headers={"Origin": "https://evil.example"})
+    print(r.status_code, r.headers.get("access-control-allow-origin"), r.json())
+  `}
+  solution={`
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173"],                      # solo el frontend de desarrollo: http://localhost:5173
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+    @app.get("/models")
+    def list_models():
+        return [{"id": 1}]
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    # El navegador pregunta antes (preflight) con OPTIONS
+    r = await client.options("/models", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "GET"})
+    print(r.status_code, r.headers.get("access-control-allow-origin"))
+    r = await client.get("/models", headers={"Origin": "https://evil.example"})
+    print(r.status_code, r.headers.get("access-control-allow-origin"), r.json())
+  `}
+  hints={[
+    "allow_origins es una lista de orígenes (esquema + host + puerto, sin barra final).",
+    "allow_origins=[\"http://localhost:5173\"]",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _pre = {"Access-Control-Request-Method": "GET"}
+    _ok = await _c.options("/models", headers={"Origin": "http://localhost:5173", **_pre})
+    assert _ok.status_code == 200 and _ok.headers.get("access-control-allow-origin") == "http://localhost:5173", "El preflight del frontend debe permitirse"
+    _no = await _c.options("/models", headers={"Origin": "https://evil.example", **_pre})
+    assert _no.status_code == 400, "El preflight de otro origen debe rechazarse (400)"
+    _no = await _c.options("/models", headers={"Origin": "http://localhost:3000", **_pre})
+    assert _no.status_code == 400, "Otro puerto es otro origen: http://localhost:3000 tampoco está permitido"
+  `}
+>
+Permite solo `http://localhost:5173`. Y mira la última línea de la salida: la petición de `evil.example` **recibe un 200 con los datos**, solo que sin la cabecera `access-control-allow-origin`.
+</CodeExercise>
+
+<Quiz
+  id="cors-no-protege"
+  options={[
+    "Sí: CORS impide que nadie más llame a la API",
+    "No: CORS solo le dice al navegador si el JavaScript de otra web puede leer la respuesta; curl, Postman o un servidor la llaman igual",
+    "Sí, si además se usa HTTPS",
+    "No, porque falta allow_credentials",
+  ]}
+  answer={1}
+  explanation="El servidor responde igual a todo el mundo; es el navegador quien decide si entrega la respuesta al JavaScript de la página según las cabeceras CORS. Fuera de un navegador CORS no existe. Ni siquiera dentro del navegador impide que la petición llegue (con las cookies del usuario): eso es lo que explota el CSRF. Lo que protege la API es la autenticación (lección 8)."
+  hints={["Fíjate en la última línea de la salida del ejercicio: el servidor sí devolvió los datos."]}
+>
+Con CORS configurado así, ¿está la API protegida frente a quien no sea tu frontend?
+</Quiz>
+
+## Seguir una petición en los logs
+
+Con varios procesos y réplicas, los logs de una petición se mezclan con los de cientos. La solución estándar es un **id de petición**: se toma de la cabecera `X-Request-ID` si viene (el balanceador o el frontend la ponen) o se genera, se escribe en cada línea de log y se devuelve en la respuesta. Cuando un usuario reporta un error, te da ese id y encuentras todo.
+
+<CodeExercise
+  id="request-id"
+  title="Un middleware de id de petición y tiempo"
+  starter={`
+    import time
+    import uuid
+
+    import httpx
+    from fastapi import FastAPI, Request
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def request_context(request: Request, call_next):
+        request_id = ___                  # la cabecera X-Request-ID, o un uuid4 nuevo
+        request.state.request_id = request_id
+        start = time.perf_counter()
+        response = ___
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Process-Time-Ms"] = f"{elapsed_ms:.1f}"
+        return response
+
+    @app.get("/predict")
+    def predict(request: Request):
+        # Lo que escribirías en el log, con el id
+        print(f"[{request.state.request_id}] prediciendo")
+        return {"quality": 6}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.get("/predict", headers={"X-Request-ID": "front-42"})
+    print(r.headers["x-request-id"], r.headers["x-process-time-ms"])
+    r = await client.get("/predict")
+    print(r.headers["x-request-id"])
+  `}
+  solution={`
+    import time
+    import uuid
+
+    import httpx
+    from fastapi import FastAPI, Request
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def request_context(request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = request_id
+        start = time.perf_counter()
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Process-Time-Ms"] = f"{elapsed_ms:.1f}"
+        return response
+
+    @app.get("/predict")
+    def predict(request: Request):
+        # Lo que escribirías en el log, con el id
+        print(f"[{request.state.request_id}] prediciendo")
+        return {"quality": 6}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.get("/predict", headers={"X-Request-ID": "front-42"})
+    print(r.headers["x-request-id"], r.headers["x-process-time-ms"])
+    r = await client.get("/predict")
+    print(r.headers["x-request-id"])
+  `}
+  hints={[
+    "request.headers.get(\"X-Request-ID\") devuelve None si no viene; con 'or' eliges la alternativa.",
+    "request_id = request.headers.get(\"X-Request-ID\") or str(uuid.uuid4())",
+    "La respuesta la produce el resto de la app: response = await call_next(request).",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _r = await _c.get("/predict", headers={"X-Request-ID": "abc"})
+    assert _r.json() == {"quality": 6}, "El endpoint sigue respondiendo igual"
+    assert _r.headers.get("x-request-id") == "abc", "Si llega X-Request-ID, se reutiliza"
+    assert float(_r.headers.get("x-process-time-ms", "nan")) >= 0, "Falta X-Process-Time-Ms con los milisegundos"
+    _a = (await _c.get("/predict")).headers.get("x-request-id")
+    _b = (await _c.get("/predict")).headers.get("x-request-id")
+    assert _a and _b and _a != _b, "Sin cabecera, cada petición recibe un id nuevo"
+    uuid.UUID(_a)
+  `}
+>
+Completa el middleware: reutiliza el id si llega, genera uno si no, y añade a la respuesta el id y el tiempo de proceso.
+</CodeExercise>
+
+## Cambiar la API sin romper a nadie
+
+Una vez publicada, otros dependen de la forma de tus respuestas. Añadir un campo opcional es seguro; **renombrar o quitar** un campo, cambiar su tipo o hacer obligatorio un parámetro rompe a los clientes. Para eso, **versiones**: los cambios incompatibles van a `/v2` mientras `/v1` sigue funcionando un tiempo.
+
+<CodeExercise
+  id="versiones"
+  title="/v1 y /v2 a la vez"
+  starter={`
+    import httpx
+    from fastapi import APIRouter, FastAPI
+
+    def score(alcohol: float) -> float:
+        return round(3 + (alcohol - 8) * 0.5, 2)
+
+    v1 = APIRouter()
+    v2 = APIRouter()
+
+    @v1.get("/predict")
+    def predict_v1(alcohol: float):
+        return {"quality": round(score(alcohol))}
+
+    @v2.get("/predict")
+    def predict_v2(alcohol: float):
+        # Cambio incompatible: quality pasa a ser un objeto con la puntuación sin redondear
+        return {"quality": {"value": round(score(alcohol)), "score": score(alcohol)}, "model_version": "ridge-v2"}
+
+    app = FastAPI()
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    ___
+    ___
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print(sorted((await client.get("/openapi.json")).json()["paths"]))
+    print((await client.get("/v1/predict", params={"alcohol": 12})).json())
+    print((await client.get("/v2/predict", params={"alcohol": 12})).json())
+  `}
+  solution={`
+    import httpx
+    from fastapi import APIRouter, FastAPI
+
+    def score(alcohol: float) -> float:
+        return round(3 + (alcohol - 8) * 0.5, 2)
+
+    v1 = APIRouter()
+    v2 = APIRouter()
+
+    @v1.get("/predict")
+    def predict_v1(alcohol: float):
+        return {"quality": round(score(alcohol))}
+
+    @v2.get("/predict")
+    def predict_v2(alcohol: float):
+        # Cambio incompatible: quality pasa a ser un objeto con la puntuación sin redondear
+        return {"quality": {"value": round(score(alcohol)), "score": score(alcohol)}, "model_version": "ridge-v2"}
+
+    app = FastAPI()
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    app.include_router(v1, prefix="/v1", tags=["v1"])
+    app.include_router(v2, prefix="/v2", tags=["v2"])
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print(sorted((await client.get("/openapi.json")).json()["paths"]))
+    print((await client.get("/v1/predict", params={"alcohol": 12})).json())
+    print((await client.get("/v2/predict", params={"alcohol": 12})).json())
+  `}
+  hints={[
+    "include_router también admite el prefijo al incluirlo: app.include_router(router, prefix=...).",
+    "app.include_router(v1, prefix=\"/v1\", tags=[\"v1\"]) y lo mismo con v2.",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    assert sorted((await _c.get("/openapi.json")).json()["paths"]) == ["/health", "/v1/predict", "/v2/predict"], "Rutas esperadas: /health (sin versión), /v1/predict y /v2/predict"
+    assert (await _c.get("/v1/predict", params={"alcohol": 12})).json() == {"quality": 5}, "/v1 mantiene su respuesta de siempre"
+    assert (await _c.get("/v2/predict", params={"alcohol": 12})).json()["quality"] == {"value": 5, "score": 5.0}, "/v2 devuelve el formato nuevo"
+  `}
+>
+Publica los dos routers con su prefijo de versión. `/health` queda fuera: es para la infraestructura, no para los clientes.
+</CodeExercise>
+
+<Callout kind="real" title="La lista antes de publicar">
+- **HTTPS** siempre, terminado normalmente en el balanceador o un proxy (nginx, Traefik). Detrás de un proxy, Uvicorn solo se fía de sus cabeceras `X-Forwarded-*` si la IP del proxy está en `--forwarded-allow-ips` (por defecto, solo `127.0.0.1`); si no, verás la IP del proxy en vez de la del cliente y `http` en vez de `https`.
+- El middleware del ejercicio (`@app.middleware("http")`) es cómodo pero tiene pegas conocidas (más coste por petición, y las variables de contexto no llegan al endpoint): en producción se usa un middleware ASGI puro o una librería como `asgi-correlation-id`. Y el id que manda el cliente se valida (longitud y caracteres) antes de escribirlo en los logs.
+- **Logs estructurados** (JSON) con el id de petición; **métricas** (latencia, tasa de 5xx, por endpoint) con Prometheus u OpenTelemetry; **trazas** si hay varios servicios.
+- **Límites**: tamaño máximo del cuerpo, `max_length` en listas y textos, *rate limiting* por cliente (normalmente en el API gateway o el proxy; dentro de la app, con `slowapi`), timeouts en todo lo que llames.
+- `/docs` desactivado o protegido en producción si la API no es pública (`FastAPI(docs_url=None, redoc_url=None)`).
+- Secretos desde el entorno, dependencias fijadas (`uv.lock`, `requirements.txt` con versiones), imagen sin root y escaneada.
+- Los tests y un *linter* (`ruff`) en CI, y despliegue automático tras pasar.
+</Callout>
+
+## Para llevar
+
+- Uvicorn sirve la app; varios workers (procesos) o réplicas para usar varios núcleos.
+- Docker con dependencias en una capa propia, usuario sin privilegios y endpoints de liveness y readiness.
+- CORS decide qué webs pueden leer tus respuestas desde un navegador; no protege la API.
+- Un id por petición en las cabeceras y en los logs.
+- Los cambios incompatibles, a una versión nueva (`/v2`), manteniendo la anterior un tiempo.

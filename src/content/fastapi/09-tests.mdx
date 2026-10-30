@@ -1,0 +1,349 @@
+Una API sin tests se rompe en silencio: cambias el esquema de un endpoint y otro deja de validar, refactorizas la autenticación y un endpoint queda abierto. FastAPI pone los tests fáciles (cliente en memoria, dependencias sustituibles), así que no hay excusa. Esta lección es cómo se escriben **en tu máquina con pytest** y, sobre todo, cómo saber si **tus tests sirven para algo**.
+
+## En tu máquina: pytest y TestClient
+
+```python
+# tests/conftest.py
+import pytest
+from fastapi.testclient import TestClient
+from app.main import app
+
+@pytest.fixture
+def client():
+    with TestClient(app) as c:      # el with ejecuta el lifespan
+        yield c
+    app.dependency_overrides.clear()
+
+# tests/test_models.py
+def test_get_missing_model_returns_404(client):
+    r = client.get("/models/999")
+    assert r.status_code == 404
+    assert r.json() == {"detail": "Modelo 999 no encontrado"}
+
+@pytest.mark.parametrize("limit", [0, 51, -1])
+def test_limit_out_of_range_is_rejected(client, limit):
+    assert client.get("/models", params={"limit": limit}).status_code == 422
+```
+
+```bash
+pytest -q                 # descubre tests/test_*.py y ejecuta cada función test_*
+pytest -k 404 -x          # solo los que contienen "404", parando en el primer fallo
+```
+
+pytest **descubre** las funciones que empiezan por `test_`, les pasa las *fixtures* que piden por nombre (`client`) y da por bueno el test si ningún `assert` falla. Aquí haremos lo mismo con un pequeño ejecutor y `httpx.AsyncClient` (con `await`), porque en el navegador no hay `TestClient`.
+
+## ¿Tus tests detectan algo?
+
+Un test que siempre pasa no sirve. La forma honesta de medirlo es **meter bugs a propósito** y ver si algún test falla: se llama *mutation testing* (en Python, `mutmut` lo automatiza). La app del ejercicio tiene un interruptor `bugs` para eso.
+
+<CodeExercise
+  id="primer-test"
+  title="Tests que pillan bugs"
+  starter={`
+    import httpx
+    from fastapi import FastAPI, HTTPException, status
+    from pydantic import BaseModel
+
+    class ModelCreate(BaseModel):
+        name: str
+
+    def create_app(bugs=()):
+        """La API de modelos. bugs activa fallos a propósito para evaluar los tests."""
+        app = FastAPI()
+        models = {1: {"id": 1, "name": "ridge"}}
+
+        @app.get("/models/{model_id}")
+        def get_model(model_id: int):
+            if model_id not in models and "sin-404" not in bugs:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Modelo {model_id} no encontrado")
+            return models.get(model_id)
+
+        @app.post("/models", status_code=200 if "status-200" in bugs else 201)
+        def create_model(data: ModelCreate):
+            if any(m["name"] == data.name for m in models.values()) and "sin-409" not in bugs:
+                raise HTTPException(status.HTTP_409_CONFLICT, detail="Nombre repetido")
+            new_id = max(models) + 1
+            models[new_id] = {"id": new_id, "name": "sin-nombre" if "pierde-nombre" in bugs else data.name}
+            return models[new_id]
+
+        return app
+
+    # ---- Tus tests: cada uno recibe un cliente nuevo contra una app recién creada ----
+
+    async def test_get_existing_model(client):
+        r = await client.get("/models/1")
+        assert r.status_code == 200
+        assert r.json() == {"id": 1, "name": "ridge"}
+
+    async def test_get_missing_model_returns_404(client):
+        r = await client.get("/models/999")
+        ___
+
+    async def test_create_model(client):
+        r = await client.post("/models", json={"name": "gbm"})
+        ___
+
+    async def test_duplicate_name_returns_409(client):
+        ___
+
+    # ---- Un mini pytest: descubre las funciones test_* y las ejecuta ----
+
+    async def run_tests(bugs=()):
+        results = {}
+        for name, test in list(globals().items()):
+            if name.startswith("test_") and callable(test):
+                app = create_app(bugs)
+                client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+                try:
+                    await test(client)
+                    results[name] = "ok"
+                except AssertionError:
+                    results[name] = "FALLA"
+        return results
+
+    print("Sin bugs:", await run_tests())
+    for bug in ["sin-404", "status-200", "pierde-nombre", "sin-409"]:
+        print(bug, "→", await run_tests([bug]))
+  `}
+  solution={`
+    import httpx
+    from fastapi import FastAPI, HTTPException, status
+    from pydantic import BaseModel
+
+    class ModelCreate(BaseModel):
+        name: str
+
+    def create_app(bugs=()):
+        """La API de modelos. bugs activa fallos a propósito para evaluar los tests."""
+        app = FastAPI()
+        models = {1: {"id": 1, "name": "ridge"}}
+
+        @app.get("/models/{model_id}")
+        def get_model(model_id: int):
+            if model_id not in models and "sin-404" not in bugs:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Modelo {model_id} no encontrado")
+            return models.get(model_id)
+
+        @app.post("/models", status_code=200 if "status-200" in bugs else 201)
+        def create_model(data: ModelCreate):
+            if any(m["name"] == data.name for m in models.values()) and "sin-409" not in bugs:
+                raise HTTPException(status.HTTP_409_CONFLICT, detail="Nombre repetido")
+            new_id = max(models) + 1
+            models[new_id] = {"id": new_id, "name": "sin-nombre" if "pierde-nombre" in bugs else data.name}
+            return models[new_id]
+
+        return app
+
+    # ---- Tus tests: cada uno recibe un cliente nuevo contra una app recién creada ----
+
+    async def test_get_existing_model(client):
+        r = await client.get("/models/1")
+        assert r.status_code == 200
+        assert r.json() == {"id": 1, "name": "ridge"}
+
+    async def test_get_missing_model_returns_404(client):
+        r = await client.get("/models/999")
+        assert r.status_code == 404
+
+    async def test_create_model(client):
+        r = await client.post("/models", json={"name": "gbm"})
+        assert r.status_code == 201
+        assert r.json() == {"id": 2, "name": "gbm"}
+
+    async def test_duplicate_name_returns_409(client):
+        r = await client.post("/models", json={"name": "ridge"})
+        assert r.status_code == 409
+
+    # ---- Un mini pytest: descubre las funciones test_* y las ejecuta ----
+
+    async def run_tests(bugs=()):
+        results = {}
+        for name, test in list(globals().items()):
+            if name.startswith("test_") and callable(test):
+                app = create_app(bugs)
+                client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+                try:
+                    await test(client)
+                    results[name] = "ok"
+                except AssertionError:
+                    results[name] = "FALLA"
+        return results
+
+    print("Sin bugs:", await run_tests())
+    for bug in ["sin-404", "status-200", "pierde-nombre", "sin-409"]:
+        print(bug, "→", await run_tests([bug]))
+  `}
+  hints={[
+    "Un test es una petición y asserts sobre el código y el cuerpo: assert r.status_code == 404.",
+    "En test_create_model comprueba el código (201) y también el cuerpo completo: si solo miras el código, el bug pierde-nombre pasa desapercibido.",
+    "El test del duplicado crea un modelo con un nombre que ya existe (ridge) y espera 409.",
+  ]}
+  check={`
+    _clean = await run_tests()
+    assert len(_clean) >= 4, "Debe haber al menos los cuatro tests"
+    assert all(v == "ok" for v in _clean.values()), f"Sin bugs, todos los tests deben pasar: {_clean}"
+    for _bug in ["sin-404", "status-200", "pierde-nombre", "sin-409"]:
+        _res = await run_tests([_bug])
+        assert "FALLA" in _res.values(), f"Ningún test detecta el bug '{_bug}': añade el assert que lo pillaría"
+  `}
+>
+Completa los tres tests. La salida te dice, para cada bug plantado, qué tests lo detectan. El objetivo: que **cada bug haga fallar al menos un test** sin que fallen sin bugs.
+</CodeExercise>
+
+## Cada test, su propia base de datos
+
+El error más común en los tests de una API: compartir estado. Un test crea un usuario, el siguiente asume que la tabla está vacía, y el resultado depende del orden en que se ejecuten. La solución es que **cada test arranque con una base de datos limpia**, y se consigue sustituyendo la dependencia de la sesión.
+
+<CodeExercise
+  id="bd-de-test"
+  title="Una base de datos limpia por test"
+  starter={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI
+    from pydantic import BaseModel
+    from sqlalchemy import create_engine, func, select
+    from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    # ---- La app (en app/db.py y app/main.py) ----
+    class Base(DeclarativeBase):
+        pass
+
+    class Prediction(Base):
+        __tablename__ = "predictions"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        quality: Mapped[int]
+
+    def get_session():
+        raise RuntimeError("En los tests nunca se usa la base de datos real")
+
+    class PredictionIn(BaseModel):
+        quality: int
+
+    app = FastAPI()
+
+    @app.post("/predictions", status_code=201)
+    def create(data: PredictionIn, session: Annotated[Session, Depends(get_session)]):
+        session.add(Prediction(quality=data.quality))
+        session.commit()
+        return {"total": session.scalar(select(func.count()).select_from(Prediction))}
+
+    # ---- Lo que iría en una fixture de conftest.py ----
+    def make_test_client() -> httpx.AsyncClient:
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        ___                                  # crear las tablas en esta base de datos nueva
+        TestSession = sessionmaker(engine)
+
+        def get_test_session():
+            with TestSession() as session:
+                yield session
+
+        ___                                  # sustituir get_session por get_test_session
+        return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+    client_a = make_test_client()
+    print((await client_a.post("/predictions", json={"quality": 6})).json())
+    print((await client_a.post("/predictions", json={"quality": 7})).json())
+    client_b = make_test_client()           # otro test: debe empezar de cero
+    print((await client_b.post("/predictions", json={"quality": 5})).json())
+  `}
+  solution={`
+    from typing import Annotated
+
+    import httpx
+    from fastapi import Depends, FastAPI
+    from pydantic import BaseModel
+    from sqlalchemy import create_engine, func, select
+    from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    # ---- La app (en app/db.py y app/main.py) ----
+    class Base(DeclarativeBase):
+        pass
+
+    class Prediction(Base):
+        __tablename__ = "predictions"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        quality: Mapped[int]
+
+    def get_session():
+        raise RuntimeError("En los tests nunca se usa la base de datos real")
+
+    class PredictionIn(BaseModel):
+        quality: int
+
+    app = FastAPI()
+
+    @app.post("/predictions", status_code=201)
+    def create(data: PredictionIn, session: Annotated[Session, Depends(get_session)]):
+        session.add(Prediction(quality=data.quality))
+        session.commit()
+        return {"total": session.scalar(select(func.count()).select_from(Prediction))}
+
+    # ---- Lo que iría en una fixture de conftest.py ----
+    def make_test_client() -> httpx.AsyncClient:
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(engine)
+        TestSession = sessionmaker(engine)
+
+        def get_test_session():
+            with TestSession() as session:
+                yield session
+
+        app.dependency_overrides[get_session] = get_test_session
+        return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+    client_a = make_test_client()
+    print((await client_a.post("/predictions", json={"quality": 6})).json())
+    print((await client_a.post("/predictions", json={"quality": 7})).json())
+    client_b = make_test_client()           # otro test: debe empezar de cero
+    print((await client_b.post("/predictions", json={"quality": 5})).json())
+  `}
+  hints={[
+    "Las tablas se crean con Base.metadata.create_all(engine).",
+    "La sustitución es app.dependency_overrides[clave] = sustituta.",
+    "app.dependency_overrides[get_session] = get_test_session (las dos sin paréntesis).",
+  ]}
+  check={`
+    _a = make_test_client()
+    assert (await _a.post("/predictions", json={"quality": 6})).json() == {"total": 1}, "Un cliente nuevo empieza con la tabla vacía: total 1 tras el primer POST"
+    assert (await _a.post("/predictions", json={"quality": 6})).json() == {"total": 2}, "Dentro del mismo test, la base de datos se mantiene: total 2"
+    _b = make_test_client()
+    assert (await _b.post("/predictions", json={"quality": 6})).json() == {"total": 1}, "Otro test con make_test_client() empieza de cero: total 1"
+    app.dependency_overrides.clear()
+  `}
+>
+Completa la función que prepara cada test: base de datos SQLite en memoria **nueva**, con sus tablas, y la dependencia sustituida. El segundo cliente debe empezar con la tabla vacía.
+</CodeExercise>
+
+<Quiz
+  id="tests-que-fallan"
+  options={[
+    "pytest es inestable con FastAPI",
+    "Los tests comparten estado (la misma base de datos o datos globales) y dependen del orden",
+    "Falta await en algún test",
+    "TestClient no admite varios tests seguidos",
+  ]}
+  answer={1}
+  explanation="El síntoma de «pasa solo, falla junto a otros» o «falla según el orden» es casi siempre estado compartido: una base de datos que no se limpia, un dict global, un dependency_override que no se borra. Cada test debe preparar lo que necesita y no dejar rastro. pytest-randomly baraja el orden para destapar estos casos."
+  hints={["¿Qué cambia entre ejecutar un test solo y ejecutarlo después de otros?"]}
+>
+Tus tests pasan uno a uno con `pytest -k`, pero al ejecutar toda la batería fallan algunos, y no siempre los mismos. ¿Causa más probable?
+</Quiz>
+
+<Callout kind="real" title="Cómo se hace en el trabajo">
+- La pirámide en una API: muchos tests de **endpoint** con `TestClient` (rápidos, prueban validación, códigos, permisos), algunos de **integración** contra un PostgreSQL de verdad (Docker, `testcontainers`), y pocos de extremo a extremo.
+- Lo que más merece un test: los **permisos** (que un usuario no pueda ver lo de otro), los casos de error (404, 409, 422) y el contrato de la respuesta. Los caminos felices se prueban solos al usar la API; los errores, no.
+- Los tests corren en **CI** en cada pull request (GitHub Actions), con la cobertura (`pytest --cov`) como pista, no como objetivo: una cobertura del 100 % con asserts flojos no detecta nada, como acabas de ver.
+- Para código `async` (un cliente asíncrono, un motor de BD asíncrono) se usa el plugin de pytest que trae `anyio` (`@pytest.mark.anyio`) o `pytest-asyncio`, con `httpx.AsyncClient`, como aquí.
+</Callout>
+
+## Para llevar
+
+- `TestClient` + pytest en tu máquina; aquí, `httpx.AsyncClient` con `await`: la misma idea.
+- Un test vale lo que detecta: mete bugs a propósito y mira si alguno falla.
+- Comprueba código **y** cuerpo de la respuesta.
+- Cada test con su base de datos limpia, sustituyendo `get_session` con `dependency_overrides` (y limpiándolo después).
+- Si los tests fallan según el orden, busca estado compartido.

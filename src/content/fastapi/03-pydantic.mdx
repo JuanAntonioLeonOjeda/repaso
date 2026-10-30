@@ -1,0 +1,317 @@
+Para pedir una predicción, el cliente manda un JSON con las características del vino. ¿Y si falta un campo, llega un texto donde va un número o el alcohol es −3? Comprobarlo a mano en cada endpoint es largo y se olvida. En FastAPI describes la forma de los datos **una vez**, con una clase de **Pydantic**, y FastAPI la usa para validar la entrada, filtrar la salida y documentar ambas.
+
+## Un modelo para el cuerpo
+
+```python
+from pydantic import BaseModel, Field
+
+class WineSample(BaseModel):
+    alcohol: float = Field(ge=8, le=15, description="% vol")
+    volatile_acidity: float = Field(ge=0, le=2)
+    sulphates: float = Field(ge=0, le=2)
+    citric_acid: float = Field(ge=0, le=1, default=0)
+
+@app.post("/predictions")
+def predict(sample: WineSample):
+    return {"quality": model.predict(sample)}
+```
+
+Un parámetro cuyo tipo es un `BaseModel` se lee del **cuerpo** de la petición. Dentro de la función, `sample` ya es un objeto validado: `sample.alcohol` es un `float` entre 8 y 15, garantizado.
+
+Si algo no cuadra, FastAPI responde **422** con una lista de errores que dice qué falló y dónde:
+
+```json
+{"detail": [{"type": "greater_than_equal", "loc": ["body", "alcohol"],
+             "msg": "Input should be greater than or equal to 8", "input": -3, "ctx": {"ge": 8.0}}]}
+```
+
+`loc` es la ruta hasta el dato: `body` (podría ser `query`, `path` o `header`) y el campo. Ese formato es estable: el frontend lo usa para pintar el error junto al campo del formulario.
+
+<CodeExercise
+  id="muestra-vino"
+  title="El esquema de entrada"
+  starter={`
+    import httpx
+    from fastapi import FastAPI
+    from pydantic import BaseModel, Field
+
+    def fake_model(sample) -> int:
+        # Un "modelo" de mentira hasta la lección 11: más alcohol, mejor nota
+        return round(3 + (sample.alcohol - 8) * 0.5 - sample.volatile_acidity)
+
+    class WineSample(BaseModel):
+        alcohol: float = ___                 # entre 8 y 15
+        volatile_acidity: float = ___        # entre 0 y 2
+        sulphates: float = Field(ge=0, le=2)
+        citric_acid: float = ___             # entre 0 y 1, por defecto 0
+
+    app = FastAPI()
+
+    @app.post("/predictions")
+    def predict(sample: ___):
+        return {"quality": fake_model(sample)}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.post("/predictions", json={"alcohol": 12, "volatile_acidity": 0.4, "sulphates": 0.7})
+    print(r.status_code, r.json())
+    r = await client.post("/predictions", json={"alcohol": -3, "volatile_acidity": 0.4})
+    print(r.status_code, [(e["loc"], e["type"]) for e in r.json()["detail"]])
+  `}
+  solution={`
+    import httpx
+    from fastapi import FastAPI
+    from pydantic import BaseModel, Field
+
+    def fake_model(sample) -> int:
+        # Un "modelo" de mentira hasta la lección 11: más alcohol, mejor nota
+        return round(3 + (sample.alcohol - 8) * 0.5 - sample.volatile_acidity)
+
+    class WineSample(BaseModel):
+        alcohol: float = Field(ge=8, le=15)                 # entre 8 y 15
+        volatile_acidity: float = Field(ge=0, le=2)        # entre 0 y 2
+        sulphates: float = Field(ge=0, le=2)
+        citric_acid: float = Field(default=0, ge=0, le=1)  # entre 0 y 1, por defecto 0
+
+    app = FastAPI()
+
+    @app.post("/predictions")
+    def predict(sample: WineSample):
+        return {"quality": fake_model(sample)}
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.post("/predictions", json={"alcohol": 12, "volatile_acidity": 0.4, "sulphates": 0.7})
+    print(r.status_code, r.json())
+    r = await client.post("/predictions", json={"alcohol": -3, "volatile_acidity": 0.4})
+    print(r.status_code, [(e["loc"], e["type"]) for e in r.json()["detail"]])
+  `}
+  hints={[
+    "Las restricciones numéricas son Field(ge=..., le=...).",
+    "El valor por defecto también va en Field: Field(default=0, ge=0, le=1).",
+    "El parámetro del endpoint se anota con la clase: sample: WineSample.",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _ok = {"alcohol": 12, "volatile_acidity": 0.4, "sulphates": 0.7}
+    _r = await _c.post("/predictions", json=_ok)
+    assert _r.status_code == 200 and _r.json() == {"quality": 5}, "Una muestra válida (sin citric_acid) debe responder 200 con quality 5"
+    _r = await _c.post("/predictions", json={**_ok, "alcohol": 7.9})
+    assert _r.status_code == 422 and _r.json()["detail"][0]["loc"] == ["body", "alcohol"], "alcohol=7.9 está fuera de [8, 15]: 422 en body.alcohol"
+    _r = await _c.post("/predictions", json={**_ok, "volatile_acidity": 2.5})
+    assert _r.status_code == 422, "volatile_acidity=2.5 está fuera de [0, 2]"
+    _r = await _c.post("/predictions", json={**_ok, "citric_acid": 1.5})
+    assert _r.status_code == 422, "citric_acid=1.5 está fuera de [0, 1]"
+    _r = await _c.post("/predictions", json={"alcohol": 12, "sulphates": 0.7})
+    assert _r.status_code == 422 and _r.json()["detail"][0]["type"] == "missing", "Falta volatile_acidity: 422 de tipo missing"
+  `}
+>
+Completa el esquema con sus rangos y úsalo como cuerpo de `POST /predictions`. Fíjate en que la segunda petición devuelve **dos** errores a la vez: Pydantic no para en el primero.
+</CodeExercise>
+
+<Quiz
+  id="coercion"
+  options={[
+    "422: es un string y el campo es float",
+    "200: Pydantic convierte \"12.5\" a 12.5",
+    "500: el modelo recibe un string",
+    "Depende de si el campo tiene Field",
+  ]}
+  answer={1}
+  explanation="Por defecto Pydantic está en modo 'lax': convierte lo que tiene una conversión obvia ('12.5' → 12.5, '3' → 3), y rechaza lo que no ('abc'). Si necesitas que el tipo sea exacto, se activa el modo estricto con Field(strict=True) o ConfigDict(strict=True)."
+  hints={["Piensa en qué pasa con los parámetros de ruta, que siempre llegan como texto."]}
+>
+Un cliente manda `{"alcohol": "12.5", ...}` (con comillas). ¿Qué pasa?
+</Quiz>
+
+## Lo que entra no es lo que sale
+
+Un error que se ve en muchos proyectos: el endpoint que crea un usuario devuelve el objeto tal cual... con el hash de la contraseña dentro. La solución es tener **modelos distintos para entrada y salida** y decirle a FastAPI cuál es la salida con `response_model`. FastAPI **filtra** lo que devuelves y se queda solo con los campos de ese modelo.
+
+```python
+class UserCreate(BaseModel):     # lo que manda el cliente
+    email: str
+    password: str = Field(min_length=8)
+
+class UserRead(BaseModel):       # lo que ve el cliente
+    id: int
+    email: str
+
+@app.post("/users", response_model=UserRead, status_code=201)
+def create_user(user: UserCreate):
+    return {"id": 1, "email": user.email, "password_hash": hash_password(user.password)}
+    # ↑ password_hash no sale: no está en UserRead (hash_password, en la lección 8)
+```
+
+<CodeExercise
+  id="response-model"
+  title="Que no se escape el hash"
+  starter={`
+    import hashlib
+
+    import httpx
+    from fastapi import FastAPI
+    from pydantic import BaseModel, Field
+
+    app = FastAPI()
+    USERS = []
+
+    class UserCreate(BaseModel):
+        email: str
+        password: str = ___            # al menos 8 caracteres
+
+    class UserRead(BaseModel):
+        ___
+
+    @app.post("/users", ___)
+    def create_user(user: UserCreate):
+        record = {
+            "id": len(USERS) + 1,
+            "email": user.email,
+            "password_hash": hashlib.sha256(user.password.encode()).hexdigest(),
+        }
+        USERS.append(record)
+        return record
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.post("/users", json={"email": "ana@example.com", "password": "s3creta-larga"})
+    print(r.status_code, r.json())
+  `}
+  solution={`
+    import hashlib
+
+    import httpx
+    from fastapi import FastAPI
+    from pydantic import BaseModel, Field
+
+    app = FastAPI()
+    USERS = []
+
+    class UserCreate(BaseModel):
+        email: str
+        password: str = Field(min_length=8)            # al menos 8 caracteres
+
+    class UserRead(BaseModel):
+        id: int
+        email: str
+
+    @app.post("/users", response_model=UserRead, status_code=201)
+    def create_user(user: UserCreate):
+        record = {
+            "id": len(USERS) + 1,
+            "email": user.email,
+            "password_hash": hashlib.sha256(user.password.encode()).hexdigest(),
+        }
+        USERS.append(record)
+        return record
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    r = await client.post("/users", json={"email": "ana@example.com", "password": "s3creta-larga"})
+    print(r.status_code, r.json())
+  `}
+  hints={[
+    "password: str = Field(min_length=8).",
+    "UserRead solo tiene los campos públicos: id y email.",
+    "En el decorador: response_model=UserRead y status_code=201 (se ha creado algo).",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    _r = await _c.post("/users", json={"email": "luis@example.com", "password": "otra-clave-larga"})
+    assert _r.status_code == 201, "Crear un usuario debe responder 201 Created"
+    assert set(_r.json()) == {"id", "email"}, "La respuesta solo debe tener id y email (nada de password_hash)"
+    assert _r.json()["email"] == "luis@example.com"
+    assert (await _c.post("/users", json={"email": "x@example.com", "password": "corta"})).status_code == 422, "Una contraseña de menos de 8 caracteres debe dar 422"
+    assert "password_hash" not in str((await _c.get("/openapi.json")).json()["components"]["schemas"]["UserRead"]), "El esquema documentado de salida no debe mencionar el hash"
+  `}
+>
+Define `UserRead` y úsalo como `response_model`, para que la respuesta no incluya `password_hash`. Al crear algo, el código correcto es **201**.
+</CodeExercise>
+
+<Callout kind="idea" title="También vale la anotación de retorno">
+En vez de `response_model=UserRead` puedes escribir `def create_user(user: UserCreate) -> UserRead:`. FastAPI lo trata igual. La diferencia es que entonces la función debe devolver de verdad un `UserRead` (el comprobador de tipos te avisará si devuelves un dict con más campos), mientras que con `response_model` puedes devolver cualquier cosa y FastAPI filtra.
+</Callout>
+
+## Actualizar solo una parte: PATCH
+
+Para modificar algunos campos, el modelo de actualización tiene **todo opcional**, y `model_dump(exclude_unset=True)` devuelve solo lo que el cliente mandó de verdad. Así distingues «no me han mandado el nombre» de «me han mandado el nombre vacío».
+
+<CodeExercise
+  id="patch"
+  title="PATCH sin pisar lo que no cambia"
+  starter={`
+    from typing import Literal
+
+    import httpx
+    from fastapi import FastAPI
+    from pydantic import BaseModel
+
+    app = FastAPI()
+    MODELS = {1: {"id": 1, "name": "ridge", "stage": "dev", "description": "baseline"}}
+
+    class ModelUpdate(BaseModel):
+        name: ___ = None
+        stage: Literal["dev", "prod"] | None = None
+        description: str | None = None
+
+    @app.patch("/models/{model_id}")
+    def update_model(model_id: int, update: ModelUpdate):
+        changes = update.___
+        MODELS[model_id].update(changes)
+        return MODELS[model_id]
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.patch("/models/1", json={"stage": "prod"})).json())
+  `}
+  solution={`
+    from typing import Literal
+
+    import httpx
+    from fastapi import FastAPI
+    from pydantic import BaseModel
+
+    app = FastAPI()
+    MODELS = {1: {"id": 1, "name": "ridge", "stage": "dev", "description": "baseline"}}
+
+    class ModelUpdate(BaseModel):
+        name: str | None = None
+        stage: Literal["dev", "prod"] | None = None
+        description: str | None = None
+
+    @app.patch("/models/{model_id}")
+    def update_model(model_id: int, update: ModelUpdate):
+        changes = update.model_dump(exclude_unset=True)
+        MODELS[model_id].update(changes)
+        return MODELS[model_id]
+
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    print((await client.patch("/models/1", json={"stage": "prod"})).json())
+  `}
+  hints={[
+    "Todos los campos de un modelo de actualización son opcionales: str | None = None.",
+    "model_dump() a secas devolvería también los None de lo que no se mandó, y pisaría el nombre.",
+    "update.model_dump(exclude_unset=True)",
+  ]}
+  check={`
+    _c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    MODELS[1] = {"id": 1, "name": "ridge", "stage": "dev", "description": "baseline"}
+    _r = (await _c.patch("/models/1", json={"stage": "prod"})).json()
+    assert _r == {"id": 1, "name": "ridge", "stage": "prod", "description": "baseline"}, "Solo debe cambiar stage; name y description se conservan"
+    _r = (await _c.patch("/models/1", json={"description": None})).json()
+    assert _r["description"] is None and _r["name"] == "ridge", "Mandar description: null sí la borra (se mandó explícitamente)"
+    assert (await _c.patch("/models/1", json={"stage": "test"})).status_code == 422, "stage solo admite dev o prod"
+  `}
+>
+Completa el PATCH para que solo cambie lo que el cliente manda. Fíjate en la segunda comprobación: mandar `null` a propósito sí borra el campo.
+</CodeExercise>
+
+<Callout kind="real" title="Cómo se hace en el trabajo">
+- Lo habitual es una familia de esquemas por recurso: `ModelCreate`, `ModelRead`, `ModelUpdate` (y a veces `ModelInDB`). Parece repetición, pero cada uno tiene un trabajo distinto, y mezclarlos es como acaban filtrándose hashes o campos internos.
+- `ConfigDict(extra="forbid")` hace que un campo desconocido dé 422 en vez de ignorarse en silencio: útil para pillar erratas del cliente (`alchohol`).
+- Para emails de verdad está `EmailStr` (necesita el paquete `email-validator`), y para validaciones que dependen de varios campos, `@model_validator`.
+</Callout>
+
+## Para llevar
+
+- Un parámetro anotado con un `BaseModel` es el cuerpo de la petición; FastAPI lo valida y responde 422 con `loc`, `msg` y `type` si no cuadra.
+- `Field(ge=..., le=..., min_length=...)` pone las restricciones; Pydantic convierte lo que tiene conversión obvia.
+- `response_model` (o la anotación de retorno) filtra la salida: modelos distintos para entrar y salir.
+- PATCH: campos opcionales y `model_dump(exclude_unset=True)`.
+- Crear responde 201.
