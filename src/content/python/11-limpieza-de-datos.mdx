@@ -1,0 +1,274 @@
+Los datos reales llegan rotos: celdas vacías, textos donde debería haber números, `"ERROR"` y `"UNKNOWN"` sembrados por un sistema que falló, fechas imposibles. Se dice que limpiar se lleva el 80 % del tiempo de un proyecto de datos, y la pregunta de 5 puntos del examen de la primera convocatoria (tarde) era exactamente eso: limpiar las ventas de una cafetería. Aquí la resolvemos entera, paso a paso, con el fichero real de 10.000 tickets.
+
+## El plan
+
+Antes de tocar nada, **mira**: `df.head()`, `df.info()`, `df.isna().sum()` y `df[col].value_counts()` de cada columna de texto. Después, un orden que funciona casi siempre:
+
+1. **Unificar lo que falta**: convertir todas las formas de «no sé» (`""`, `"ERROR"`, `"UNKNOWN"`, `"-"`, `"N/A"`) en `NaN`.
+2. **Tipos**: números a número, fechas a fecha. `pd.to_numeric(..., errors="coerce")` y `pd.to_datetime(..., errors="coerce")` convierten lo imposible en `NaN` en vez de fallar.
+3. **Reconstruir** lo que se pueda deducir de otras columnas (aquí, el precio por el artículo y el total por cantidad × precio).
+4. **Quitar** lo que no tenga arreglo, contando cuánto quitas.
+5. **Comprobar** las reglas del negocio: aquí, `Total = Cantidad × Precio` en todas las filas.
+
+## 1. Marcar lo corrupto
+
+<CodeExercise
+  id="cafe-marcar"
+  title="Todo lo corrupto, a NaN"
+  files={["dirty_cafe_sales.csv"]}
+  starter={`
+    import numpy as np
+    import pandas as pd
+
+    df = pd.read_csv("dirty_cafe_sales.csv")
+    print(df.head())
+
+    # 1) "ERROR" y "UNKNOWN" a NaN (los vacíos ya llegan como NaN)
+    df = df.___
+
+    # 2) las tres columnas numéricas, a número
+    for col in ["Quantity", "Price Per Unit", "Total Spent"]:
+        df[col] = ___
+
+    print(df.isna().sum())
+    print(df.dtypes)
+  `}
+  solution={`
+    import numpy as np
+    import pandas as pd
+
+    df = pd.read_csv("dirty_cafe_sales.csv")
+    print(df.head())
+
+    df = df.replace(["ERROR", "UNKNOWN"], np.nan)
+
+    for col in ["Quantity", "Price Per Unit", "Total Spent"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    print(df.isna().sum())
+    print(df.dtypes)
+  `}
+  hints={[
+    "replace acepta una lista de valores a sustituir: df.replace([...], np.nan).",
+    "pd.to_numeric(df[col], errors='coerce') convierte y pone NaN en lo que no sea un número.",
+  ]}
+  check={`
+    assert len(df) == 10000, "Todavía no se ha quitado ninguna fila: deben ser 10.000"
+    esperado = {"Item": 969, "Quantity": 479, "Price Per Unit": 533, "Total Spent": 502, "Payment Method": 3178, "Location": 3961}
+    for col, n in esperado.items():
+        assert df[col].isna().sum() == n, f"{col} debería tener {n} NaN y tiene {df[col].isna().sum()}"
+    assert all(str(df[c].dtype) == "float64" for c in ["Quantity", "Price Per Unit", "Total Spent"]), "Las columnas numéricas deben ser float64"
+  `}
+>
+Objetivo 1 del examen: cargar el CSV y convertir en `NaN` todo lo corrupto. Mira los `NaN` por columna antes y después del `replace`.
+</CodeExercise>
+
+<Callout kind="real" title="Mejor al leer">
+`pd.read_csv("ventas.csv", na_values=["ERROR", "UNKNOWN"])` marca esos valores como `NaN` al cargar, y así las columnas numéricas llegan ya como números. Y si conoces los tipos, dilos: `dtype={"Quantity": "Int64"}` (con mayúscula, el entero de pandas que admite nulos) y `parse_dates=["Transaction Date"]`.
+</Callout>
+
+## 2. Quitar lo irrecuperable y reconstruir el precio
+
+El examen pide eliminar las filas sin `Location` o sin `Item`, y luego responder «¿cuál es el precio de cada artículo?» para rellenar los precios perdidos. Si cada artículo tiene un precio fijo, la **moda** (el valor más repetido) por artículo lo da, y no se deja engañar por un precio mal tecleado.
+
+<CodeExercise
+  id="cafe-precios"
+  title="El precio de cada artículo"
+  files={["dirty_cafe_sales.csv"]}
+  starter={`
+    import numpy as np
+    import pandas as pd
+
+    df = pd.read_csv("dirty_cafe_sales.csv", na_values=["ERROR", "UNKNOWN"])
+
+    # 2) quitar las filas sin Location o sin Item
+    df = df.dropna(subset=___)
+
+    # 3) precio de cada artículo: la moda de Price Per Unit dentro de cada Item
+    precios = df.groupby("Item")["Price Per Unit"].agg(lambda s: ___)
+    print(precios)
+
+    # rellenar los precios que faltan con el de su artículo
+    df["Price Per Unit"] = df["Price Per Unit"].fillna(___)
+    print(len(df), df["Price Per Unit"].isna().sum())
+  `}
+  solution={`
+    import numpy as np
+    import pandas as pd
+
+    df = pd.read_csv("dirty_cafe_sales.csv", na_values=["ERROR", "UNKNOWN"])
+
+    df = df.dropna(subset=["Location", "Item"])
+
+    precios = df.groupby("Item")["Price Per Unit"].agg(lambda s: s.mode()[0])
+    print(precios)
+
+    df["Price Per Unit"] = df["Price Per Unit"].fillna(df["Item"].map(precios))
+    print(len(df), df["Price Per Unit"].isna().sum())
+  `}
+  hints={[
+    "dropna(subset=['Location', 'Item']) quita las filas con NaN en cualquiera de esas dos columnas.",
+    "s.mode() devuelve una Series (puede haber empates): toma el primero con s.mode()[0].",
+    "df['Item'].map(precios) da, para cada fila, el precio de su artículo: úsalo en fillna.",
+  ]}
+  check={`
+    assert len(df) == 5448, f"Tras quitar filas sin Location o Item deben quedar 5448 y quedan {len(df)}"
+    assert precios.to_dict() == {"Cake": 3.0, "Coffee": 2.0, "Cookie": 1.0, "Juice": 3.0, "Salad": 5.0, "Sandwich": 4.0, "Smoothie": 4.0, "Tea": 1.5}, f"Precios inesperados: {precios.to_dict()}"
+    assert df["Price Per Unit"].isna().sum() == 0, "No debe quedar ningún precio vacío"
+  `}
+>
+Completa los pasos 2 y 3 del examen.
+</CodeExercise>
+
+<Callout kind="warn" title="Quitar filas también es una decisión">
+Quitar las filas sin `Location` se lleva por delante **el 45 % de los tickets** (de 10.000 a 5.448), y `Location` no hace falta para calcular cuánto se vende de cada artículo. El examen lo pedía así, pero en un análisis real conviene quitar solo lo que impide responder **a cada pregunta**: sin `Item` no puedes hablar de artículos (te quedarías con 9.031 tickets); sin `Location` aún puedes. Y documenta siempre cuántas filas descartas y por qué.
+</Callout>
+
+## 3. Cuadrar cantidades y totales
+
+La regla del negocio es `Total Spent = Price Per Unit × Quantity`. Con el precio ya completo, si falta la cantidad se despeja del total, y si falta el total se calcula. Si faltan las dos, no hay forma: esas filas se quitan.
+
+<CodeExercise
+  id="cafe-cuadrar"
+  title="Total = cantidad × precio"
+  files={["dirty_cafe_sales.csv"]}
+  starter={`
+    import numpy as np
+    import pandas as pd
+
+    df = pd.read_csv("dirty_cafe_sales.csv", na_values=["ERROR", "UNKNOWN"])
+    df = df.dropna(subset=["Location", "Item"])
+    precios = df.groupby("Item")["Price Per Unit"].agg(lambda s: s.mode()[0])
+    df["Price Per Unit"] = df["Price Per Unit"].fillna(df["Item"].map(precios))
+
+    # 4a) quitar las filas a las que les faltan a la vez Quantity y Total Spent
+    df = df.dropna(subset=["Quantity", "Total Spent"], how=___)
+
+    # 4b) rellenar cada una a partir de la otra
+    df["Quantity"] = df["Quantity"].fillna(___)
+    df["Total Spent"] = df["Total Spent"].fillna(___)
+
+    cuadra = np.isclose(df["Total Spent"], df["Quantity"] * df["Price Per Unit"])
+    print(len(df), cuadra.all(), df["Total Spent"].sum())
+  `}
+  solution={`
+    import numpy as np
+    import pandas as pd
+
+    df = pd.read_csv("dirty_cafe_sales.csv", na_values=["ERROR", "UNKNOWN"])
+    df = df.dropna(subset=["Location", "Item"])
+    precios = df.groupby("Item")["Price Per Unit"].agg(lambda s: s.mode()[0])
+    df["Price Per Unit"] = df["Price Per Unit"].fillna(df["Item"].map(precios))
+
+    df = df.dropna(subset=["Quantity", "Total Spent"], how="all")
+
+    df["Quantity"] = df["Quantity"].fillna(df["Total Spent"] / df["Price Per Unit"])
+    df["Total Spent"] = df["Total Spent"].fillna(df["Quantity"] * df["Price Per Unit"])
+
+    cuadra = np.isclose(df["Total Spent"], df["Quantity"] * df["Price Per Unit"])
+    print(len(df), cuadra.all(), df["Total Spent"].sum())
+  `}
+  hints={[
+    "how='all' quita la fila solo si TODAS las columnas del subset son NaN; how='any' (por defecto), si alguna lo es.",
+    "Cantidad = total / precio.",
+    "Total = cantidad × precio.",
+  ]}
+  check={`
+    assert len(df) == 5434, f"Deben quedar 5434 tickets y quedan {len(df)}"
+    assert df[["Quantity", "Price Per Unit", "Total Spent"]].isna().sum().sum() == 0, "No deben quedar NaN en las columnas numéricas"
+    assert cuadra.all(), "En todas las filas debe cumplirse Total = Cantidad × Precio"
+    assert abs(df["Total Spent"].sum() - 48593.0) < 0.01, f"La facturación total limpia es 48.593 € y sale {df['Total Spent'].sum():.2f}"
+  `}
+>
+Objetivo 4 del examen. Fíjate en el `how`: con el valor por defecto quitarías también las filas que sí se pueden arreglar.
+</CodeExercise>
+
+<Quiz
+  id="cafe-item-por-precio"
+  options={[
+    "Sí: cada artículo tiene un precio distinto, así que el precio identifica el artículo",
+    "Solo en parte: Cake y Juice cuestan 3 € y Sandwich y Smoothie 4 €, así que con esos precios no se sabe cuál es",
+    "No: el precio nunca da información sobre el artículo",
+    "Sí, pero solo si también se conoce el método de pago",
+  ]}
+  answer={1}
+  explanation="La tabla de precios tiene dos empates (3 € y 4 €). Con 1, 1,5, 2 y 5 € sí se puede deducir el artículo (Cookie, Tea, Coffee, Salad), así que se podrían recuperar algunas filas en lugar de quitarlas; con 3 y 4 €, no. Antes de rellenar «deduciendo», comprueba que la deducción es única."
+>
+Los precios por artículo son: Cake 3, Coffee 2, Cookie 1, Juice 3, Salad 5, Sandwich 4, Smoothie 4 y Tea 1,5. ¿Se podría recuperar el `Item` que falta a partir del precio, en vez de quitar esas filas?
+</Quiz>
+
+## 4. Fechas
+
+<CodeExercise
+  id="cafe-fechas"
+  title="El mejor mes"
+  files={["dirty_cafe_sales.csv"]}
+  starter={`
+    import numpy as np
+    import pandas as pd
+
+    df = pd.read_csv("dirty_cafe_sales.csv", na_values=["ERROR", "UNKNOWN"])
+    df = df.dropna(subset=["Item"])
+    precios = df.groupby("Item")["Price Per Unit"].agg(lambda s: s.mode()[0])
+    df["Price Per Unit"] = df["Price Per Unit"].fillna(df["Item"].map(precios))
+    df = df.dropna(subset=["Quantity", "Total Spent"], how="all")
+    df["Total Spent"] = df["Total Spent"].fillna(df["Quantity"] * df["Price Per Unit"])
+
+    # fechas: lo que no se pueda interpretar, a NaT
+    df["Transaction Date"] = ___
+    df = df.dropna(subset=["Transaction Date"])
+
+    por_mes = df.groupby(df["Transaction Date"].___)["Total Spent"].sum()
+    mejor_mes = ___
+    print(por_mes.round(1))
+    print("mejor mes:", mejor_mes)
+  `}
+  solution={`
+    import numpy as np
+    import pandas as pd
+
+    df = pd.read_csv("dirty_cafe_sales.csv", na_values=["ERROR", "UNKNOWN"])
+    df = df.dropna(subset=["Item"])
+    precios = df.groupby("Item")["Price Per Unit"].agg(lambda s: s.mode()[0])
+    df["Price Per Unit"] = df["Price Per Unit"].fillna(df["Item"].map(precios))
+    df = df.dropna(subset=["Quantity", "Total Spent"], how="all")
+    df["Total Spent"] = df["Total Spent"].fillna(df["Quantity"] * df["Price Per Unit"])
+
+    df["Transaction Date"] = pd.to_datetime(df["Transaction Date"], errors="coerce")
+    df = df.dropna(subset=["Transaction Date"])
+
+    por_mes = df.groupby(df["Transaction Date"].dt.month)["Total Spent"].sum()
+    mejor_mes = por_mes.idxmax()
+    print(por_mes.round(1))
+    print("mejor mes:", mejor_mes)
+  `}
+  hints={[
+    "pd.to_datetime(columna, errors='coerce') pone NaT en las fechas imposibles.",
+    "El mes de una fecha: .dt.month.",
+    "La etiqueta del máximo de una Series: idxmax().",
+  ]}
+  check={`
+    assert str(df["Transaction Date"].dtype).startswith("datetime64"), "La columna de fechas debe ser datetime64"
+    assert len(por_mes) == 12, "Debe haber un total por cada uno de los 12 meses"
+    assert mejor_mes == por_mes.idxmax() and por_mes[mejor_mes] == por_mes.max(), "mejor_mes debe ser el mes con más facturación"
+    assert abs(por_mes.sum() - df["Total Spent"].sum()) < 1e-6, "La suma por meses debe ser la facturación total"
+  `}
+>
+Ahora quitando solo las filas sin `Item` (como recomendábamos arriba): ¿qué mes se factura más?
+</CodeExercise>
+
+<Callout kind="real" title="Limpieza que se puede repetir">
+En el trabajo los datos sucios vuelven cada semana. Por eso la limpieza no se hace a mano en un notebook, sino en **funciones** (`cargar()`, `marcar_corruptos()`, `reconstruir_precios()`) encadenadas con `df.pipe(...)`, que se ejecutan igual cada vez. Las reglas («el total cuadra», «la fecha está en 2023», «el precio es positivo») se escriben como **validaciones** que fallan en voz alta, con librerías como **pandera**, y el fichero original no se toca nunca: se guarda una versión limpia aparte.
+</Callout>
+
+<Callout kind="practice" title="En tus notebooks">
+`examenes/01MIAR_Exam_01_B.ipynb` (pregunta 5, con el `dirty_cafe_sales.csv` que tienes en la carpeta de la asignatura), `01MIAR_12_Data_Processing.ipynb` y el capítulo 6.3 del PDF (limpieza con `apply` y con las funciones de pandas).
+</Callout>
+
+## Para llevar
+
+- Primero mirar (`info`, `isna().sum()`, `value_counts()`); luego unificar lo que falta en `NaN`.
+- `errors="coerce"` convierte lo imposible en `NaN` en vez de fallar; `na_values=` lo hace al leer.
+- Reconstruye con reglas del negocio (moda por grupo, total = cantidad × precio) antes de quitar.
+- `dropna(subset=..., how="all")` quita solo lo que no tiene arreglo; cuenta siempre lo que quitas.
+- Comprueba las reglas al final y convierte la limpieza en funciones repetibles.

@@ -1,0 +1,243 @@
+Un gráfico bien hecho responde una pregunta de un vistazo; uno mal hecho la esconde. En el examen siempre hay uno o dos («histograma con la media y la mediana», «una figura con dos gráficos de barras»), y en el trabajo es como explicas lo que has encontrado. La herramienta base es **matplotlib**; pandas y seaborn están construidos encima.
+
+## Figure y Axes
+
+Lo que más confunde de matplotlib es que tiene **dos formas de usarse**:
+
+- La de `pyplot` (`plt.plot`, `plt.title`): cómoda para un gráfico rápido, pero actúa sobre «el gráfico actual», y con varios se lía.
+- La **orientada a objetos**: creas la figura y los ejes y hablas con cada uno. Es la recomendada.
+
+```python
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(8, 4))         # una figura de 8 x 4 pulgadas con un Axes
+ax.plot(x, y, label="ventas", color="tab:blue", linestyle="--", marker="o")
+ax.set_title("Ventas por mes")
+ax.set_xlabel("mes"); ax.set_ylabel("€")
+ax.legend(); ax.grid(alpha=0.3)
+fig.tight_layout()
+fig.savefig("ventas.png", dpi=150, bbox_inches="tight")   # antes de plt.show()
+```
+
+Una **Figure** es el lienzo; cada **Axes** es un gráfico con sus ejes (una figura puede tener muchos). `plt.subplots(2, 3)` devuelve la figura y una matriz 2×3 de Axes: `axes[0, 1]` es el de la primera fila, segunda columna. `ax.twinx()` crea un segundo eje Y que comparte el X.
+
+### Qué gráfico para qué
+
+| Pregunta | Gráfico | matplotlib |
+|---|---|---|
+| ¿Cómo evoluciona? | líneas | `ax.plot` |
+| ¿Cómo se reparte un valor? | histograma, caja | `ax.hist`, `ax.boxplot` |
+| ¿Cómo se comparan categorías? | barras | `ax.bar`, `ax.barh` |
+| ¿Se relacionan dos variables? | dispersión | `ax.scatter` |
+| ¿Cómo se compone un total en el tiempo? | áreas apiladas | `ax.stackplot` |
+| ¿Qué parte del total es cada cosa? | barras (mejor que tarta) | `ax.pie` si no hay más remedio |
+
+Para destacar algo: `ax.axvline(x)` / `ax.axhline(y)` (líneas de referencia) y `ax.annotate("pico", xy=(x, y), xytext=(x2, y2), arrowprops={"arrowstyle": "->"})`.
+
+## Histogramas, densidad, media y mediana
+
+<HistogramSim />
+
+<Callout kind="idea" title="Media y mediana dicen cosas distintas">
+Con datos simétricos coinciden. Con una cola larga (sueldos, retrasos, precios de vivienda) la media se va hacia la cola y la mediana se queda con el «caso típico». Por eso los informes de salarios dan la mediana. Mueve la simulación a «sesgados» y mira cómo se separan.
+</Callout>
+
+<CodeExercise
+  id="histograma-examen"
+  title="El histograma del examen"
+  starter={`
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from scipy.stats import gaussian_kde
+
+    rng = np.random.default_rng(1)
+    data = rng.integers(1, 101, size=50)          # 50 enteros entre 1 y 100
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    # barras de 10 en 10 (0-10, 10-20, ..., 90-100) en densidad, para compartir escala con la curva
+    ax.hist(data, bins=___, density=True, edgecolor="black", alpha=0.6)
+
+    xs = np.linspace(0, 100, 200)
+    ax.plot(xs, gaussian_kde(data)(xs), label="densidad")
+
+    media, mediana = ___, ___
+    ax.axvline(media, color="red", linestyle="--", label=f"Media: {media:.1f}")
+    ax.___(mediana, color="blue", linestyle=":", label=f"Mediana: {mediana:.1f}")
+
+    ax.set_title("Histograma")
+    ax.legend()
+    plt.show()
+  `}
+  solution={`
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from scipy.stats import gaussian_kde
+
+    rng = np.random.default_rng(1)
+    data = rng.integers(1, 101, size=50)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.hist(data, bins=range(0, 101, 10), density=True, edgecolor="black", alpha=0.6)
+
+    xs = np.linspace(0, 100, 200)
+    ax.plot(xs, gaussian_kde(data)(xs), label="densidad")
+
+    media, mediana = np.mean(data), np.median(data)
+    ax.axvline(media, color="red", linestyle="--", label=f"Media: {media:.1f}")
+    ax.axvline(mediana, color="blue", linestyle=":", label=f"Mediana: {mediana:.1f}")
+
+    ax.set_title("Histograma")
+    ax.legend()
+    plt.show()
+  `}
+  hints={[
+    "bins puede ser una lista de bordes: range(0, 101, 10) da 0, 10, …, 100.",
+    "np.mean(data) y np.median(data).",
+    "La línea vertical es axvline, igual que la de la media.",
+  ]}
+  check={`
+    assert len(ax.patches) == 10, f"Debe haber 10 barras (de 10 en 10) y hay {len(ax.patches)}"
+    assert [round(p.get_x()) for p in ax.patches][:3] == [0, 10, 20], "Las barras deben empezar en 0, 10, 20…"
+    etiquetas = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert any(e.startswith("Media") for e in etiquetas) and any(e.startswith("Mediana") for e in etiquetas), "La leyenda debe incluir la media y la mediana"
+    assert abs(media - np.mean(data)) < 1e-9 and abs(mediana - np.median(data)) < 1e-9, "media y mediana deben calcularse sobre data"
+  `}
+>
+Pregunta 2 de la primera convocatoria. En el examen se usaba `sns.kdeplot` para la curva; aquí no hay seaborn, así que la densidad se calcula con `scipy.stats.gaussian_kde` (que es lo que seaborn usa por dentro).
+</CodeExercise>
+
+## Varios gráficos en una figura
+
+<CodeExercise
+  id="dos-graficos"
+  title="Una figura con dos gráficos"
+  starter={`
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    rng = np.random.default_rng(5)
+    ventas = pd.DataFrame({
+        "item": rng.choice(["Coffee", "Tea", "Cake", "Salad"], 300),
+        "pago": rng.choice(["Cash", "Card"], 300),
+        "lugar": rng.choice(["In-store", "Takeaway"], 300),
+        "cantidad": rng.integers(1, 6, 300),
+    })
+    ventas["total"] = ventas["cantidad"] * 2.5
+
+    # Izquierda: cantidad comprada por artículo, una barra por método de pago
+    por_item = ventas.pivot_table(index="item", columns="pago", values="cantidad", aggfunc="sum")
+    # Derecha: total gastado por método de pago, una barra por lugar
+    por_pago = ventas.pivot_table(index="pago", columns="lugar", values="total", aggfunc="sum")
+
+    fig, axes = plt.subplots(___, figsize=(12, 4))
+    por_item.plot(kind="bar", ax=___)
+    por_pago.plot(kind="bar", ax=___)
+    axes[0].set_title("Cantidad por artículo y pago")
+    axes[1].set_title("Total por pago y lugar")
+    fig.tight_layout()
+    plt.show()
+  `}
+  solution={`
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    rng = np.random.default_rng(5)
+    ventas = pd.DataFrame({
+        "item": rng.choice(["Coffee", "Tea", "Cake", "Salad"], 300),
+        "pago": rng.choice(["Cash", "Card"], 300),
+        "lugar": rng.choice(["In-store", "Takeaway"], 300),
+        "cantidad": rng.integers(1, 6, 300),
+    })
+    ventas["total"] = ventas["cantidad"] * 2.5
+
+    por_item = ventas.pivot_table(index="item", columns="pago", values="cantidad", aggfunc="sum")
+    por_pago = ventas.pivot_table(index="pago", columns="lugar", values="total", aggfunc="sum")
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    por_item.plot(kind="bar", ax=axes[0])
+    por_pago.plot(kind="bar", ax=axes[1])
+    axes[0].set_title("Cantidad por artículo y pago")
+    axes[1].set_title("Total por pago y lugar")
+    fig.tight_layout()
+    plt.show()
+  `}
+  hints={[
+    "Una fila y dos columnas de gráficos: plt.subplots(1, 2, ...).",
+    "Con una sola fila, axes es un array 1-D: axes[0] y axes[1].",
+    "El parámetro ax= de df.plot dice en qué Axes dibujar.",
+  ]}
+  check={`
+    assert len(fig.axes) == 2, f"La figura debe tener 2 gráficos y tiene {len(fig.axes)}"
+    assert len(axes[0].patches) == 8, "Izquierda: 4 artículos × 2 métodos de pago = 8 barras"
+    assert len(axes[1].patches) == 4, "Derecha: 2 métodos de pago × 2 lugares = 4 barras"
+    assert abs(sum(p.get_height() for p in axes[0].patches) - ventas["cantidad"].sum()) < 1e-6, "Las barras de la izquierda deben sumar la cantidad total"
+  `}
+>
+El apartado 5 del examen del café: «una figura con dos gráficos de barras». La clave es `pivot_table` para tener una columna por grupo y `df.plot(kind="bar", ax=...)` para dibujar cada tabla en su sitio.
+</CodeExercise>
+
+<Callout kind="warn" title="Histograma de una columna que no toca">
+En una solución de la segunda convocatoria, «la distribución de los retrasos» se dibujó con `ax.hist(df["Status"])`: un histograma de la columna de categorías, no de los minutos. Antes de dar por bueno un gráfico, pregúntate si los ejes muestran lo que pide el enunciado.
+</Callout>
+
+## Gráficos desde pandas
+
+Las Series y los DataFrames tienen `.plot(kind=...)` con `line`, `bar`, `barh`, `hist`, `box`, `area`, `pie`, `scatter` y `kde`. Devuelven el Axes, así que puedes seguir decorándolo con matplotlib.
+
+<CodeExercise
+  id="barras-ordenadas"
+  title="Vuelos por aerolínea, de más a menos"
+  starter={`
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    vuelos = pd.Series(["American", "United", "American", "Delta", "United", "American",
+                        "Southwest", "Delta", "American", "United", "British Airways"])
+
+    conteo = ___                       # vuelos por aerolínea, de mayor a menor
+    ax = conteo.plot(kind="___", figsize=(8, 4), title="Vuelos por aerolínea")
+    ax.set_ylabel("vuelos")
+    plt.show()
+  `}
+  solution={`
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    vuelos = pd.Series(["American", "United", "American", "Delta", "United", "American",
+                        "Southwest", "Delta", "American", "United", "British Airways"])
+
+    conteo = vuelos.value_counts()
+    ax = conteo.plot(kind="bar", figsize=(8, 4), title="Vuelos por aerolínea")
+    ax.set_ylabel("vuelos")
+    plt.show()
+  `}
+  hints={[
+    "value_counts() cuenta cada valor y ya lo devuelve ordenado de mayor a menor.",
+    "Gráfico de barras verticales: kind='bar'.",
+  ]}
+  check={`
+    alturas = [p.get_height() for p in ax.patches]
+    assert alturas == [4, 3, 2, 1, 1], f"Las barras deben ir 4, 3, 2, 1, 1 y van {alturas}"
+    assert [t.get_text() for t in ax.get_xticklabels()][0] == "American", "La primera barra debe ser American"
+  `}
+>
+Apartado C de la segunda convocatoria.
+</CodeExercise>
+
+<Callout kind="real" title="Seaborn y los gráficos interactivos">
+En el trabajo, para análisis estadístico se usa mucho **seaborn** (`sns.histplot(data, kde=True)`, `sns.boxplot`, `sns.heatmap(df.corr(), annot=True)`, `sns.pairplot`), que entiende DataFrames directamente y da buenos colores por defecto. Para cuadros de mando o gráficos con zoom y *tooltips*, **Plotly**. matplotlib sigue siendo la base: cuando necesitas controlar un detalle, acabas en `ax.set_...`.
+</Callout>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_11_Visualization.ipynb`: elementos de un gráfico, `figure` y `axes`, varios gráficos en una figura, decoración y anotaciones, tipos de gráficos (barras, barras horizontales, stack plot, scatter), grabar a fichero, gráficos desde pandas y una introducción a seaborn con el dataset `flights`.
+</Callout>
+
+## Para llevar
+
+- Usa la forma orientada a objetos: `fig, ax = plt.subplots()` y `ax.set_...`.
+- Elige el gráfico por la pregunta: evolución (líneas), reparto (histograma), comparación (barras), relación (dispersión).
+- `axvline` para marcar media y mediana; con una cola larga, la mediana describe mejor el caso típico.
+- `pivot_table` + `df.plot(kind="bar", ax=...)` para barras agrupadas.
+- `savefig` antes de `show`, con `dpi` y `bbox_inches="tight"`.

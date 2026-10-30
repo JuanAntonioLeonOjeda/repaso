@@ -1,0 +1,253 @@
+Para un ordenador, una imagen es **una matriz de números**: cada píxel, un valor de brillo (o tres, uno por canal de color). Así que todo lo que sabes de NumPy sirve para tratar imágenes: recortar es hacer *slicing*, aclarar es sumar, mezclar dos fotos es una media ponderada y detectar bordes es restar píxeles vecinos. **OpenCV** es la librería de referencia que hace todo eso rápido y añade lo que NumPy no tiene: leer formatos, filtros, detección de bordes y redes neuronales para detectar caras u objetos.
+
+## Una imagen es un array
+
+```python
+import cv2
+img = cv2.imread("meerkat.jpg")      # ndarray de forma (alto, ancho, 3), dtype uint8
+img.shape, img.dtype                 # (750, 500, 3), uint8
+img[100, 200]                        # un píxel: [B, G, R]  ← ¡en ese orden!
+recorte = img[50:250, 100:400]       # recortar = slicing (es una vista)
+gris = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)   # (750, 500): un solo canal
+b, g, r = cv2.split(img)             # separar canales; cv2.merge([b, g, r]) los junta
+```
+
+- `uint8`: enteros de 0 a 255. Cero es negro; 255, el máximo de ese canal.
+- OpenCV guarda los colores en orden **BGR**; matplotlib, PIL y casi todo lo demás, en **RGB**. Si una foto sale con la piel azulada, es eso.
+- `cv2.imshow` abre una ventana (no funciona en Jupyter ni aquí); para mostrar, matplotlib con `plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))`.
+
+<ImageOpsSim />
+
+<CodeExercise
+  id="bgr-rgb"
+  title="De BGR a RGB sin OpenCV"
+  starter={`
+    import numpy as np
+    import cv2
+
+    # Una imagen 4x6 «roja» tal como la guardaría OpenCV (BGR): rojo = (0, 0, 255)
+    img_bgr = np.zeros((4, 6, 3), dtype=np.uint8)
+    img_bgr[:, :, 2] = 255
+    img_bgr[1:3, 2:4] = (255, 0, 0)        # un cuadrado azul en BGR
+
+    # Invierte el orden de los canales con slicing (último eje)
+    img_rgb = ___
+
+    print(img_rgb[0, 0], img_rgb[1, 2])
+  `}
+  solution={`
+    import numpy as np
+    import cv2
+
+    img_bgr = np.zeros((4, 6, 3), dtype=np.uint8)
+    img_bgr[:, :, 2] = 255
+    img_bgr[1:3, 2:4] = (255, 0, 0)
+
+    img_rgb = img_bgr[:, :, ::-1]
+
+    print(img_rgb[0, 0], img_rgb[1, 2])
+  `}
+  hints={[
+    "Los canales son el último eje. ¿Cómo se invierte una secuencia con slicing?",
+    "img_bgr[:, :, ::-1]",
+  ]}
+  check={`
+    assert np.array_equal(img_rgb, cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)), "El resultado debe ser igual que cv2.cvtColor(img, cv2.COLOR_BGR2RGB)"
+    assert img_rgb[0, 0].tolist() == [255, 0, 0], "En RGB, el rojo es [255, 0, 0]"
+  `}
+>
+Pasa de BGR a RGB invirtiendo el último eje. Comprueba que da lo mismo que `cv2.cvtColor`.
+</CodeExercise>
+
+## Aritmética de píxeles: cuidado con el uint8
+
+<Predict
+  id="uint8-vuelta"
+  answer={["4"]}
+  explanation="Un uint8 solo llega a 255. NumPy hace la suma módulo 256: 250 + 10 = 260 → 260 − 256 = 4. Por eso al «aclarar» una foto con NumPy los blancos se vuelven casi negros. cv2.add, en cambio, satura: 250 + 10 = 255."
+  hints={["¿Cuál es el valor máximo de un uint8?", "Al pasarse, NumPy vuelve a empezar desde 0."]}
+>
+`a = np.array([250], dtype=np.uint8)`. ¿Cuánto vale `(a + 10)[0]`?
+</Predict>
+
+<CodeExercise
+  id="aclarar"
+  title="Aclarar sin dar la vuelta"
+  starter={`
+    import numpy as np
+    import cv2
+
+    rng = np.random.default_rng(0)
+    img = rng.integers(0, 256, size=(40, 60), dtype=np.uint8)
+
+    def brighten(img, delta):
+        """Suma delta a cada píxel saturando en [0, 255], como cv2.add."""
+        return ___
+
+    claro = brighten(img, 80)
+    oscuro = brighten(img, -80)
+    print(img[0, :5], claro[0, :5], oscuro[0, :5])
+  `}
+  solution={`
+    import numpy as np
+    import cv2
+
+    rng = np.random.default_rng(0)
+    img = rng.integers(0, 256, size=(40, 60), dtype=np.uint8)
+
+    def brighten(img, delta):
+        """Suma delta a cada píxel saturando en [0, 255], como cv2.add."""
+        return np.clip(img.astype(np.int16) + delta, 0, 255).astype(np.uint8)
+
+    claro = brighten(img, 80)
+    oscuro = brighten(img, -80)
+    print(img[0, :5], claro[0, :5], oscuro[0, :5])
+  `}
+  hints={[
+    "Primero pasa a un tipo con más rango (int16) para que la suma no dé la vuelta.",
+    "np.clip(x, 0, 255) recorta al rango válido.",
+    "Al final, vuelve a uint8 con .astype(np.uint8).",
+  ]}
+  check={`
+    assert claro.dtype == np.uint8, "El resultado debe seguir siendo uint8"
+    assert np.array_equal(claro, cv2.add(img, np.full_like(img, 80))), "Aclarar debe dar lo mismo que cv2.add"
+    assert np.array_equal(oscuro, cv2.subtract(img, np.full_like(img, 80))), "Oscurecer debe dar lo mismo que cv2.subtract"
+  `}
+>
+Implementa la suma saturada en NumPy y compárala con `cv2.add` y `cv2.subtract`.
+</CodeExercise>
+
+## Mezclar imágenes
+
+El *blending* es una media ponderada píxel a píxel: $\text{resultado} = \alpha \cdot A + \beta \cdot B + \gamma$. Con $\alpha + \beta = 1$ se funden dos fotos (o se superpone un logo); es lo que hace `cv2.addWeighted(A, alpha, B, beta, gamma)`. Las dos imágenes deben tener la misma forma (si no, `cv2.resize` antes).
+
+<CodeExercise
+  id="blending"
+  title="addWeighted a mano"
+  starter={`
+    import numpy as np
+    import cv2
+
+    rng = np.random.default_rng(1)
+    a = rng.integers(0, 256, size=(30, 40, 3), dtype=np.uint8)
+    b = rng.integers(0, 256, size=(30, 40, 3), dtype=np.uint8)
+
+    def blend(a, b, alpha):
+        mezcla = ___                      # en float para no desbordar
+        return np.clip(np.rint(mezcla), 0, 255).astype(np.uint8)
+
+    m = blend(a, b, 0.7)
+    print(a[0, 0], b[0, 0], m[0, 0])
+  `}
+  solution={`
+    import numpy as np
+    import cv2
+
+    rng = np.random.default_rng(1)
+    a = rng.integers(0, 256, size=(30, 40, 3), dtype=np.uint8)
+    b = rng.integers(0, 256, size=(30, 40, 3), dtype=np.uint8)
+
+    def blend(a, b, alpha):
+        mezcla = alpha * a.astype(np.float64) + (1 - alpha) * b.astype(np.float64)
+        return np.clip(np.rint(mezcla), 0, 255).astype(np.uint8)
+
+    m = blend(a, b, 0.7)
+    print(a[0, 0], b[0, 0], m[0, 0])
+  `}
+  hints={[
+    "α · a + (1 − α) · b, con las imágenes pasadas a float.",
+    "alpha * a.astype(np.float64) + (1 - alpha) * b.astype(np.float64)",
+  ]}
+  check={`
+    referencia = cv2.addWeighted(a, 0.7, b, 0.3, 0)
+    assert m.dtype == np.uint8 and m.shape == a.shape, "El resultado debe ser uint8 y con la forma de las imágenes"
+    assert np.abs(m.astype(int) - referencia.astype(int)).max() <= 1, "Debe coincidir con cv2.addWeighted(a, 0.7, b, 0.3, 0) (salvo redondeos de 1)"
+    assert np.array_equal(blend(a, b, 1.0), a) and np.array_equal(blend(a, b, 0.0), b), "Con alpha = 1 sale a; con alpha = 0, b"
+  `}
+>
+Implementa la mezcla con NumPy y compárala con `cv2.addWeighted`.
+</CodeExercise>
+
+## Bordes: el gradiente de la imagen
+
+Un borde es un sitio donde el brillo **cambia de golpe**. El **gradiente** mide ese cambio: el filtro de **Sobel** lo aproxima restando los píxeles de un lado menos los del otro (en horizontal, `dx=1`; en vertical, `dy=1`), y el **Laplaciano** usa la segunda derivada. **Canny** va más allá: suaviza, calcula el gradiente, adelgaza los bordes a un píxel y se queda con los fuertes y los débiles conectados a ellos (dos umbrales).
+
+El detalle que el curso destaca: un borde de **oscuro a claro** da un gradiente positivo, pero uno de **claro a oscuro** da uno **negativo**. Si calculas Sobel directamente en `uint8` (`cv2.CV_8U`), los negativos se recortan a 0 y **pierdes la mitad de los bordes**. Lo correcto es calcular en `cv2.CV_64F` y tomar el valor absoluto.
+
+<CodeExercise
+  id="sobel"
+  title="No perder la mitad de los bordes"
+  starter={`
+    import numpy as np
+    import cv2
+
+    img = np.zeros((50, 50), dtype=np.uint8)
+    img[15:35, 15:35] = 200                    # un cuadrado claro sobre fondo negro
+
+    sobel_8u = cv2.Sobel(img, cv2.CV_8U, 1, 0, ksize=3)
+
+    sobel_64f = cv2.Sobel(img, ___, 1, 0, ksize=3)
+    sobel_abs = ___                             # valor absoluto, recortado a [0, 255] y a uint8
+
+    print("bordes en uint8:", (sobel_8u > 0).sum(), "| con valor absoluto:", (sobel_abs > 0).sum())
+  `}
+  solution={`
+    import numpy as np
+    import cv2
+
+    img = np.zeros((50, 50), dtype=np.uint8)
+    img[15:35, 15:35] = 200
+
+    sobel_8u = cv2.Sobel(img, cv2.CV_8U, 1, 0, ksize=3)
+
+    sobel_64f = cv2.Sobel(img, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_abs = np.uint8(np.clip(np.abs(sobel_64f), 0, 255))
+
+    print("bordes en uint8:", (sobel_8u > 0).sum(), "| con valor absoluto:", (sobel_abs > 0).sum())
+  `}
+  hints={[
+    "El tipo de salida en coma flotante es cv2.CV_64F.",
+    "np.abs, después np.clip(…, 0, 255) y por último np.uint8(…).",
+  ]}
+  check={`
+    assert sobel_64f.dtype == np.float64 and sobel_64f.min() < 0, "Sobel en CV_64F debe tener valores negativos (el borde derecho del cuadrado)"
+    assert (sobel_abs > 0).sum() == 2 * (sobel_8u > 0).sum(), "Con el valor absoluto deben aparecer el doble de píxeles de borde: los dos lados del cuadrado"
+    assert sobel_abs[25, 35] > 0 and sobel_8u[25, 35] == 0, "El borde derecho (de claro a oscuro) solo aparece con el valor absoluto"
+  `}
+>
+Con Sobel en `uint8` solo aparece el lado izquierdo del cuadrado. Calcula en `CV_64F` y toma el valor absoluto para recuperar el derecho.
+</CodeExercise>
+
+## Detección de caras
+
+El último ejemplo del tema usa una **red neuronal ya entrenada** (un detector SSD con ResNet, en formato Caffe) desde el módulo `cv2.dnn`. El patrón es el de cualquier modelo preentrenado: cargar, preparar la entrada como la espera la red, ejecutar y filtrar por confianza.
+
+```python
+net = cv2.dnn.readNetFromCaffe("deploy.prototxt.txt", "res10_300x300_ssd_iter_140000.caffemodel")
+h, w = img.shape[:2]
+# la red espera 300x300 y que se le resten las medias de cada canal con las que se entrenó
+blob = cv2.dnn.blobFromImage(cv2.resize(img, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
+net.setInput(blob)
+detecciones = net.forward()                 # forma (1, 1, N, 7)
+for i in range(detecciones.shape[2]):
+    confianza = detecciones[0, 0, i, 2]
+    if confianza > 0.5:
+        x1, y1, x2, y2 = (detecciones[0, 0, i, 3:7] * [w, h, w, h]).astype(int)   # coordenadas relativas → píxeles
+        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+```
+
+<Callout kind="real" title="Visión por computador hoy">
+OpenCV sigue siendo la navaja suiza para leer, transformar y preprocesar imágenes (también en el pipeline de tu TFM: CLAHE, recortes, redimensionado). Para **detectar** se usan modelos más recientes: **YOLO** (Ultralytics) para objetos, MediaPipe o RetinaFace para caras, y para clasificar o segmentar, redes de PyTorch o Keras. Y las caras son **datos personales** (biométricos, en el RGPD): detectarlas o reconocerlas en un producto real exige base legal, minimizar lo que se guarda y, a menudo, una evaluación de impacto.
+</Callout>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_16_Image_Analysis.ipynb` y el capítulo 10 del PDF: cargar y mostrar, canales, suma y resta, *blending*, gradientes (Sobel y Laplaciano, con el ejemplo de `arrows.jpg` en 8 bits frente a 64 bits) y detección de caras con la red Caffe de la carpeta `res/`.
+</Callout>
+
+## Para llevar
+
+- Una imagen es un `ndarray` `uint8` de forma `(alto, ancho, canales)`; OpenCV usa BGR.
+- En `uint8`, NumPy da la vuelta (250 + 10 = 4) y OpenCV satura (255): convierte a un tipo mayor o usa `cv2.add`.
+- Mezclar es una media ponderada: `cv2.addWeighted`.
+- Los bordes son gradientes: Sobel en `CV_64F` + valor absoluto, o Canny.
+- Detectar con un modelo preentrenado: preparar la entrada como en el entrenamiento, ejecutar y filtrar por confianza.

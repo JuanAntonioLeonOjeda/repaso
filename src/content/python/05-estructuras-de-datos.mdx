@@ -1,0 +1,268 @@
+Las listas y los diccionarios de Python sirven para casi todo, pero hay problemas que piden una estructura concreta: deshacer pasos (pila), atender en orden de llegada (cola), sacar siempre el más urgente (cola de prioridad), buscar al instante (tabla hash) o recorrer relaciones (grafo). Elegir bien es lo que separa un script que tarda un segundo de uno que tarda una hora.
+
+## El coste de cada operación
+
+La pregunta es siempre la misma: **¿cuántos pasos hace la operación si los datos crecen?** Se escribe con la notación O grande: $O(1)$ es constante (no depende del tamaño), $O(n)$ crece con los datos y $O(\log n)$ casi no crece (con un millón de elementos, unos 20 pasos).
+
+| Estructura | En Python | Lo rápido | Lo lento |
+|---|---|---|---|
+| Array dinámico | `list` | acceso por índice y `append`: $O(1)$ | `x in lista`, `insert(0, x)`, `pop(0)`: $O(n)$ |
+| Pila (LIFO) | `list` con `append` / `pop` | meter y sacar del final: $O(1)$ | — |
+| Cola (FIFO) | `collections.deque` | `append` / `popleft`: $O(1)$ | acceso por índice en medio |
+| Cola de prioridad | `heapq` sobre una `list` | sacar el mínimo: $O(\log n)$ | buscar un elemento cualquiera |
+| Tabla hash | `dict`, `set` | buscar, insertar, borrar: $O(1)$ de media | nada en orden |
+| Grafo | `dict` de listas de vecinos | vecinos de un nodo | — |
+
+<Callout kind="warn" title="La cola con una lista es lenta">
+`lista.pop(0)` desplaza todos los elementos una posición: con una cola de un millón de tareas, cada extracción mueve un millón de elementos. `deque.popleft()` es $O(1)$. Para colas, siempre `deque`.
+</Callout>
+
+## Pila: el último en entrar, el primero en salir
+
+Una pila es como un montón de platos: solo tocas el de arriba. Sirve para deshacer, para recorrer en profundidad y para comprobar que algo está **bien anidado**.
+
+<CodeExercise
+  id="balanceados"
+  title="Paréntesis balanceados"
+  starter={`
+    def balanceado(texto):
+        pareja = {")": "(", "]": "["}
+        pila = []
+        for c in texto:
+            if c in "([":
+                pila.append(c)
+            elif c in ")]":
+                if not pila or ___:
+                    return False
+        return ___
+
+    for t in ["(aa(c))bb[a]", "([b])(aa)", "dd((abc[a)]", "[(a])", "(()"]:
+        print(t, balanceado(t))
+  `}
+  solution={`
+    def balanceado(texto):
+        pareja = {")": "(", "]": "["}
+        pila = []
+        for c in texto:
+            if c in "([":
+                pila.append(c)
+            elif c in ")]":
+                if not pila or pila.pop() != pareja[c]:
+                    return False
+        return len(pila) == 0
+
+    for t in ["(aa(c))bb[a]", "([b])(aa)", "dd((abc[a)]", "[(a])", "(()"]:
+        print(t, balanceado(t))
+  `}
+  hints={[
+    "Al ver un cierre, el último abierto (la cima de la pila) tiene que ser su pareja.",
+    "pila.pop() saca y devuelve la cima; compárala con pareja[c].",
+    "Al final, todo lo abierto debe haberse cerrado: la pila tiene que estar vacía.",
+  ]}
+  check={`
+    casos = {"(aa(c))bb[a]": True, "([b])(aa)": True, "dd((abc[a)]": False, "[(a])": False, "(()": False, "": True, ")(": False}
+    for t, esperado in casos.items():
+        assert balanceado(t) == esperado, f"balanceado({t!r}) debería ser {esperado}"
+  `}
+>
+Ejercicio 4 de tu notebook de estructuras avanzadas: comprueba si los paréntesis y corchetes de un texto están bien emparejados.
+</CodeExercise>
+
+## Cola de prioridad: siempre el más pequeño
+
+Un *heap* mantiene una lista organizada de forma que el **mínimo está siempre en la posición 0**, y meter o sacar cuesta $O(\log n)$. Es lo que usan los planificadores de tareas, el algoritmo de Dijkstra y la búsqueda A*.
+
+```python
+import heapq
+tareas = []
+heapq.heappush(tareas, (2, "entrenar"))      # (prioridad, tarea): se compara la tupla
+heapq.heappush(tareas, (1, "limpiar datos"))
+heapq.heappop(tareas)                         # (1, 'limpiar datos')
+heapq.nsmallest(3, numeros)                   # los 3 menores sin ordenar todo
+```
+
+<CodeExercise
+  id="top-k"
+  title="Los k más grandes de un flujo"
+  starter={`
+    import heapq
+
+    def top_k(flujo, k):
+        """Los k mayores valores de un iterable, de mayor a menor, guardando solo k a la vez."""
+        heap = []                       # heap de MÍNIMOS con los k mejores vistos hasta ahora
+        for x in flujo:
+            if len(heap) < k:
+                heapq.heappush(heap, x)
+            elif x > ___:               # ¿mejora al peor de los k?
+                heapq.heapreplace(heap, x)   # saca el mínimo y mete x
+        return sorted(heap, reverse=True)
+
+    print(top_k([5, 1, 9, 3, 7, 9, 2, 8], 3))
+  `}
+  solution={`
+    import heapq
+
+    def top_k(flujo, k):
+        """Los k mayores valores de un iterable, de mayor a menor, guardando solo k a la vez."""
+        heap = []
+        for x in flujo:
+            if len(heap) < k:
+                heapq.heappush(heap, x)
+            elif x > heap[0]:
+                heapq.heapreplace(heap, x)
+        return sorted(heap, reverse=True)
+
+    print(top_k([5, 1, 9, 3, 7, 9, 2, 8], 3))
+  `}
+  hints={[
+    "El heap guarda los k mejores; el peor de ellos es el mínimo del heap.",
+    "El mínimo de un heap está siempre en heap[0].",
+  ]}
+  check={`
+    assert top_k([5, 1, 9, 3, 7, 9, 2, 8], 3) == [9, 9, 8], "Los 3 mayores son [9, 9, 8]"
+    assert top_k(iter(range(1_000_000)), 2) == [999999, 999998], "Debe funcionar con un generador de un millón de valores"
+    assert top_k([4, 2], 5) == [4, 2], "Si hay menos de k valores, se devuelven todos"
+  `}
+>
+Quieres los 3 productos más vendidos de un fichero de ventas que no cabe en memoria. Ordenarlo todo es $O(n \log n)$ y exige tenerlo entero; con un heap de tamaño k basta una pasada.
+</CodeExercise>
+
+## Tabla hash: buscar sin recorrer
+
+`dict` y `set` son **tablas hash**: Python calcula `hash(clave)`, lo convierte en una posición de un array y guarda allí el valor. Para buscar, repite el cálculo y va directo: no recorre nada. Por eso las claves deben ser **inmutables** (si la clave cambiara, su hash cambiaría y no se encontraría) y por eso `x in set` es instantáneo y `x in list` no.
+
+<CodeExercise
+  id="sin-duplicados"
+  title="Quitar duplicados conservando el orden"
+  starter={`
+    def eliminar_duplicados(lista):
+        vistos = set()
+        resultado = []
+        for x in lista:
+            ___
+        return resultado
+
+    print(eliminar_duplicados(["b", "a", "b", "c", "a"]))
+  `}
+  solution={`
+    def eliminar_duplicados(lista):
+        vistos = set()
+        resultado = []
+        for x in lista:
+            if x not in vistos:
+                vistos.add(x)
+                resultado.append(x)
+        return resultado
+
+    print(eliminar_duplicados(["b", "a", "b", "c", "a"]))
+  `}
+  hints={[
+    "Para cada elemento: si no lo has visto, apúntalo en vistos y añádelo al resultado.",
+    "if x not in vistos: vistos.add(x); resultado.append(x)",
+  ]}
+  check={`
+    assert eliminar_duplicados(["b", "a", "b", "c", "a"]) == ["b", "a", "c"], "Debe conservar el orden de primera aparición: ['b', 'a', 'c']"
+    assert eliminar_duplicados([]) == [], "Lista vacía da lista vacía"
+    import time
+    t = time.perf_counter(); eliminar_duplicados(list(range(100_000)) * 2); t = time.perf_counter() - t
+    assert t < 1, "Con 200.000 elementos debe tardar milisegundos: busca en un set, no en la lista resultado"
+  `}
+>
+Ejercicio 1 del notebook: sin convertir la lista entera a `set` (perderías el orden). Con `list(dict.fromkeys(lista))` también sale en una línea, porque los dicts conservan el orden de inserción.
+</CodeExercise>
+
+## Grafos: relaciones
+
+Un grafo son nodos unidos por aristas: ciudades y carreteras, usuarios y amistades, páginas y enlaces. En Python, lo más práctico es una **lista de adyacencia**: un dict que a cada nodo le asocia sus vecinos. Para encontrar el camino con menos saltos entre dos nodos se usa la **búsqueda en anchura** (BFS), que explora por capas con una cola.
+
+<CodeExercise
+  id="bfs"
+  title="El camino más corto en saltos"
+  starter={`
+    from collections import deque
+
+    red = {
+        "Valencia": ["Madrid", "Barcelona", "Alicante"],
+        "Madrid": ["Valencia", "Sevilla", "Bilbao"],
+        "Barcelona": ["Valencia", "Bilbao"],
+        "Alicante": ["Valencia", "Murcia"],
+        "Murcia": ["Alicante", "Sevilla"],
+        "Sevilla": ["Madrid", "Murcia"],
+        "Bilbao": ["Madrid", "Barcelona"],
+    }
+
+    def camino_mas_corto(grafo, origen, destino):
+        cola = deque([[origen]])          # cada elemento es un camino
+        visitados = {origen}
+        while cola:
+            camino = cola.___()           # FIFO: el más antiguo primero
+            nodo = camino[-1]
+            if nodo == destino:
+                return camino
+            for vecino in grafo[nodo]:
+                if vecino not in visitados:
+                    visitados.add(vecino)
+                    cola.append(___)
+        return None
+
+    print(camino_mas_corto(red, "Barcelona", "Sevilla"))
+  `}
+  solution={`
+    from collections import deque
+
+    red = {
+        "Valencia": ["Madrid", "Barcelona", "Alicante"],
+        "Madrid": ["Valencia", "Sevilla", "Bilbao"],
+        "Barcelona": ["Valencia", "Bilbao"],
+        "Alicante": ["Valencia", "Murcia"],
+        "Murcia": ["Alicante", "Sevilla"],
+        "Sevilla": ["Madrid", "Murcia"],
+        "Bilbao": ["Madrid", "Barcelona"],
+    }
+
+    def camino_mas_corto(grafo, origen, destino):
+        cola = deque([[origen]])
+        visitados = {origen}
+        while cola:
+            camino = cola.popleft()
+            nodo = camino[-1]
+            if nodo == destino:
+                return camino
+            for vecino in grafo[nodo]:
+                if vecino not in visitados:
+                    visitados.add(vecino)
+                    cola.append(camino + [vecino])
+        return None
+
+    print(camino_mas_corto(red, "Barcelona", "Sevilla"))
+  `}
+  hints={[
+    "Una cola FIFO saca por la izquierda: popleft().",
+    "Lo que se encola es el camino hasta el vecino: el camino actual más el vecino.",
+    "cola.append(camino + [vecino])",
+  ]}
+  check={`
+    c = camino_mas_corto(red, "Barcelona", "Sevilla")
+    assert c is not None and c[0] == "Barcelona" and c[-1] == "Sevilla", "El camino debe ir de Barcelona a Sevilla"
+    assert len(c) == 4, f"El camino más corto tiene 3 saltos (4 ciudades) y el tuyo tiene {len(c)} ciudades: {c}"
+    assert all(b in red[a] for a, b in zip(c, c[1:])), "Cada paso del camino debe ser una conexión del grafo"
+    assert camino_mas_corto(red, "Murcia", "Murcia") == ["Murcia"], "De un nodo a sí mismo el camino es solo ese nodo"
+  `}
+>
+Completa la búsqueda en anchura. Como explora por capas, el primer camino que llega al destino es el de menos saltos.
+</CodeExercise>
+
+<Callout kind="real" title="En el trabajo no se reinventan">
+Estas estructuras ya existen y están optimizadas: `collections` (`deque`, `Counter`, `defaultdict`), `heapq`, `bisect` (búsqueda binaria en listas ordenadas) y, para grafos, **NetworkX** (BFS, Dijkstra, PageRank, comunidades). Lo que sí se espera de ti es saber **cuál elegir** y por qué una línea con `x in lista` dentro de un bucle convierte un proceso de minutos en uno de horas.
+</Callout>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_07_Python101_Advanced.ipynb`: array, lista enlazada, pila, cola, cola de prioridad, tabla hash y grafo, con los ejercicios de eliminar duplicados, heapsort, mediana con heap, paréntesis balanceados y pila con dos colas.
+</Callout>
+
+## Para llevar
+
+- Pregúntate cuántos pasos hace cada operación cuando los datos crecen.
+- Pila con `list` (`append`/`pop`), cola con `deque` (`append`/`popleft`), prioridad con `heapq`.
+- `dict` y `set` buscan en $O(1)$ gracias al hash; por eso sus claves son inmutables.
+- Un grafo es un dict de vecinos; BFS con una cola encuentra el camino de menos saltos.

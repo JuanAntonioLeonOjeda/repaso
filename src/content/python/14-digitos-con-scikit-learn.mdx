@@ -1,0 +1,186 @@
+Este es el «hola, mundo» del aprendizaje automático: enseñar a un programa a reconocer dígitos escritos a mano. Lo interesante no es el resultado (un 97 % de acierto con diez líneas), sino que recorre **el flujo completo** que repetirás en cualquier proyecto: cargar datos, darles la forma que pide el modelo, separar entrenamiento y prueba, entrenar, predecir y evaluar. Y todo con lo que ya sabes de NumPy.
+
+## Los datos: imágenes de 8×8
+
+`sklearn.datasets.load_digits()` trae 1.797 imágenes de dígitos del 0 al 9, de 8×8 píxeles con valores de 0 (blanco) a 16 (negro). El objeto que devuelve tiene:
+
+- `digits.images`: forma `(1797, 8, 8)`, las imágenes como matrices.
+- `digits.data`: las mismas imágenes **aplanadas**, forma `(1797, 64)`.
+- `digits.target`: la etiqueta de cada una (el dígito).
+
+<RunCode
+  title="Ver unos cuantos dígitos"
+  code={`
+    import matplotlib.pyplot as plt
+    from sklearn import datasets
+
+    digits = datasets.load_digits()
+    print(digits.images.shape, digits.data.shape)
+    print(digits.images[0])                    # el primer dígito, como matriz
+
+    fig, axes = plt.subplots(1, 8, figsize=(10, 2))
+    for ax, img, etiqueta in zip(axes, digits.images, digits.target):
+        ax.imshow(img, cmap="gray_r")
+        ax.set_title(etiqueta)
+        ax.axis("off")
+    plt.show()
+  `}
+/>
+
+<Predict
+  id="aplanar-digitos"
+  answer={["64"]}
+  explanation="Un modelo clásico de scikit-learn espera una tabla: una fila por muestra y una columna por atributo. Una imagen de 8×8 se aplana en 64 atributos (un píxel cada uno): images.reshape(len(images), -1). Al aplanar se pierde la información de qué píxeles son vecinos; las redes convolucionales de Deep Learning la conservan."
+  hints={["¿Cuántos píxeles tiene una imagen de 8×8?"]}
+>
+Para entrenar un SVM, cada imagen se convierte en una fila. ¿Cuántas columnas tiene esa tabla?
+</Predict>
+
+## Entrenar y predecir
+
+Todos los modelos de scikit-learn tienen la misma interfaz: se crean con sus hiperparámetros, se entrenan con `fit(X, y)` y predicen con `predict(X)`. Aquí, una **máquina de vectores soporte** (`SVC`) con núcleo gaussiano.
+
+<CodeExercise
+  id="svc-digitos"
+  title="Un clasificador de dígitos"
+  starter={`
+    from sklearn import datasets, metrics, svm
+    from sklearn.model_selection import train_test_split
+
+    digits = datasets.load_digits()
+    X = digits.images.reshape(___)                # una fila de 64 píxeles por imagen
+    y = digits.target
+
+    # mitad para entrenar, mitad para evaluar, sin barajar (como el ejemplo de scikit-learn)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5, shuffle=False)
+
+    clf = svm.SVC(gamma=0.001)
+    clf.___(X_train, y_train)
+    pred = clf.___(X_test)
+
+    acc = metrics.accuracy_score(y_test, pred)
+    print(f"accuracy: {acc:.3f}")
+    print(metrics.classification_report(y_test, pred, digits=3))
+  `}
+  solution={`
+    from sklearn import datasets, metrics, svm
+    from sklearn.model_selection import train_test_split
+
+    digits = datasets.load_digits()
+    X = digits.images.reshape(len(digits.images), -1)
+    y = digits.target
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5, shuffle=False)
+
+    clf = svm.SVC(gamma=0.001)
+    clf.fit(X_train, y_train)
+    pred = clf.predict(X_test)
+
+    acc = metrics.accuracy_score(y_test, pred)
+    print(f"accuracy: {acc:.3f}")
+    print(metrics.classification_report(y_test, pred, digits=3))
+  `}
+  hints={[
+    "reshape(len(digits.images), -1): tantas filas como imágenes y las columnas que hagan falta (64).",
+    "Entrenar es fit(X_train, y_train); predecir, predict(X_test).",
+  ]}
+  check={`
+    assert X.shape == (1797, 64), f"X debe tener forma (1797, 64) y tiene {X.shape}"
+    assert len(pred) == len(y_test) == 899, "Debe haber una predicción por cada imagen de prueba (899)"
+    assert abs(acc - 0.969) < 0.001, f"Con gamma=0.001 la accuracy en prueba es 0,969 y sale {acc:.3f}"
+  `}
+>
+Completa el flujo: aplanar, separar, entrenar, predecir y evaluar.
+</CodeExercise>
+
+<Callout kind="warn" title="Un test del 5 % no es un test">
+El notebook del curso separa con `test_size=0.05`: solo 90 imágenes de prueba. Con tan pocas, cada fallo mueve la accuracy más de un punto, y el resultado depende mucho de qué 90 imágenes caigan ahí. Para comparar modelos con pocos datos, usa un test más grande o **validación cruzada** (lo verás en Aprendizaje Supervisado).
+</Callout>
+
+## ¿En qué se equivoca?
+
+La accuracy dice cuánto acierta; la **matriz de confusión** dice **qué confunde con qué**: la fila es el dígito real y la columna el predicho, así que todo lo que está fuera de la diagonal son errores.
+
+<CodeExercise
+  id="confusion-digitos"
+  title="La confusión más frecuente"
+  starter={`
+    import numpy as np
+    from sklearn import datasets, metrics, svm
+    from sklearn.model_selection import train_test_split
+
+    digits = datasets.load_digits()
+    X = digits.images.reshape(len(digits.images), -1)
+    X_train, X_test, y_train, y_test = train_test_split(X, digits.target, test_size=0.5, shuffle=False)
+    pred = svm.SVC(gamma=0.001).fit(X_train, y_train).predict(X_test)
+
+    cm = metrics.confusion_matrix(y_test, pred)
+    errores = cm.copy()
+    ___                                         # pon a 0 la diagonal (los aciertos)
+    real, predicho = np.unravel_index(___, errores.shape)
+    print(cm)
+    print(f"La confusión más frecuente: un {real} leído como {predicho} ({errores[real, predicho]} veces)")
+  `}
+  solution={`
+    import numpy as np
+    from sklearn import datasets, metrics, svm
+    from sklearn.model_selection import train_test_split
+
+    digits = datasets.load_digits()
+    X = digits.images.reshape(len(digits.images), -1)
+    X_train, X_test, y_train, y_test = train_test_split(X, digits.target, test_size=0.5, shuffle=False)
+    pred = svm.SVC(gamma=0.001).fit(X_train, y_train).predict(X_test)
+
+    cm = metrics.confusion_matrix(y_test, pred)
+    errores = cm.copy()
+    np.fill_diagonal(errores, 0)
+    real, predicho = np.unravel_index(errores.argmax(), errores.shape)
+    print(cm)
+    print(f"La confusión más frecuente: un {real} leído como {predicho} ({errores[real, predicho]} veces)")
+  `}
+  hints={[
+    "np.fill_diagonal(matriz, 0) pone a 0 la diagonal en el sitio.",
+    "argmax() da la posición del máximo en el array aplanado; unravel_index la convierte en (fila, columna).",
+  ]}
+  check={`
+    assert errores.trace() == 0, "La diagonal de errores debe ser 0"
+    assert (int(real), int(predicho)) == (3, 8), f"La confusión más frecuente es un 3 leído como 8; sale {real} → {predicho}"
+    assert errores[3, 8] == 5, "Pasa 5 veces"
+  `}
+>
+Encuentra la pareja (real, predicho) que más se confunde.
+</CodeExercise>
+
+## Un hiperparámetro mal elegido
+
+`gamma` controla lo «local» que es el núcleo gaussiano del SVM: con un `gamma` grande, cada imagen de entrenamiento solo influye en las que se le parecen muchísimo.
+
+<Quiz
+  id="gamma-alto"
+  options={[
+    "El modelo es demasiado simple (infraajuste)",
+    "El modelo memoriza el entrenamiento (sobreajuste): acierta todo lo visto y casi nada nuevo",
+    "Hay un error en los datos de prueba",
+    "El SVM no sirve para imágenes",
+  ]}
+  answer={1}
+  explanation="Acertar el 100 % en entrenamiento y el 10 % en prueba (lo mismo que tirar un dado de diez caras) es sobreajuste de libro: con gamma = 0,1 cada imagen de entrenamiento es una isla y una imagen nueva no se parece lo bastante a ninguna. Con gamma = 0,001 se acierta el 96,9 % en prueba; con gamma = 'scale' (el valor por defecto), el 96,1 %."
+>
+Con `gamma=0.1` el mismo SVM acierta el **100 %** de las imágenes de entrenamiento y el **10,1 %** de las de prueba. ¿Qué está pasando?
+</Quiz>
+
+<Callout kind="real" title="Del ejemplo a un proyecto">
+En un proyecto real: los hiperparámetros (`C`, `gamma`) se eligen con `GridSearchCV` y validación cruzada, nunca mirando el test; el escalado va dentro de un `Pipeline` para que no haya fugas de información; y para imágenes de verdad (no de 8×8) se usan **redes convolucionales**, que aprovechan que los píxeles vecinos están relacionados. Este ejemplo usa justo las piezas que verás en Aprendizaje Supervisado y en Deep Learning.
+</Callout>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_15_OCR.ipynb` y el capítulo 9 del PDF: cargar el *dataset*, visualizar, aplanar, entrenar un `SVC(gamma=0.001, C=100.)`, visualizar las predicciones y el informe de clasificación.
+</Callout>
+
+## Para llevar
+
+- scikit-learn espera una tabla: una fila por muestra. Las imágenes se aplanan con `reshape(n, -1)`.
+- La interfaz es siempre la misma: crear, `fit`, `predict`, evaluar.
+- La matriz de confusión dice qué se confunde con qué; aquí, sobre todo, el 3 con el 8.
+- 100 % en entrenamiento y 10 % en prueba es sobreajuste: los hiperparámetros importan.
+- Un test diminuto da una cifra con mucho ruido.

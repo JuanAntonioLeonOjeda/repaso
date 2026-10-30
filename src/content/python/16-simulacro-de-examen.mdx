@@ -1,0 +1,276 @@
+El examen de la asignatura es un notebook: varias preguntas cortas (una función en Python puro, NumPy, un generador, pandas) que valen entre 1 y 1,5 puntos, y una pregunta larga de análisis de datos que vale entre 4 y 8. Cada pregunta trae un **test** (`assert`) que tu código tiene que pasar. Esta lección es un simulacro con preguntas del mismo estilo que aún no has visto en las otras lecciones.
+
+<Callout kind="idea" title="Cómo afrontar el notebook">
+- **Primero, los imports** que vas a usar, en la primera celda, y ejecútala.
+- **Lee el test antes que el enunciado**: dice exactamente qué forma tiene que tener la salida (¿lista o array? ¿DataFrame con qué índice? ¿strings o enteros?). Muchos fallos son de formato, no de lógica.
+- **No toques el test.** Si falla, imprime tu salida y la esperada y compáralas.
+- Empieza por lo que sabes hacer seguro y deja tiempo para la pregunta larga: es la que más puntúa.
+- Antes de entregar: **Kernel → Restart & Run All**. Si algo dependía de una celda que borraste, lo verás.
+</Callout>
+
+## Pregunta 1 · Lista sin duplicados en un DataFrame (1 pt)
+
+<CodeExercise
+  id="df-sin-duplicados"
+  title="remove_duplicates"
+  starter={`
+    import pandas as pd
+
+    def remove_duplicates(lista):
+        ___
+
+    serie = ["a", "b", "c", "a", "c", "a", "g"]
+    output = remove_duplicates(serie)
+    print(output)
+  `}
+  solution={`
+    import pandas as pd
+
+    def remove_duplicates(lista):
+        return pd.DataFrame(lista).drop_duplicates().reset_index(drop=True)
+
+    serie = ["a", "b", "c", "a", "c", "a", "g"]
+    output = remove_duplicates(serie)
+    print(output)
+  `}
+  hints={[
+    "pd.DataFrame(lista).drop_duplicates() quita los repetidos… pero conserva el índice original (0, 1, 2, 6).",
+    "El test compara con equals, que también mira el índice: reinícialo con reset_index(drop=True).",
+  ]}
+  check={`
+    expected_output = pd.DataFrame(["a", "b", "c", "g"])
+    assert remove_duplicates(["a", "b", "c", "a", "c", "a", "g"]).equals(expected_output), "El resultado debe ser igual (valores E índice) a pd.DataFrame(['a', 'b', 'c', 'g'])"
+    assert remove_duplicates(["z", "y", "z"]).equals(pd.DataFrame(["z", "y"])), "Debe conservar el orden de aparición: ['z', 'y']"
+  `}
+>
+Dada una lista, devuelve un DataFrame sin los elementos duplicados, conservando el orden de aparición. El test usa `expected_output.equals(output)`.
+</CodeExercise>
+
+## Pregunta 2 · El carácter menos frecuente (1 pt)
+
+<CodeExercise
+  id="menos-frecuente"
+  title="Rellenar espacios"
+  starter={`
+    from collections import Counter
+    import pandas as pd
+
+    def fill_spaces(serie):
+        """Sustituye los espacios por el carácter (que no sea espacio) menos frecuente de toda la
+        serie; si hay empate, el que aparece antes."""
+        conteo = Counter(___)
+        raro = min(conteo, key=___)
+        return serie.str.replace(" ", raro)
+
+    s = pd.Series(["la casa azul", "el perro", "un dia de sol"])
+    print(fill_spaces(s))
+  `}
+  solution={`
+    from collections import Counter
+    import pandas as pd
+
+    def fill_spaces(serie):
+        """Sustituye los espacios por el carácter (que no sea espacio) menos frecuente de toda la
+        serie; si hay empate, el que aparece antes."""
+        conteo = Counter("".join(serie).replace(" ", ""))
+        raro = min(conteo, key=conteo.get)
+        return serie.str.replace(" ", raro)
+
+    s = pd.Series(["la casa azul", "el perro", "un dia de sol"])
+    print(fill_spaces(s))
+  `}
+  hints={[
+    "Junta todos los textos en uno y quita los espacios: ''.join(serie).replace(' ', '').",
+    "min con key=conteo.get da la clave con el menor conteo; ante un empate, la primera que se insertó (la que aparece antes).",
+  ]}
+  check={`
+    out = fill_spaces(pd.Series(["la casa azul", "el perro", "un dia de sol"]))
+    assert out.tolist() == ["laccasacazul", "elcperro", "uncdiacdecsol"], f"El menos frecuente es 'c' (aparece una vez y antes que los otros empatados); sale {out.tolist()}"
+    assert isinstance(out, pd.Series), "Debe devolver una Series"
+  `}
+>
+Pregunta 8 de un examen de la convocatoria anterior: recibe una Series de textos y devuelve la misma Series cambiando los espacios por el carácter menos frecuente.
+</CodeExercise>
+
+## Pregunta 3 · Una pila con dos colas (1,5 pt)
+
+<CodeExercise
+  id="pila-dos-colas"
+  title="LIFO con dos colas"
+  starter={`
+    from collections import deque
+
+    # Solo se permite append (encolar), popleft (desencolar) y len sobre estas dos colas.
+    cola_1 = deque()
+    cola_2 = deque()
+
+    def insertar_LIFO(elemento):
+        cola_1.append(elemento)
+
+    def extraer_LIFO():
+        """Saca el ÚLTIMO insertado: pasa todos menos uno de cola_1 a cola_2, saca el que queda
+        y devuelve los demás a cola_1."""
+        if len(cola_1) == 0:
+            return None
+        while len(cola_1) > 1:
+            ___
+        ultimo = cola_1.popleft()
+        while ___:
+            cola_1.append(cola_2.popleft())
+        return ultimo
+
+    for x in [6, 9, 1, 3]:
+        insertar_LIFO(x)
+    print(extraer_LIFO(), extraer_LIFO(), extraer_LIFO())
+  `}
+  solution={`
+    from collections import deque
+
+    cola_1 = deque()
+    cola_2 = deque()
+
+    def insertar_LIFO(elemento):
+        cola_1.append(elemento)
+
+    def extraer_LIFO():
+        """Saca el ÚLTIMO insertado: pasa todos menos uno de cola_1 a cola_2, saca el que queda
+        y devuelve los demás a cola_1."""
+        if len(cola_1) == 0:
+            return None
+        while len(cola_1) > 1:
+            cola_2.append(cola_1.popleft())
+        ultimo = cola_1.popleft()
+        while len(cola_2) > 0:
+            cola_1.append(cola_2.popleft())
+        return ultimo
+
+    for x in [6, 9, 1, 3]:
+        insertar_LIFO(x)
+    print(extraer_LIFO(), extraer_LIFO(), extraer_LIFO())
+  `}
+  hints={[
+    "Mientras quede más de uno en cola_1, desencola de cola_1 y encola en cola_2.",
+    "cola_2.append(cola_1.popleft())",
+    "Para devolverlos, repite mientras cola_2 no esté vacía: len(cola_2) > 0.",
+  ]}
+  check={`
+    cola_1.clear(); cola_2.clear()
+    for x in [6, 9, 1, 3]:
+        insertar_LIFO(x)
+    assert [extraer_LIFO(), extraer_LIFO(), extraer_LIFO()] == [3, 1, 9], "Tras insertar 6, 9, 1, 3 deben salir 3, 1, 9"
+    insertar_LIFO(5); insertar_LIFO(8)
+    assert [extraer_LIFO(), extraer_LIFO(), extraer_LIFO(), extraer_LIFO()] == [8, 5, 6, None], "Después deben salir 8, 5, 6 y None (vacía)"
+  `}
+>
+Ejercicio 5 del notebook de estructuras avanzadas, con el estilo del examen: simula una pila usando solo las operaciones de cola.
+</CodeExercise>
+
+## Pregunta 4 · Análisis del Titanic (5 pt)
+
+<CodeExercise
+  id="titanic-largo"
+  title="La pregunta larga"
+  files={["titanic.csv"]}
+  starter={`
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    df = pd.read_csv("titanic.csv")
+
+    # A. Rellena los Embarked vacíos con el puerto más frecuente
+    df["Embarked"] = ___
+
+    # B. Columna Familia = hermanos/cónyuges + padres/hijos + el propio pasajero
+    df["Familia"] = ___
+
+    # C. Columna Grupo: 'solo' (1), 'pequeña' (2 a 4) o 'grande' (5 o más), con pd.cut
+    df["Grupo"] = pd.cut(df["Familia"], bins=___, labels=["solo", "pequeña", "grande"])
+
+    # D. Tasa de supervivencia por grupo
+    tasa_grupo = df.groupby("Grupo", observed=True)["Survived"].mean()
+
+    # E. Mediana del precio del billete por puerto de embarque
+    mediana_puerto = ___
+
+    # F. Figura con dos gráficos de barras: la tasa por grupo y la mediana por puerto
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    tasa_grupo.plot(kind="bar", ax=axes[0], title="Supervivencia por tamaño de familia")
+    ___
+    fig.tight_layout()
+    plt.show()
+
+    print(tasa_grupo.round(3))
+    print(mediana_puerto)
+  `}
+  solution={`
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    df = pd.read_csv("titanic.csv")
+
+    df["Embarked"] = df["Embarked"].fillna(df["Embarked"].mode()[0])
+
+    df["Familia"] = df["SibSp"] + df["Parch"] + 1
+
+    df["Grupo"] = pd.cut(df["Familia"], bins=[0, 1, 4, np.inf], labels=["solo", "pequeña", "grande"])
+
+    tasa_grupo = df.groupby("Grupo", observed=True)["Survived"].mean()
+
+    mediana_puerto = df.groupby("Embarked")["Fare"].median()
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    tasa_grupo.plot(kind="bar", ax=axes[0], title="Supervivencia por tamaño de familia")
+    mediana_puerto.plot(kind="bar", ax=axes[1], title="Mediana del billete por puerto")
+    fig.tight_layout()
+    plt.show()
+
+    print(tasa_grupo.round(3))
+    print(mediana_puerto)
+  `}
+  hints={[
+    "La moda de una columna es .mode()[0]; úsala en fillna.",
+    "pd.cut con bins=[0, 1, 4, np.inf] crea los tramos (0, 1], (1, 4] y (4, ∞): por defecto el borde derecho se incluye.",
+    "La mediana por grupo es un groupby con .median(); el segundo gráfico, igual que el primero pero en axes[1].",
+  ]}
+  check={`
+    assert df["Embarked"].isna().sum() == 0 and df["Embarked"].value_counts()["S"] == 646, "Los 2 Embarked vacíos se rellenan con 'S' (quedan 646)"
+    assert df.loc[0, "Familia"] == 2 and df["Familia"].max() == 11, "Familia = SibSp + Parch + 1 (el primer pasajero viaja con 1 familiar: 2)"
+    assert tasa_grupo.round(3).to_dict() == {"solo": 0.304, "pequeña": 0.579, "grande": 0.161}, f"Tasas esperadas: solo 0,304, pequeña 0,579, grande 0,161; salen {tasa_grupo.round(3).to_dict()}"
+    assert mediana_puerto.to_dict() == {"C": 29.7, "Q": 7.75, "S": 13.0}, f"Medianas esperadas: C 29,7, Q 7,75, S 13; salen {mediana_puerto.to_dict()}"
+    assert len(fig.axes) == 2 and len(axes[1].patches) == 3, "El segundo gráfico debe tener una barra por puerto (3)"
+  `}
+>
+Una pregunta larga como las del examen, con el *dataset* del Titanic. Resuelve los apartados de la A a la F.
+</CodeExercise>
+
+<Quiz
+  id="lectura-titanic"
+  options={[
+    "Viajar en familia grande protegía: había más gente para ayudar",
+    "Viajar solo era lo más seguro",
+    "Las familias pequeñas sobrevivieron más que los que iban solos y que las familias grandes; las grandes, muy poco",
+    "El tamaño de la familia no influyó",
+  ]}
+  answer={2}
+  explanation="57,9 % en familias de 2 a 4, 30,4 % viajando solo y 16,1 % en familias de 5 o más. Ojo con sacar conclusiones causales: las familias grandes iban sobre todo en tercera clase, que es la que menos sobrevivió. Para separar los efectos habría que comparar dentro de cada clase (pivot_table con Pclass y Grupo)."
+>
+Con las tasas del apartado D (solo 0,304; pequeña 0,579; grande 0,161), ¿qué conclusión es correcta?
+</Quiz>
+
+<Callout kind="real" title="Del examen al trabajo">
+Las mismas preguntas en una empresa se resuelven igual, con dos diferencias: **nadie te da el test**, así que el `assert` te lo escribes tú (¿cuántas filas debería haber?, ¿suman lo que deberían?), y **la conclusión se explica con cautela**: qué dicen los datos, qué no dicen y qué factores pueden estar mezclados, como la clase y el tamaño de la familia del ejercicio anterior.
+</Callout>
+
+<Callout kind="practice" title="En tus notebooks">
+Los exámenes de la carpeta `examenes/` (`01MIAR_Exam_01_A.ipynb`, `01MIAR_Exam_01_B.ipynb`, `2024_25_1.ipynb`), `Exam Demo.ipynb`, `exam2.ipynb`, los PDF de la primera y la segunda convocatoria, `01MIAR_Python101_More_Exercices.ipynb` y los 100 *puzzles* de pandas y 100 ejercicios de NumPy.
+</Callout>
+
+## Para llevar
+
+- Lee el test antes que el enunciado: el formato de la salida (tipo, índice, orden) también puntúa.
+- `equals` compara también el índice: tras filtrar o quitar duplicados, `reset_index(drop=True)`.
+- `min(conteo, key=conteo.get)` y `pd.cut` resuelven en una línea lo que suele hacerse con bucles.
+- En la pregunta larga: limpiar, crear columnas, agrupar, graficar… y comprobar cada paso.
+- **Restart & Run All** antes de entregar.

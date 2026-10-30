@@ -1,0 +1,391 @@
+Con los datos ya cargados y limpios llega lo que da respuestas: **agrupar** («¿cuánto se vende por artículo?»), **juntar** tablas («ponle a cada incidente el país de su aeropuerto»), **pivotar** («incidentes por país y nivel de daño») y **transformar** textos y fechas. Es el corazón de la pregunta larga del examen.
+
+## Aplicar funciones: map, apply y lo vectorizado
+
+```python
+df["Status"] = df["Delay_Minutes"].apply(clasificar)      # una función por elemento
+df["Sex"].map({"male": 0, "female": 1})                    # traducir con un dict
+df.apply(lambda fila: fila["a"] - fila["b"], axis=1)       # una función por FILA (lento)
+```
+
+`apply` es un bucle de Python disfrazado. Funciona, pero si existe una operación vectorizada es mucho más rápida: `df["a"] - df["b"]` en vez del `apply` por filas, `np.where(cond, x, y)` para un si/no, y `pd.cut` para tramos:
+
+```python
+df["Status"] = pd.cut(df["Delay_Minutes"], bins=[-np.inf, 15, 60, np.inf],
+                      labels=["A tiempo", "Retrasado", "Cancelado"], right=False)
+```
+
+## Agrupar: groupby
+
+<GroupBySim />
+
+```python
+df.groupby("Airline")["Delay_Minutes"].mean()                    # una Series
+df.groupby("Airline")["Delay_Minutes"].agg(["mean", "median", "count"])
+df.groupby(["Pclass", "Sex"])["Survived"].mean()                 # varias claves: índice doble
+df.groupby("Airline").agg(media=("Delay_Minutes", "mean"),       # agregación con nombres
+                          vuelos=("Flight_Number", "count"))
+df.groupby("Airline")["Delay_Minutes"].transform("mean")         # un valor POR FILA
+df.groupby("Airline").filter(lambda g: len(g) >= 10)             # quitar grupos enteros
+```
+
+La clave para no liarse: `agg` devuelve **una fila por grupo**; `transform` devuelve **algo del mismo tamaño que el DataFrame**, que puedes comparar fila a fila o usar para rellenar.
+
+<CodeExercise
+  id="edad-por-grupo"
+  title="Rellenar la edad con la mediana de su grupo"
+  files={["titanic.csv"]}
+  starter={`
+    import pandas as pd
+
+    df = pd.read_csv("titanic.csv")
+
+    # mediana de edad de cada combinación (Pclass, Sex), repetida en cada fila
+    mediana_grupo = df.groupby(["Pclass", "Sex"])["Age"].___("median")
+
+    df["Age"] = df["Age"].fillna(___)
+    print(df["Age"].isna().sum(), round(df["Age"].mean(), 3))
+  `}
+  solution={`
+    import pandas as pd
+
+    df = pd.read_csv("titanic.csv")
+
+    mediana_grupo = df.groupby(["Pclass", "Sex"])["Age"].transform("median")
+
+    df["Age"] = df["Age"].fillna(mediana_grupo)
+    print(df["Age"].isna().sum(), round(df["Age"].mean(), 3))
+  `}
+  hints={[
+    "Necesitas un valor por FILA (la mediana de su grupo) para poder rellenar fila a fila.",
+    "Eso es transform, no agg.",
+    "df['Age'].fillna(mediana_grupo)",
+  ]}
+  check={`
+    assert df["Age"].isna().sum() == 0, "No debe quedar ninguna edad vacía"
+    assert abs(df["Age"].mean() - 29.112) < 0.001, f"La edad media tras rellenar debería ser 29,112 y sale {df['Age'].mean():.3f}"
+    assert len(mediana_grupo) == len(df), "mediana_grupo debe tener una fila por pasajero (transform, no agg)"
+  `}
+>
+Una imputación mejor que la media global: a una mujer de primera clase sin edad le pones la mediana de las mujeres de primera (35), no la de todo el barco (28).
+</CodeExercise>
+
+## El análisis de vuelos (segunda convocatoria)
+
+El examen de la segunda convocatoria era una sola pregunta de 8 puntos sobre un CSV de vuelos. Aquí tienes unos datos con las mismas columnas, generados con semilla.
+
+<CodeExercise
+  id="vuelos"
+  title="Retrasos por aerolínea"
+  starter={`
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(3)
+    n = 60
+    df = pd.DataFrame({
+        "Flight_Number": [f"FL{x}" for x in rng.integers(1000, 9999, n)],
+        "Origin": rng.choice(["ATL", "JFK", "LAX", "DFW"], n),
+        "Airline": rng.choice(["American", "United", "Delta", "Southwest", "British Airways"], n,
+                              p=[0.3, 0.25, 0.15, 0.2, 0.1]),
+        "Delay_Minutes": rng.integers(0, 180, n),
+    })
+
+    # B. 'A tiempo' (< 15), 'Retrasado' (< 60) o 'Cancelado' (el resto)
+    def clasificar(delay):
+        ___
+
+    df["Status"] = df["Delay_Minutes"].apply(clasificar)
+
+    # E. media y mediana del retraso por aerolínea, solo vuelos con origen JFK o LAX
+    jfk_lax = df[___]
+    stats = jfk_lax.groupby("Airline")["Delay_Minutes"].agg(___)
+
+    # G. las 3 aerolíneas con la mediana de retraso más alta (todos los vuelos)
+    top3 = df.groupby("Airline")["Delay_Minutes"].median().___
+
+    # H. vuelos con un retraso mayor que la media + 1 desviación de SU aerolínea
+    media = df.groupby("Airline")["Delay_Minutes"].transform("mean")
+    desv = ___
+    muy_retrasados = df[___]
+
+    print(df["Status"].value_counts())
+    print(stats.round(2))
+    print(top3)
+    print(len(muy_retrasados), round(muy_retrasados["Delay_Minutes"].mean(), 2))
+  `}
+  solution={`
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(3)
+    n = 60
+    df = pd.DataFrame({
+        "Flight_Number": [f"FL{x}" for x in rng.integers(1000, 9999, n)],
+        "Origin": rng.choice(["ATL", "JFK", "LAX", "DFW"], n),
+        "Airline": rng.choice(["American", "United", "Delta", "Southwest", "British Airways"], n,
+                              p=[0.3, 0.25, 0.15, 0.2, 0.1]),
+        "Delay_Minutes": rng.integers(0, 180, n),
+    })
+
+    def clasificar(delay):
+        if delay < 15:
+            return "A tiempo"
+        if delay < 60:
+            return "Retrasado"
+        return "Cancelado"
+
+    df["Status"] = df["Delay_Minutes"].apply(clasificar)
+
+    jfk_lax = df[df["Origin"].isin(["JFK", "LAX"])]
+    stats = jfk_lax.groupby("Airline")["Delay_Minutes"].agg(["mean", "median"])
+
+    top3 = df.groupby("Airline")["Delay_Minutes"].median().nlargest(3)
+
+    media = df.groupby("Airline")["Delay_Minutes"].transform("mean")
+    desv = df.groupby("Airline")["Delay_Minutes"].transform("std")
+    muy_retrasados = df[df["Delay_Minutes"] > media + desv]
+
+    print(df["Status"].value_counts())
+    print(stats.round(2))
+    print(top3)
+    print(len(muy_retrasados), round(muy_retrasados["Delay_Minutes"].mean(), 2))
+  `}
+  hints={[
+    "clasificar: if delay < 15 → 'A tiempo'; if delay < 60 → 'Retrasado'; si no, 'Cancelado'. Con los if en ese orden no hace falta comprobar el límite inferior.",
+    "Filtrar por varios valores: df['Origin'].isin(['JFK', 'LAX']). Varias agregaciones: .agg(['mean', 'median']).",
+    "Los n mayores de una Series: .nlargest(3). La desviación por grupo, igual que la media pero con transform('std').",
+  ]}
+  check={`
+    assert df["Status"].value_counts().to_dict() == {"Cancelado": 38, "Retrasado": 20, "A tiempo": 2}, "Conteo de Status: 38 cancelados, 20 retrasados, 2 a tiempo"
+    assert list(stats.columns) == ["mean", "median"] and abs(stats.loc["Delta", "mean"] - 88.75) < 1e-9, "Para JFK y LAX, Delta tiene un retraso medio de 88,75"
+    assert list(top3.index) == ["Delta", "Southwest", "American"], f"Top 3 por mediana: Delta, Southwest, American; sale {list(top3.index)}"
+    assert len(muy_retrasados) == 12 and abs(muy_retrasados["Delay_Minutes"].mean() - 153.92) < 0.01, "Deben salir 12 vuelos con un retraso medio de 153,92"
+  `}
+>
+Resuelve los apartados B, E, G y H.
+</CodeExercise>
+
+<Callout kind="warn" title="Lee el enunciado dos veces">
+El apartado H decía «retraso por encima de la media de al menos la desviación estándar», sin aclarar si la media es la global o la de cada aerolínea. Con la global salen 13 vuelos; por aerolínea, 12. En un examen (y en el trabajo, con quien te pide el análisis) **escribe qué interpretación usas**. En la práctica, la de cada aerolínea es la que tiene sentido: un retraso de 90 minutos es raro en una compañía puntual y normal en otra.
+</Callout>
+
+## Juntar tablas: merge, join y concat
+
+<MergeSim />
+
+- `pd.merge(a, b, on="clave", how="left")`, o `left_on`/`right_on` si la clave se llama distinto en cada tabla.
+- `a.join(b)` es un `merge` por índice.
+- `pd.concat([a, b])` **apila** (una debajo de otra, o al lado con `axis=1`): no busca claves.
+
+<CodeExercise
+  id="aeropuertos"
+  title="El país de cada incidente (examen)"
+  starter={`
+    import pandas as pd
+
+    incidentes = pd.DataFrame({
+        "AIRPORT": ["DENVER INTL", "LA GUARDIA", "UNKNOWN", "Denver Intl", "MADRID BARAJAS", "HEATHROW"],
+        "DAMAGE_LEVEL": ["M", "N", "N", "S", None, "N"],
+    })
+    aeropuertos = pd.DataFrame({
+        "name": ["Denver Intl", "La Guardia", "Madrid Barajas", "Heathrow", "Denver Intl"],
+        "type": ["large_airport", "large_airport", "large_airport", "large_airport", "heliport"],
+        "iso_country": ["US", "US", "ES", "GB", "US"],
+    })
+
+    # B. nombres en minúsculas en las dos tablas
+    incidentes["AIRPORT"] = ___
+    aeropuertos["name"] = ___
+
+    # Evita que un nombre repetido en aeropuertos multiplique incidentes
+    aeropuertos = aeropuertos.___(subset="name")
+
+    # C. left join: todos los incidentes, con el país si se encuentra
+    juntos = pd.merge(incidentes, aeropuertos, left_on=___, right_on=___, how=___)
+
+    # F y G. sin nulos en DAMAGE_LEVEL ni iso_country, y tabla país x nivel de daño
+    limpios = juntos.dropna(subset=___)
+    tabla = pd.crosstab(limpios["iso_country"], limpios["DAMAGE_LEVEL"])
+    print(len(juntos))
+    print(tabla)
+  `}
+  solution={`
+    import pandas as pd
+
+    incidentes = pd.DataFrame({
+        "AIRPORT": ["DENVER INTL", "LA GUARDIA", "UNKNOWN", "Denver Intl", "MADRID BARAJAS", "HEATHROW"],
+        "DAMAGE_LEVEL": ["M", "N", "N", "S", None, "N"],
+    })
+    aeropuertos = pd.DataFrame({
+        "name": ["Denver Intl", "La Guardia", "Madrid Barajas", "Heathrow", "Denver Intl"],
+        "type": ["large_airport", "large_airport", "large_airport", "large_airport", "heliport"],
+        "iso_country": ["US", "US", "ES", "GB", "US"],
+    })
+
+    incidentes["AIRPORT"] = incidentes["AIRPORT"].str.lower()
+    aeropuertos["name"] = aeropuertos["name"].str.lower()
+
+    aeropuertos = aeropuertos.drop_duplicates(subset="name")
+
+    juntos = pd.merge(incidentes, aeropuertos, left_on="AIRPORT", right_on="name", how="left")
+
+    limpios = juntos.dropna(subset=["DAMAGE_LEVEL", "iso_country"])
+    tabla = pd.crosstab(limpios["iso_country"], limpios["DAMAGE_LEVEL"])
+    print(len(juntos))
+    print(tabla)
+  `}
+  hints={[
+    "Los métodos de texto de pandas van tras .str: df['col'].str.lower().",
+    "Para quedarte con la primera aparición de cada nombre: drop_duplicates(subset='name').",
+    "La clave se llama AIRPORT a la izquierda y name a la derecha: left_on='AIRPORT', right_on='name', how='left'.",
+  ]}
+  check={`
+    assert len(juntos) == len(incidentes) == 6, f"Un left join sin claves repetidas a la derecha conserva las 6 filas; salen {len(juntos)}"
+    assert juntos["iso_country"].isna().sum() == 1, "Solo 'unknown' debe quedarse sin país"
+    assert tabla.loc["US", "M"] == 1 and tabla.loc["US", "S"] == 1 and tabla.loc["GB", "N"] == 1, "La tabla cruzada no cuadra"
+    assert "ES" not in tabla.index, "El incidente de Madrid no tiene nivel de daño: debe caer al quitar nulos"
+  `}
+>
+La pregunta 5 de la primera convocatoria en pequeño. Fíjate en que los nombres vienen en mayúsculas en una tabla y no en la otra, y en que «Denver Intl» está dos veces en los aeropuertos.
+</CodeExercise>
+
+<Callout kind="real" title="Comprueba siempre las filas después de un merge">
+En el examen se pedía comprobar que salían 254.222 registros: era la forma de detectar si el merge había multiplicado filas por nombres repetidos. En el trabajo esto se automatiza: `pd.merge(..., validate="many_to_one")` lanza un error si la tabla de la derecha tiene claves repetidas, e `indicator=True` añade una columna `_merge` para contar cuántas filas no encontraron pareja. Unir por **nombre** es frágil (mayúsculas, tildes, «Intl» frente a «International»); si existe un código (IATA, ICAO), únelo por el código.
+</Callout>
+
+## Pivotar: de largo a ancho
+
+- `pd.crosstab(filas, columnas)` cuenta combinaciones; con `values=` y `aggfunc=` agrega otra columna.
+- `df.pivot_table(index="Pclass", columns="Sex", values="Survived", aggfunc="mean")` es lo mismo desde un DataFrame, y admite `margins=True` para los totales.
+- `df.pivot(...)` solo reorganiza (falla si hay duplicados); `melt` hace lo contrario: de ancho a largo.
+
+<Quiz
+  id="pivot-titanic"
+  options={[
+    "Las mujeres de tercera clase sobrevivieron más que los hombres de primera",
+    "Los hombres de primera sobrevivieron más que las mujeres de tercera",
+    "La clase no importó: solo el sexo",
+    "Sobrevivió más de la mitad de los pasajeros",
+  ]}
+  answer={0}
+  explanation="pivot_table(index='Pclass', columns='Sex', values='Survived', aggfunc='mean') da 0,500 para las mujeres de tercera y 0,369 para los hombres de primera. Y en total sobrevivió el 38 %. «Mujeres y niños primero» pesó más que la clase, aunque la clase también importó (96,8 % de las mujeres de primera)."
+>
+Con el Titanic: `df.pivot_table(index="Pclass", columns="Sex", values="Survived", aggfunc="mean")` da, para las mujeres, 0,968 / 0,921 / 0,500 (primera, segunda, tercera) y, para los hombres, 0,369 / 0,157 / 0,135. ¿Qué afirmación es correcta?
+</Quiz>
+
+## Textos y fechas
+
+Las columnas de texto tienen métodos vectorizados detrás de `.str`: `lower`, `strip`, `split`, `replace`, `contains`, `startswith`, `len`, y los que usan **expresiones regulares**: `extract`, `match`, `findall`. Las fechas, detrás de `.dt` tras convertirlas con `pd.to_datetime`.
+
+```python
+df["fecha"] = pd.to_datetime(df["INCIDENT_DATE"], format="%m/%d/%Y", errors="coerce")
+df["year"] = df["fecha"].dt.year       # también .dt.month, .dt.dayofweek, .dt.to_period("M")
+df["cp_ok"] = df["Zip-code"].str.match(r"^\d{5}$")   # ¿5 dígitos exactos?
+```
+
+Una regex mínima para el día a día: `\d` dígito, `\w` letra o dígito, `\s` espacio, `{4}` cuatro veces, `+` una o más, `^` y `$` principio y fin, y los paréntesis **capturan** lo que `extract` devuelve.
+
+<CodeExercise
+  id="extraer-anio"
+  title="Separar título y año (examen)"
+  starter={`
+    import pandas as pd
+
+    def extract_year(movies):
+        df = pd.DataFrame(movies)
+        df["Year"] = df["Name"].str.___(r"___", expand=False)
+        df["Name"] = df["Name"].str.replace(r" - \\d{4}$", "", regex=True)
+        return df
+
+    source_movies = {"Name": ["Matrix - 1999", "Cadena Perpetua - 1994", "Parasitos - 2019",
+                              "Vengadores, Endgame - 2019", "El Padrino - 1972", "Spider-Man - 2002"]}
+    print(extract_year(source_movies))
+  `}
+  solution={`
+    import pandas as pd
+
+    def extract_year(movies):
+        df = pd.DataFrame(movies)
+        df["Year"] = df["Name"].str.extract(r"(\\d{4})$", expand=False)
+        df["Name"] = df["Name"].str.replace(r" - \\d{4}$", "", regex=True)
+        return df
+
+    source_movies = {"Name": ["Matrix - 1999", "Cadena Perpetua - 1994", "Parasitos - 2019",
+                              "Vengadores, Endgame - 2019", "El Padrino - 1972", "Spider-Man - 2002"]}
+    print(extract_year(source_movies))
+  `}
+  hints={[
+    "str.extract devuelve lo que capture el grupo entre paréntesis de la regex.",
+    "Cuatro dígitos al final del texto: (\\d{4})$",
+  ]}
+  check={`
+    out = extract_year({"Name": ["Matrix - 1999", "Spider-Man - 2002", "Vengadores, Endgame - 2019"]})
+    expected = pd.DataFrame({"Name": ["Matrix", "Spider-Man", "Vengadores, Endgame"], "Year": ["1999", "2002", "2019"]})
+    assert out.equals(expected), f"Esperaba\\n{expected}\\ny sale\\n{out}"
+  `}
+>
+Pregunta 1 de la primera convocatoria (mañana), con una película añadida: «Spider-Man - 2002». La solución que circulaba hacía `x.split("-")[0]`, que con un guion en el título se rompe. Con una regex anclada al final no hay problema.
+</CodeExercise>
+
+<CodeExercise
+  id="generos"
+  title="Géneros en columnas (MovieLens)"
+  starter={`
+    import pandas as pd
+
+    movies = pd.DataFrame({
+        "title": ["Toy Story (1995)", "Heat (1995)", "Matrix, The (1999)", "Amélie (2001)"],
+        "genres": ["Animation|Children's|Comedy", "Action|Crime|Thriller", "Action|Sci-Fi|Thriller", "Comedy|Romance"],
+    })
+
+    # 1) año como entero, sacado de los paréntesis del título
+    movies["year"] = movies["title"].str.extract(___, expand=False).astype(int)
+    # 2) una columna 0/1 por género
+    generos = movies["genres"].str.___("|")
+    # 3) unir las columnas de géneros a la tabla
+    movies = pd.concat([movies, generos], axis=___)
+
+    print(movies.drop(columns=["genres"]))
+    print(generos.sum().sort_values(ascending=False))
+  `}
+  solution={`
+    import pandas as pd
+
+    movies = pd.DataFrame({
+        "title": ["Toy Story (1995)", "Heat (1995)", "Matrix, The (1999)", "Amélie (2001)"],
+        "genres": ["Animation|Children's|Comedy", "Action|Crime|Thriller", "Action|Sci-Fi|Thriller", "Comedy|Romance"],
+    })
+
+    movies["year"] = movies["title"].str.extract(r"\\((\\d{4})\\)", expand=False).astype(int)
+    generos = movies["genres"].str.get_dummies("|")
+    movies = pd.concat([movies, generos], axis=1)
+
+    print(movies.drop(columns=["genres"]))
+    print(generos.sum().sort_values(ascending=False))
+  `}
+  hints={[
+    "Los paréntesis literales se escapan en la regex: \\( y \\). Dentro, un grupo que capture 4 dígitos.",
+    "r'\\((\\d{4})\\)'",
+    "str.get_dummies('|') parte por | y crea una columna por valor. concat con axis=1 pega columnas al lado.",
+  ]}
+  check={`
+    assert movies["year"].tolist() == [1995, 1995, 1999, 2001], "Años esperados: 1995, 1995, 1999, 2001"
+    assert movies.shape == (4, 11), f"Deben quedar 4 filas y 11 columnas (3 originales + 8 géneros); sale {movies.shape}"
+    assert movies.loc[2, "Sci-Fi"] == 1 and movies.loc[3, "Action"] == 0, "Matrix es Sci-Fi y Amélie no es de acción"
+  `}
+>
+En `01MIAR_12_Data_Processing.ipynb` se hace con MovieLens en seis pasos y bucles. Con `str.extract` y `str.get_dummies` son tres líneas.
+</CodeExercise>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_10_+Pandas.ipynb` (operaciones, `apply`, estadística, `groupby`, `filter`, correlaciones con el dataset `auto-mpg`), `01MIAR_12_Data_Processing.ipynb` (`merge` y `join` con MovieLens, `concat`, `pivot_table`, regex) y los exámenes `01MIAR_Exam_01_A.ipynb` (aeropuertos) y `Examen-Python-2024-2025-2aConvocatoria` (vuelos).
+</Callout>
+
+## Para llevar
+
+- `apply` es un bucle: prefiere operaciones vectorizadas, `np.where` o `pd.cut`.
+- `agg` da una fila por grupo; `transform`, un valor por fila (para comparar o rellenar).
+- Tras un `merge`, cuenta las filas: las claves repetidas las multiplican. `validate=` lo vigila.
+- `crosstab` y `pivot_table` convierten una tabla larga en una de doble entrada.
+- `.str` y `.dt` para textos y fechas; una regex anclada (`$`) es más robusta que un `split`.
