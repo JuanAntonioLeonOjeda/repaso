@@ -1,0 +1,114 @@
+Un modelo en un notebook no le sirve a nadie. La última parte del TFM lo convierte en un **servicio**: una API con FastAPI, empaquetada en Docker, con tests. Es la fase de despliegue de CRISP-DM, y la que más se pregunta en una entrevista.
+
+## De `infer.py` a una API
+
+`infer.py` predice sobre un DICOM o un paciente desde la línea de comandos, con el **mismo preprocesado que en entrenamiento** (inversión MONOCHROME1, 224×224, CLAHE, normalización ImageNet). La API (`api/`) reutiliza ese código:
+
+- `GET /health`: para que Docker (o un orquestador) sepa si el servicio está vivo.
+- `POST /predict` (multipart): el DICOM y los datos clínicos validados por FastAPI (`age` entre 0 y 120, `gender` `female`/`male`, `bmi` entre 0 y 80) y, opcionalmente, `heatmap=true` para recibir el Grad-CAM en PNG codificado en base64.
+- Si el DICOM no se puede procesar, responde **422** con el motivo, en vez de un error 500.
+- El modelo se carga **una vez** al arrancar (`lifespan`), no en cada petición.
+
+```bash
+curl -X POST localhost:8000/predict -F dicom=@radiografia.dcm \
+     -F age=65 -F gender=female -F bmi=24.5 -F heatmap=true
+```
+
+<Callout kind="warn" title="El detalle que rompe más modelos en producción">
+Las covariables se normalizan con la media y desviación de **entrenamiento**. Por eso el TFM guarda `best_phased_full_covars_covariates.json` junto al checkpoint y la API lo lee: si en producción normalizases con los datos que llegan, cada paciente "cambiaría" según quién más hubiera llegado ese día. Es el mismo principio que el `fit` en train y `transform` en test de Supervisado, llevado a producción.
+</Callout>
+
+<CodeExercise
+  id="covariables-api"
+  title="Normalizar las covariables como la API"
+  starter={`
+    import json
+
+    # Lo que se guarda junto al checkpoint (valores reales del TFM)
+    stats = json.loads("""{
+      "covariates": ["age", "gender", "BMI"],
+      "mean": {"age": 63.92, "gender": 0.1874, "BMI": 23.577},
+      "std":  {"age": 12.455, "gender": 0.3904, "BMI": 3.689},
+      "codes": {"gender": {"female": 0, "male": 1}}
+    }""")
+
+    def covariables(age, gender, bmi):
+        valores = {"age": age, "gender": stats["codes"]["gender"][___], "BMI": bmi}
+        return [(valores[c] - stats["mean"][c]) / stats[___][c] for c in stats["covariates"]]
+
+    x = covariables(65, "female", 24.5)
+    print([round(v, 3) for v in x])
+  `}
+  solution={`
+    import json
+
+    # Lo que se guarda junto al checkpoint (valores reales del TFM)
+    stats = json.loads("""{
+      "covariates": ["age", "gender", "BMI"],
+      "mean": {"age": 63.92, "gender": 0.1874, "BMI": 23.577},
+      "std":  {"age": 12.455, "gender": 0.3904, "BMI": 3.689},
+      "codes": {"gender": {"female": 0, "male": 1}}
+    }""")
+
+    def covariables(age, gender, bmi):
+        valores = {"age": age, "gender": stats["codes"]["gender"][gender], "BMI": bmi}
+        return [(valores[c] - stats["mean"][c]) / stats["std"][c] for c in stats["covariates"]]
+
+    x = covariables(65, "female", 24.5)
+    print([round(v, 3) for v in x])
+  `}
+  hints={["El sexo se codifica con el diccionario 'codes' a partir del texto recibido.", "z-score: (valor − media) / desviación."]}
+  check={`
+    assert [round(v, 3) for v in x] == [0.087, -0.48, 0.25], "Revisa la codificación del sexo y la desviación"
+  `}
+>
+Reproduce lo que hace `_covariates` en `api/service.py` con las estadísticas reales de tu checkpoint.
+</CodeExercise>
+
+## Docker
+
+El `Dockerfile` del TFM sigue buenas prácticas que conviene saber defender:
+
+- Imagen base `python:3.13-slim` y solo las librerías de sistema que necesita OpenCV.
+- Dependencias de la API (`requirements-api.txt`) separadas de las de entrenamiento: la imagen no lleva lo que no usa.
+- **El modelo no va dentro de la imagen**: se monta como volumen en `/models` (`MODEL_DIR`). Así se actualiza el modelo sin reconstruir, y la imagen no contiene artefactos derivados de datos de pacientes.
+- Usuario sin privilegios (`appuser`) y `HEALTHCHECK` contra `/health`.
+
+<Quiz
+  id="modelo-volumen"
+  options={[
+    "Porque los ficheros .pt no se pueden copiar a una imagen",
+    "Para separar el ciclo de vida del código y del modelo, y no distribuir el modelo dentro de cada imagen",
+    "Porque así la API es más rápida",
+    "Porque Docker no permite ficheros de más de 100 MB",
+  ]}
+  answer={1}
+  explanation="El código cambia poco y el modelo se reentrena; con el modelo en un volumen (o en un registro de modelos) se despliega una versión nueva sin reconstruir la imagen, y se controla quién accede al artefacto entrenado con datos clínicos."
+>
+¿Por qué se monta el modelo como volumen en vez de copiarlo en la imagen?
+</Quiz>
+
+## Lo que faltaría para uso clínico real
+
+<Callout kind="real">
+- **Validación externa**: probar con radiografías de otros hospitales y equipos. Es el paso que más modelos médicos no superan.
+- **Calibración**: que una probabilidad de 0,7 signifique un 70% de verdad (temperature scaling).
+- **Umbral de decisión**: elegido según el coste de cada error (en cribado, favorecer la sensibilidad en osteoporosis).
+- **Monitorización**: distribución de las entradas y de las predicciones en producción, para detectar deriva.
+- **Regulación**: un software que apoya el diagnóstico es un producto sanitario (MDR en la UE) y un sistema de alto riesgo según el Reglamento de IA europeo.
+</Callout>
+
+<Temario
+  links={[
+    { to: "supervisado/flujo-de-un-proyecto", why: "CRISP-DM y MLOps: el despliegue y la monitorización son parte del proyecto." },
+    { to: "supervisado/limpieza-de-datos", why: "Ajustar en train y aplicar en producción: las estadísticas de las covariables." },
+    { to: "supervisado/metricas", why: "Elegir el umbral según el coste de cada error." },
+  ]}
+/>
+
+## Para llevar
+
+- `infer.py` y la API comparten el preprocesado del entrenamiento: una sola fuente de verdad.
+- FastAPI valida las entradas y responde 422 si el DICOM no se puede procesar; el modelo se carga una vez.
+- Estadísticas de covariables guardadas con el checkpoint; modelo montado como volumen.
+- Para la clínica faltarían validación externa, calibración, monitorización y el marco regulatorio.

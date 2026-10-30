@@ -1,0 +1,132 @@
+Un modelo médico es tan bueno como sus datos y como lo honesta que sea su partición. Esta lección recorre el camino de `data/` en tu TFM: del DICOM crudo a `images.npy` + `metadata.csv`, y las decisiones que hay detrás.
+
+## LUMOS en cifras
+
+- **801 pacientes** con datos completos (el dataset publica 803), **1.616 radiografías**: casi siempre dos por paciente, una **anteroposterior (AP)** y una **lateral**.
+- Datos clínicos en un Excel: edad, sexo, IMC, BMD y T-score (global y por vértebra L1–L4).
+- Población: 646 mujeres y 155 hombres; edad media 64 años (de 14 a 93).
+- Etiquetas por imagen en entrenamiento: **406 sanas, 411 de osteopenia y 314 de osteoporosis** (un desbalanceo moderado).
+
+<Predict
+  id="imagenes-por-paciente"
+  answer={["2", "2.02", "2,02", "≈2"]}
+  tolerance={0.05}
+  explanation="1.616 / 801 ≈ 2,02: prácticamente todos los pacientes tienen dos imágenes (AP y lateral). Esa estructura obliga a partir por paciente y permite agregar las dos predicciones en una."
+  hints={["Divide imágenes entre pacientes."]}
+>
+¿Cuántas radiografías hay, de media, por paciente?
+</Predict>
+
+## Del DICOM a la matriz
+
+`data/df_import.py` y `data/df_preprocess.py` hacen, para cada imagen:
+
+1. **Leer el DICOM** con `pydicom`. Si la imagen es `MONOCHROME1` (valores altos = negro), se **invierte** para que el hueso salga claro. Un detalle que, si se olvida, hace que la mitad de tus imágenes estén "en negativo".
+2. **Normalizar** a [0, 1] (min-max) y pasar a 8 bits.
+3. **Redimensionar** a 224×224 (`INTER_AREA`, el adecuado para reducir).
+4. Aplicar **CLAHE** (clipLimit 2,0, rejilla 8×8) para realzar el contraste local.
+
+<ClaheSim />
+
+<Callout kind="practice" title="De dónde sale esto en el temario">
+Es exactamente la "extracción de características" de Supervisado, en su versión de preprocesado: ecualización del histograma, espacios de color y normalización. La diferencia es que aquí no se extraen descriptores a mano (HOG, LBP): la CNN aprende los suyos.
+</Callout>
+
+Las variantes del dataset (`--data`) cambian este paso: `hires` (320×320), `roi` (solo AP, franja central), `roi_hybrid` (ROI solo en la AP) y `roi_yolo` (recorte con un detector). Las verás en la bitácora de experimentos.
+
+## La partición: por paciente y estratificada
+
+Lo más importante de la lección. `split_by_patient` hace un 70/15/15 **por paciente**, estratificado por clase, con semilla fija:
+
+- **Por paciente**: las dos radiografías de una persona van siempre al mismo conjunto. Si la AP cae en train y la lateral en test, el modelo puede "reconocer al paciente" (su anatomía, el escáner, las marcas) y la nota de test se infla.
+- **Estratificada**: cada conjunto conserva la proporción de clases.
+- Resultado: 1.131 imágenes de train, 241 de validación y 244 de test (121 pacientes).
+
+<CodeExercise
+  id="split-paciente"
+  title="Partir por paciente"
+  starter={`
+    import numpy as np
+    import pandas as pd
+    from sklearn.model_selection import train_test_split
+
+    # 200 pacientes sintéticos, dos imágenes cada uno
+    rng = np.random.default_rng(0)
+    pacientes = pd.DataFrame({"patient_id": range(200), "label": rng.integers(0, 3, 200)})
+    imagenes = pacientes.loc[pacientes.index.repeat(2)].reset_index(drop=True)
+
+    # 1) Se parte la tabla de PACIENTES (una fila por paciente), estratificando por clase
+    train_ids, test_ids = train_test_split(
+        pacientes["patient_id"], test_size=0.15, stratify=pacientes[___], random_state=42
+    )
+    # 2) Cada imagen hereda el conjunto de su paciente
+    imagenes["split"] = np.where(imagenes["patient_id"].isin(___), "test", "train")
+
+    print(imagenes["split"].value_counts())
+  `}
+  solution={`
+    import numpy as np
+    import pandas as pd
+    from sklearn.model_selection import train_test_split
+
+    # 200 pacientes sintéticos, dos imágenes cada uno
+    rng = np.random.default_rng(0)
+    pacientes = pd.DataFrame({"patient_id": range(200), "label": rng.integers(0, 3, 200)})
+    imagenes = pacientes.loc[pacientes.index.repeat(2)].reset_index(drop=True)
+
+    # 1) Se parte la tabla de PACIENTES (una fila por paciente), estratificando por clase
+    train_ids, test_ids = train_test_split(
+        pacientes["patient_id"], test_size=0.15, stratify=pacientes["label"], random_state=42
+    )
+    # 2) Cada imagen hereda el conjunto de su paciente
+    imagenes["split"] = np.where(imagenes["patient_id"].isin(test_ids), "test", "train")
+
+    print(imagenes["split"].value_counts())
+  `}
+  hints={["Se estratifica por la etiqueta del paciente.", "Una imagen va a test si su paciente está entre los ids de test."]}
+  check={`
+    por_paciente = imagenes.groupby("patient_id")["split"].nunique()
+    assert (por_paciente == 1).all(), "Las dos imágenes de cada paciente deben ir al mismo conjunto"
+    assert (imagenes["split"] == "test").sum() == 60, "15% de 200 pacientes = 30 pacientes = 60 imágenes"
+  `}
+>
+Reproduce la idea de `split_by_patient` con pacientes sintéticos: primero se parten los pacientes, luego las imágenes heredan su conjunto.
+</CodeExercise>
+
+## Aumento de datos
+
+En entrenamiento, `build_transforms(train=True)` aplica: rotación (±15°), recorte aleatorio redimensionado (75–100% del área), volteo horizontal, brillo/contraste (±20%) y una pequeña traslación. En validación y test, nada: solo normalización.
+
+<Quiz
+  id="volteo"
+  options={[
+    "Sí, sin problema: la anatomía es simétrica y la BMD no cambia",
+    "No: un volteo horizontal cambia la etiqueta",
+    "Solo si se voltea también verticalmente",
+    "Solo en la vista lateral",
+  ]}
+  answer={0}
+  explanation="Voltear horizontalmente una radiografía lumbar AP produce una imagen plausible con la misma densidad ósea: la etiqueta no cambia. En cambio, no tendría sentido en una radiografía de tórax si importase el lado del corazón, ni un volteo vertical (la columna tiene arriba y abajo)."
+>
+¿Es razonable el volteo horizontal como data augmentation en este problema?
+</Quiz>
+
+<Callout kind="real">
+En imagen médica, además de estas transformaciones se suelen añadir variaciones de exposición y ruido que imiten distintos equipos y protocolos: el mayor riesgo de un modelo así no es el sobreajuste a los pacientes, sino al **hospital y al escáner** con que se adquirieron las imágenes (*domain shift*). Validar con datos de otro centro es el estándar antes de cualquier uso clínico.
+</Callout>
+
+<Temario
+  links={[
+    { to: "supervisado/validacion", why: "GroupKFold y la fuga por grupos: aquí el grupo es el paciente." },
+    { to: "supervisado/limpieza-de-datos", why: "Normalizar y escalar; las estadísticas se calculan solo con train." },
+    { to: "supervisado/extraccion-de-caracteristicas", why: "Ecualización del histograma, CLAHE y preprocesado de imagen." },
+    { to: "deep-learning/augmentation-y-transfer-learning", why: "Qué transformaciones son creíbles y por qué solo en entrenamiento." },
+  ]}
+/>
+
+## Para llevar
+
+- 801 pacientes, 1.616 imágenes (AP + lateral), desbalanceo moderado.
+- DICOM → invertir MONOCHROME1 → normalizar → 224×224 → CLAHE.
+- Partición 70/15/15 por paciente y estratificada: la decisión que hace creíble todo lo demás.
+- Augmentation solo en entrenamiento y con transformaciones clínicamente plausibles.

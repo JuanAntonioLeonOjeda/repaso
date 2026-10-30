@@ -1,6 +1,6 @@
 # ADR-0002: Python exercises in the browser with Pyodide in a Web Worker
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-29
 
 ## Context

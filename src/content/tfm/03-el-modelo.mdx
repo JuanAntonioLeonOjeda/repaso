@@ -1,0 +1,82 @@
+LumosNet (`models/lumosnet.py`) es una arquitectura sencilla, y eso es una virtud: un **backbone ResNet50 preentrenado** que convierte la radiografía en 2048 números, una rama opcional para **datos clínicos**, un bloque **compartido** y dos **cabezas**, una por tarea.
+
+<LumosNetDiagram />
+
+## El backbone: ResNet50
+
+- **Por qué ResNet**: las conexiones residuales ($y = F(x) + x$) dejan pasar el gradiente aunque la red sea profunda; ResNet50 tiene 50 capas y es el caballo de batalla de la visión médica con transfer learning.
+- **Por qué no un ViT**: los Vision Transformers necesitan muchos más datos; con ~800 pacientes, una CNN preentrenada es más segura.
+- Se carga con los pesos `IMAGENET1K_V2` y se le quita la última capa (`fc = Identity`): lo que sale es un vector de **2048** características (el *global average pooling* de la última etapa).
+- Recibe 3 canales (la radiografía en gris se replica) normalizados con la media y desviación de ImageNet, porque así se entrenó.
+
+### Lo que ve cada etapa
+
+<LayerExplorerSim />
+
+<Callout kind="idea">
+Fíjate en la evolución: `conv1` es un detector de bordes (como el Sobel de Supervisado), `layer3` ya tiene canales con forma de columna y `layer4` responde a regiones. Compara también ImageNet frente a LumosNet en las etapas profundas: el fine-tuning las ha reorientado a la anatomía lumbar, mientras que las primeras apenas cambian. Es la justificación empírica de congelar primero y ajustar después.
+</Callout>
+
+## La rama de covariables
+
+Opcionalmente (`--covariates`), entran **edad, sexo e IMC**, normalizados con z-score usando **solo la media y desviación de train** (que se guardan junto al checkpoint para usarlas en inferencia). Pasan por una capa `Linear(3, 32) + ReLU` y se **concatenan** con las 2048 características de imagen.
+
+<Callout kind="warn" title="Fuga de datos evitada">
+El código excluye a propósito la BMD, el T-score y el Z-score de las covariables: son la propia medición que define la etiqueta. Usarlas sería darle la respuesta al modelo. Y se excluye la etnia porque no tiene varianza en LUMOS.
+</Callout>
+
+## Bloque compartido y cabezas
+
+- **Shared**: `Linear(2048 + 32, 512) + ReLU + Dropout`. Una representación común a las dos tareas.
+- **Clasificador**: `Dropout → Linear(512, 256) → ReLU → Dropout → Linear(256, 3)`. Salida: logits de 3 clases (softmax en la pérdida).
+- **Regresor**: igual, pero termina en `Linear(256, 1)`: la BMD, sin activación.
+
+<Predict
+  id="params-shared"
+  answer={["1065472", "1.065.472", "1,065,472"]}
+  explanation="(2048 + 32) · 512 pesos + 512 sesgos = 2080 · 512 + 512 = 1.064.960 + 512 = 1.065.472. Coincide con lo que cuenta PyTorch para el bloque shared."
+  hints={["La entrada es la concatenación: 2048 de la imagen + 32 de las covariables.", "Pesos = entradas × salidas; más un sesgo por salida."]}
+>
+Con covariables, ¿cuántos parámetros tiene la capa `Linear` del bloque compartido?
+</Predict>
+
+<Predict
+  id="params-clasificador"
+  answer={["132099", "132.099", "132,099"]}
+  explanation="Linear(512, 256): 512·256 + 256 = 131.328. Linear(256, 3): 256·3 + 3 = 771. Total 132.099 (el Dropout y la ReLU no tienen parámetros)."
+  hints={["Son dos capas lineales: 512 → 256 y 256 → 3.", "Suma pesos y sesgos de ambas."]}
+>
+¿Cuántos parámetros tiene la cabeza de clasificación?
+</Predict>
+
+En total, LumosNet con covariables tiene **24,8 millones** de parámetros, de los que **23,5 M** son del backbone. Las cabezas son una fracción pequeña: casi todo el "conocimiento" viene preentrenado.
+
+<Quiz
+  id="multitarea"
+  options={[
+    "Porque así se entrenan dos modelos al precio de uno",
+    "Porque las dos tareas necesitan ver lo mismo en la imagen; compartir el backbone hace que la regresión regularice a la clasificación y viceversa",
+    "Porque la regresión no se puede entrenar sola",
+    "Porque PyTorch obliga a tener dos salidas",
+  ]}
+  answer={1}
+  explanation="La BMD y la clase dependen de la misma información (la densidad ósea visible). La señal continua de la BMD es más rica que una etiqueta de tres valores y ayuda al backbone a aprender rasgos útiles; además, compartir parámetros reduce el sobreajuste con pocos datos."
+>
+¿Cuál es la ventaja principal de una arquitectura multitarea aquí?
+</Quiz>
+
+<Temario
+  links={[
+    { to: "deep-learning/perceptron-y-mlp", why: "Las cabezas son pequeños MLP; contar parámetros de capas densas." },
+    { to: "deep-learning/redes-convolucionales", why: "Convoluciones, etapas, campo receptivo y global average pooling." },
+    { to: "deep-learning/augmentation-y-transfer-learning", why: "Reutilizar un backbone de ImageNet con su preprocesado." },
+    { to: "deep-learning/optimizadores-y-regularizacion", why: "Dropout en el bloque compartido y en las cabezas." },
+  ]}
+/>
+
+## Para llevar
+
+- ResNet50 preentrenado → 2048 features → (+ covariables) → bloque compartido de 512 → dos cabezas.
+- Covariables normalizadas con estadísticas de train y sin variables que filtren la etiqueta.
+- 24,8 M parámetros, 23,5 M en el backbone.
+- Las primeras etapas ven bordes; las profundas, anatomía. El fine-tuning cambia sobre todo estas últimas.

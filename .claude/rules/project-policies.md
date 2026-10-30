@@ -16,6 +16,11 @@ Python in the browser.
 - Progress lives in the browser's `localStorage` (ADR-0003).
 - Python exercises run in Pyodide inside a Web Worker, loaded from the jsDelivr CDN
   (ADR-0002). The machine needs internet access the first time an exercise runs.
+- The **TFM section** (`src/content/tfm/`) tells the author's master's thesis (LumosNet, in
+  `../tfm` and `../tfm-memoria`). Images derived from LUMOS patients (radiographs, activation
+  maps, Grad-CAM) are generated locally by `scripts/tfm/export_assets.py` into
+  `public/tfm-local/` and **never committed or baked into the image** (ADR-0004). Only
+  aggregate metrics are committed. Scripts read from `../tfm` and never write there.
 - The original course material is in `Asignaturas/` (slides, notebooks, datasets). It is the
   **source** for the lessons, is git-ignored and never shipped.
 
