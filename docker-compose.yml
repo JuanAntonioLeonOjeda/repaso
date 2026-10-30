@@ -7,3 +7,6 @@ services:
     ports:
       - "${REPASO_PORT:-3100}:8080"
     restart: unless-stopped
+    volumes:
+      # TFM images from LUMOS patients: generated locally, never baked into the image (ADR-0004).
+      - ./public/tfm-local:/usr/share/nginx/html/tfm-local:ro

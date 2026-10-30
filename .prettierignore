@@ -6,3 +6,4 @@ public/datasets
 .claude/skills/ui-ux-pro-max
 .agents
 *.mdx
+public/tfm-local
