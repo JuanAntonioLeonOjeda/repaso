@@ -12,6 +12,8 @@ interface Props {
   isReadOnly?: boolean;
   label?: string;
   onFocus?: () => void;
+  /** 1-based lines where the last run failed. */
+  errorLines?: readonly number[] | undefined;
 }
 
 export function CodeEditor(props: Props): ReactNode {

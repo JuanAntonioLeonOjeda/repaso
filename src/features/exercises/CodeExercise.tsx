@@ -11,7 +11,7 @@ import { ExerciseFrame } from "./ExerciseFrame";
 import { useExerciseProgress } from "./exercise-scope";
 import { HintsAndSolution } from "./HintsAndSolution";
 import { RunPanel } from "./RunPanel";
-import { useCodeRunner } from "./useCodeRunner";
+import { errorLines, useCodeRunner } from "./useCodeRunner";
 import styles from "./Exercise.module.css";
 
 interface Props {
@@ -121,7 +121,12 @@ export function CodeExercise({
     <ExerciseFrame title={title} isSolved={isSolved}>
       <div className={styles.prompt}>{children}</div>
       <div className={styles.solution}>
-        <CodeEditor value={code} onChange={setCode} onFocus={pythonClient.warmup} />
+        <CodeEditor
+          value={code}
+          onChange={setCode}
+          onFocus={pythonClient.warmup}
+          errorLines={errorLines(state, code)}
+        />
       </div>
       <HintsAndSolution
         hints={hints}

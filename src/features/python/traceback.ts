@@ -25,3 +25,19 @@ export function cleanTraceback(raw: string): { message: string; traceback: strin
   }
   return { message, traceback: kept.join("\n") };
 }
+
+const LEARNER_FRAME = /^ {2}File "<(?:exec|string)>", line (\d+)/;
+
+/**
+ * The lines of the learner's code that appear in a traceback, in order and without
+ * repeats: the call chain down to the line that failed. The check runs under another file
+ * name, so its frames never count here.
+ */
+export function learnerLines(raw: string): number[] {
+  const lines = raw
+    .split("\n")
+    .map((line) => LEARNER_FRAME.exec(line)?.[1])
+    .filter((n): n is string => n !== undefined)
+    .map(Number);
+  return [...new Set(lines)];
+}
