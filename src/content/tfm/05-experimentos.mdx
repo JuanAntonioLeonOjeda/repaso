@@ -1,0 +1,119 @@
+Un TFM de ML es, sobre todo, una secuencia de hipótesis: "si hago X, mejorará Y". Esta es la bitácora de tus experimentos (`outputs/v0` … `v8` y los modelos finales), con lo que se cambió, por qué y qué pasó.
+
+<Callout kind="warn" title="Sobre las cifras">
+Las tablas de esta lección se han **reevaluado** con tu código y el mismo test (121 pacientes) para que todas sean comparables (`scripts/tfm/experiment_metrics.py`). Algunas **no coinciden con las tablas de la memoria**: por ejemplo, la estrategia por fases de referencia da 0,661 de accuracy por paciente frente al 0,694 de la memoria, y esto se reproduce igual en CPU y en GPU. Lo más probable es que esas tablas salieran de un entrenamiento anterior cuyo checkpoint se sobrescribió. Además, la carpeta `v5-agumented` contiene el mismo fichero que `v2` (mismo hash), así que v5 no se puede evaluar por separado.
+</Callout>
+
+## v0–v2: la estrategia base
+
+- **v0**, sin data augmentation, por fases.
+- **v1**, primera comparación diferencial frente a por fases: la de fases salió **subentrenada**: con 30 épocas no llegó a converger, como recoge la memoria.
+- **v2**, con más épocas y parada temprana: la estrategia por fases pasa a ser la referencia.
+
+<ExperimentTable
+  rows={[
+    { key: "v0", label: "v0 · sin augmentation" },
+    { key: "v1-differential", label: "v1 · diferencial" },
+    { key: "v1-phased", label: "v1 · por fases" },
+    { key: "v2-differential", label: "v2 · diferencial" },
+    { key: "v2-phased", label: "v2 · por fases (referencia)" },
+  ]}
+/>
+
+<ExperimentPlots experiment="v2-phased" caption="Experimento v2 por fases: curvas, matriz de confusión y BMD real frente a predicha." />
+
+<Callout kind="idea">
+v0, sin augmentation, sale incluso algo mejor que la referencia en accuracy. Con 121 pacientes de test, una diferencia de 2 puntos son **2 pacientes**: está dentro del ruido. Por eso la validación cruzada de la lección siguiente es imprescindible antes de afirmar que algo "mejora".
+</Callout>
+
+## v3: más regularización
+
+Hipótesis: hay sobreajuste, así que más dropout (0,3 → 0,5) y *weight decay* (1e-4). Resultado: no mejora las métricas globales. El sobreajuste persiste, lo que sugiere que el límite no es la capacidad del modelo sino **la información disponible en cada imagen**.
+
+## v4: región de interés (ROI)
+
+Hipótesis: recortar la franja central de la columna (25–75% del ancho) quita ruido. Se hizo en dos pasos, y el diseño del experimento es lo más interesante:
+
+1. **ROI solo con la vista AP**: empeora mucho… pero también **se pierde la mitad de los datos** (se descarta la lateral). Dos causas mezcladas.
+2. **ROI híbrido** (ROI en la AP, lateral completa): mismo volumen de datos que la referencia. Mejora respecto al paso 1, pero **sigue por debajo** de no recortar.
+
+Conclusión: el recorte en sí no aporta; probablemente elimina contexto útil (tamaño corporal, pelvis, costillas) relacionado con factores de riesgo.
+
+<ExperimentTable
+  rows={[
+    { key: "v2-phased", label: "Referencia (imagen completa)" },
+    { key: "v4-roi", label: "v4 · ROI, solo AP" },
+    { key: "v4-hybrid", label: "v4 · ROI híbrido" },
+  ]}
+/>
+
+<Quiz
+  id="disenio-roi"
+  options={[
+    "Porque el primer ROI tenía un bug",
+    "Para separar dos causas que se solapaban: el efecto del recorte y la pérdida de la mitad de los datos",
+    "Para tener más experimentos en la memoria",
+    "Porque la vista lateral es más importante que la AP",
+  ]}
+  answer={1}
+  explanation="Con el primer experimento no se podía saber si empeoraba por recortar o por entrenar con la mitad de imágenes. El ROI híbrido mantiene el volumen de datos y aísla el efecto del recorte. Es un ejemplo de manual de experimento controlado (cambiar una sola variable)."
+>
+¿Por qué se hizo un segundo experimento de ROI (el híbrido)?
+</Quiz>
+
+## v6, v7: resolución y balanceo
+
+- **v6**, 320×320 en vez de 224×224: más detalle trabecular, pero no mejora. Una explicación plausible (no comprobada): el backbone se preentrenó a 224 y con tan pocos datos no compensa el cambio de escala.
+- **v7**, pesos de clase (inverso y efectivo): el inverso consigue el **mejor AUC** de todos, y ambos mueven el reparto de errores entre clases más que la accuracy global.
+
+<ExperimentTable
+  rows={[
+    { key: "v2-phased", label: "Referencia" },
+    { key: "v6", label: "v6 · 320×320" },
+    { key: "v7-inverse", label: "v7 · pesos inversos" },
+    { key: "v7-effective", label: "v7 · pesos efectivos" },
+  ]}
+/>
+
+## v8: covariables clínicas (modelo final)
+
+Añadir **edad, sexo e IMC**. Es el modelo que sirve la API. Lo más llamativo: la **sensibilidad en osteoporosis sube a 0,853** (los casos graves que no se escapan), a costa de la osteopenia (0,432), que vuelve a ser la clase sacrificada.
+
+<ExperimentTable
+  rows={[
+    { key: "v2-phased", label: "Referencia (solo imagen)" },
+    { key: "v8", label: "v8 · imagen + covariables (final)" },
+    { key: "final-roi-yolo", label: "Final con ROI de YOLO" },
+  ]}
+/>
+
+<ExperimentPlots experiment="v8" caption="Modelo final con covariables." />
+
+<Predict
+  id="pacientes-por-punto"
+  answer={["1.2", "1,2", "1.21", "1,21"]}
+  tolerance={0.05}
+  explanation="1 punto porcentual de 121 pacientes son 1,21 pacientes. Las diferencias de 1–3 puntos entre experimentos equivalen a 1–4 pacientes: hay que mirarlas con mucha prudencia."
+  hints={["El test tiene 121 pacientes. ¿Cuánto es el 1% de 121?"]}
+>
+¿Cuántos pacientes del test equivalen a 1 punto porcentual de accuracy por paciente?
+</Predict>
+
+<Callout kind="real" title="Cómo se habría llevado en una empresa">
+Cada experimento con su configuración, su commit, su semilla y sus métricas registrados automáticamente (MLflow / W&B), los checkpoints versionados con su hash y una tabla comparativa generada, no escrita a mano. Así no se pierde el modelo que dio una cifra, que es justo lo que ha pasado con las tablas de la memoria. Y ninguna mejora se acepta sin intervalo de confianza o validación cruzada.
+</Callout>
+
+<Temario
+  links={[
+    { to: "supervisado/validacion", why: "Comparar modelos con un test pequeño: varianza de la estimación y validación cruzada." },
+    { to: "deep-learning/optimizadores-y-regularizacion", why: "Dropout y weight decay (v3) y cuándo no ayudan." },
+    { to: "supervisado/metricas", why: "Sensibilidad y especificidad por clase: el reparto de errores importa más que la accuracy." },
+  ]}
+/>
+
+## Para llevar
+
+- La estrategia por fases con parada temprana es la referencia; la mayoría de cambios posteriores no la superan con claridad.
+- El ROI no aporta (y el experimento híbrido lo demuestra aislando la pérdida de datos).
+- Las covariables suben la sensibilidad en osteoporosis, a costa de la osteopenia.
+- Con 121 pacientes de test, 1 punto = 1,2 pacientes: prudencia con las diferencias pequeñas.

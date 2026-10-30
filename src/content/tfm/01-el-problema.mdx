@@ -1,0 +1,109 @@
+Tu TFM intenta algo con mucho valor clínico: **detectar osteopenia y osteoporosis en radiografías lumbares normales**, las que se hacen a diario por cualquier motivo, sin necesidad de la prueba específica (la densitometría DXA). Si un modelo pudiera dar un aviso temprano a partir de una radiografía que ya existe, muchos casos se detectarían antes de la primera fractura.
+
+## La enfermedad en dos minutos
+
+- La **osteoporosis** es la pérdida de masa y calidad ósea que hace que los huesos se rompan con traumatismos mínimos (fracturas por fragilidad: vértebras, cadera, muñeca). Es silenciosa: no duele hasta que algo se rompe.
+- La **osteopenia** es el escalón anterior: densidad baja, pero no tanto.
+- Se diagnostica midiendo la **densidad mineral ósea (BMD, en g/cm²)** con **DXA** (absorciometría de rayos X de doble energía), una prueba específica, no disponible en todas partes.
+
+### El T-score
+
+La BMD se compara con la de un adulto joven sano del mismo sexo, en desviaciones típicas: el **T-score**. La OMS fija los umbrales:
+
+| T-score | Diagnóstico |
+|---|---|
+| T ≥ −1 | Sano |
+| −2,5 < T < −1 | Osteopenia |
+| T ≤ −2,5 | Osteoporosis |
+
+En el dataset LUMOS, ajustando una recta a los metadatos sale exactamente $T = (\text{BMD} - 1{,}114) / 0{,}120$, así que las fronteras caen en **BMD 0,994** (−1) y **0,814** (−2,5).
+
+<Predict
+  id="t-score"
+  answer={["-2.2", "−2,2", "-2,2"]}
+  tolerance={0.01}
+  explanation="T = (0,85 − 1,114) / 0,120 = −0,264 / 0,120 = −2,2. Está entre −2,5 y −1: osteopenia, aunque cerca del límite de la osteoporosis."
+  hints={["T = (BMD − 1,114) / 0,120"]}
+>
+Un paciente de LUMOS tiene una BMD de 0,85 g/cm². ¿Cuál es su T-score?
+</Predict>
+
+## Dos tareas en una
+
+El TFM no se queda en clasificar. LumosNet resuelve **a la vez**:
+
+1. **Clasificación** en tres clases (sano, osteopenia, osteoporosis).
+2. **Regresión** de la BMD.
+
+Tiene sentido clínico (un médico querrá el número, no solo la etiqueta) y técnico: las dos tareas comparten casi todo lo que hay que "ver" en la imagen, así que entrenarlas juntas actúa como regularización (*multitask learning*).
+
+<TScoreSim />
+
+<Callout kind="idea" title="Por qué la osteopenia es la clase difícil">
+La franja de osteopenia mide solo 0,18 de BMD. Tu modelo estima la BMD con un error típico (RMSE) de 0,13–0,14. Es decir: el error es casi tan grande como la franja entera. Cualquier paciente con osteopenia queda a menos de un error típico de alguna de las dos fronteras. Esto, que verás en todos tus resultados (la osteopenia siempre tiene la peor especificidad o la peor sensibilidad), no es un fallo de entrenamiento: es la geometría del problema.
+</Callout>
+
+<CodeExercise
+  id="clasificar-t"
+  title="De BMD a diagnóstico"
+  starter={`
+    import numpy as np
+
+    MEDIA_JOVEN, DS_JOVEN = 1.114, 0.120
+
+    def t_score(bmd):
+        return (bmd - ___) / ___
+
+    def diagnostico(t):
+        # 0 = sano, 1 = osteopenia, 2 = osteoporosis (umbrales de la OMS)
+        return np.where(t >= ___, 0, np.where(t > ___, 1, 2))
+
+    bmd = np.array([1.20, 0.99, 0.95, 0.85, 0.81, 0.70])
+    t = t_score(bmd)
+    print(np.round(t, 2))
+    print(diagnostico(t))
+  `}
+  solution={`
+    import numpy as np
+
+    MEDIA_JOVEN, DS_JOVEN = 1.114, 0.120
+
+    def t_score(bmd):
+        return (bmd - MEDIA_JOVEN) / DS_JOVEN
+
+    def diagnostico(t):
+        # 0 = sano, 1 = osteopenia, 2 = osteoporosis (umbrales de la OMS)
+        return np.where(t >= -1, 0, np.where(t > -2.5, 1, 2))
+
+    bmd = np.array([1.20, 0.99, 0.95, 0.85, 0.81, 0.70])
+    t = t_score(bmd)
+    print(np.round(t, 2))
+    print(diagnostico(t))
+  `}
+  hints={["El T-score resta la media del adulto joven y divide entre su desviación.", "Sano si T ≥ −1; osteopenia si T > −2,5 (y < −1)."]}
+  check={`
+    assert list(diagnostico(t_score(bmd))) == [0, 1, 1, 1, 2, 2], "Revisa los umbrales: 0,99 ya es osteopenia y 0,81 osteoporosis"
+  `}
+>
+Implementa la conversión. Fíjate en los casos frontera: 0,99 (T ≈ −1,03) y 0,81 (T ≈ −2,53).
+</CodeExercise>
+
+## Lo que había antes (estado del arte)
+
+Los trabajos que usan LUMOS y solo radiografía (FCoTNet, OsteoNet) no pasaban del **74% de precisión**, y la osteopenia aparece siempre como la clase más difícil. El TFM elige **ResNet50 con transfer learning** en vez de un Vision Transformer porque con ~800 pacientes no hay datos para entrenar bien un transformer (necesitan mucho más volumen).
+
+<Temario
+  links={[
+    { to: "supervisado/flujo-de-un-proyecto", why: "Comprensión del negocio: el modelo sirve si da un aviso útil antes de una fractura, no por su accuracy." },
+    { to: "supervisado/regresion", why: "La cabeza de BMD es una regresión; RMSE y correlación son sus métricas." },
+    { to: "supervisado/clasificacion", why: "Clasificación multiclase con softmax y entropía cruzada." },
+    { to: "razonamiento/incertidumbre-y-bayes", why: "En un cribado la prevalencia manda: con pocos casos, muchas alertas serán falsas." },
+  ]}
+/>
+
+## Para llevar
+
+- Objetivo: cribado oportunista de osteopenia/osteoporosis en radiografías convencionales.
+- T-score = (BMD − 1,114) / 0,120 en LUMOS; umbrales −1 y −2,5.
+- Dos tareas a la vez: clase y BMD.
+- La osteopenia es difícil por geometría: su franja (0,18) es comparable al error de la regresión.
