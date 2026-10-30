@@ -1,0 +1,358 @@
+Con tipos y colecciones ya puedes guardar datos; con control de flujo y funciones decides **qué hacer con ellos** y empaquetas ese «qué hacer» para reutilizarlo. La primera pregunta de casi todos los exámenes de la asignatura es exactamente esto: una función en Python puro, sin librerías, que pasa unos tests.
+
+## Decidir: if, elif, else y match
+
+```python
+if nota >= 9:
+    calificacion = "sobresaliente"
+elif nota >= 5:
+    calificacion = "aprobado"
+else:
+    calificacion = "suspenso"
+
+estado = "par" if n % 2 == 0 else "impar"     # expresión condicional, en una línea
+```
+
+Desde Python 3.10 existe `match`, que va más allá de un *switch*: compara **estructuras** y extrae partes.
+
+```python
+match punto:
+    case (0, 0):
+        print("origen")
+    case (x, 0):
+        print(f"sobre el eje X en {x}")
+    case {"nombre": nombre, "edad": edad}:
+        print(f"{nombre} tiene {edad} años")
+    case _:
+        print("otra cosa")
+```
+
+## Repetir: for, while y sus ayudantes
+
+`for` recorre cualquier iterable (lista, string, dict, fichero, `range`). Tres ayudantes que te ahorran índices:
+
+- `enumerate(lista)` da pares `(posición, elemento)`.
+- `zip(a, b)` recorre dos colecciones a la vez y para en la más corta.
+- `range(inicio, fin, paso)`, que como el slicing excluye el fin.
+
+`break` sale del bucle, `continue` salta a la siguiente vuelta, y el `else` de un bucle (poco conocido) se ejecuta **solo si el bucle terminó sin `break`**:
+
+```python
+for d in range(2, n):
+    if n % d == 0:
+        print(n, "no es primo")
+        break
+else:
+    print(n, "es primo")
+```
+
+<Quiz
+  id="for-else"
+  options={[
+    "Se ejecuta siempre después del bucle",
+    "Se ejecuta si el bucle no ha dado ninguna vuelta",
+    "Se ejecuta si el bucle termina sin pasar por un break",
+    "Se ejecuta cuando salta una excepción dentro del bucle",
+  ]}
+  answer={2}
+  explanation="El else de un for o un while es el camino «no encontré lo que buscaba»: solo se ejecuta si el bucle llega al final sin break. Es útil en búsquedas como la de los primos."
+>
+¿Cuándo se ejecuta el `else` de un bucle `for`?
+</Quiz>
+
+## Primera pregunta de examen: un número perfecto
+
+Un número es **perfecto** si es igual a la suma de sus divisores propios (los divisores menores que él): 6 = 1 + 2 + 3, 28 = 1 + 2 + 4 + 7 + 14.
+
+<CodeExercise
+  id="perfecto"
+  title="¿Es perfecto?"
+  starter={`
+    def is_perfect(n):
+        suma = 0
+        for i in range(1, ___):
+            if ___:
+                suma += i
+        return ___
+
+    source_array = [233, 6, 5661, 348, 28, 901, 496, 1200, 8128, 2334]
+    print([is_perfect(n) for n in source_array])
+  `}
+  solution={`
+    def is_perfect(n):
+        suma = 0
+        for i in range(1, n):
+            if n % i == 0:
+                suma += i
+        return suma == n
+
+    source_array = [233, 6, 5661, 348, 28, 901, 496, 1200, 8128, 2334]
+    print([is_perfect(n) for n in source_array])
+  `}
+  hints={[
+    "Los divisores propios de n son los i entre 1 y n − 1 tales que n % i == 0.",
+    "range(1, n) recorre 1, 2, …, n − 1.",
+    "Devuelve la comparación suma == n (ya es un bool).",
+  ]}
+  check={`
+    expected_output = [False, True, False, False, True, False, True, False, True, False]
+    output = [is_perfect(n) for n in [233, 6, 5661, 348, 28, 901, 496, 1200, 8128, 2334]]
+    assert output == expected_output, f"Esperaba {expected_output} y sale {output}"
+    assert is_perfect(1) is False, "1 no es perfecto: no tiene divisores propios que sumen 1"
+  `}
+>
+Pregunta 1 de la primera convocatoria (1,5 puntos). Completa la función y pasa el test del enunciado.
+</CodeExercise>
+
+<Callout kind="idea" title="Hacerlo más rápido">
+Los divisores vienen en parejas: si `i` divide a `n`, también `n // i`. Basta con recorrer hasta $\sqrt{n}$ y sumar las dos mitades de cada pareja: para 8128 son 90 vueltas en vez de 8127. En un examen vale la versión simple; con números grandes, la diferencia importa.
+</Callout>
+
+## Excepciones
+
+Cuando algo va mal, Python **lanza una excepción** (`ValueError`, `KeyError`, `ZeroDivisionError`, `FileNotFoundError`…). Si nadie la captura, el programa se para y muestra el *traceback* (léelo de abajo arriba: la última línea dice qué pasó). Para capturarla:
+
+```python
+try:
+    valor = float(texto)
+except ValueError:
+    valor = None          # solo los errores que esperas
+else:
+    print("convertido")   # si no hubo excepción
+finally:
+    print("siempre")      # pase lo que pase (cerrar ficheros, conexiones)
+```
+
+Y para lanzar las tuyas: `raise ValueError("la edad no puede ser negativa")`.
+
+<Callout kind="warn" title="Nunca «except:» a secas">
+Un `except:` o `except Exception:` sin más se traga **todos** los errores, incluidos tus propios bugs (un nombre mal escrito, un índice fuera de rango). El programa sigue «funcionando» con datos incorrectos y nadie se entera. Captura la excepción concreta que esperas y deja que las demás exploten.
+</Callout>
+
+<CodeExercise
+  id="a-float"
+  title="Convertir sin romperse"
+  starter={`
+    def to_floats(valores):
+        """Convierte a float lo que se pueda; devuelve (lista_de_floats, numero_de_errores)."""
+        numeros = []
+        errores = 0
+        for v in valores:
+            ___:
+                numeros.append(float(v))
+            ___:
+                errores += 1
+        return numeros, errores
+
+    print(to_floats(["3.5", "ERROR", "2", "", "1e3", "UNKNOWN"]))
+  `}
+  solution={`
+    def to_floats(valores):
+        """Convierte a float lo que se pueda; devuelve (lista_de_floats, numero_de_errores)."""
+        numeros = []
+        errores = 0
+        for v in valores:
+            try:
+                numeros.append(float(v))
+            except ValueError:
+                errores += 1
+        return numeros, errores
+
+    print(to_floats(["3.5", "ERROR", "2", "", "1e3", "UNKNOWN"]))
+  `}
+  hints={[
+    "Intenta (try) la conversión y captura (except) el error que lanza float con un texto que no es un número.",
+    "float('ERROR') lanza ValueError.",
+  ]}
+  check={`
+    numeros, errores = to_floats(["3.5", "ERROR", "2", "", "1e3", "UNKNOWN"])
+    assert numeros == [3.5, 2.0, 1000.0], f"Esperaba [3.5, 2.0, 1000.0] y sale {numeros}"
+    assert errores == 3, f"Hay 3 valores que no son números y cuentas {errores}"
+    try:
+        to_floats([None])
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("float(None) lanza TypeError, que es un bug de quien llama: captura solo ValueError y deja que el resto salte")
+  `}
+>
+Los datos del café del examen traen `"ERROR"` y `"UNKNOWN"` mezclados con números. Convierte lo que se pueda y cuenta lo que no. Solo los textos que no son números cuentan como error: si llega algo que no es texto (un `None`), es un bug de quien llama y debe saltar.
+</CodeExercise>
+
+## Funciones
+
+```python
+def area(base, altura=1.0):
+    """Área de un rectángulo."""
+    return base * altura
+
+area(3)                    # 3.0  (altura toma el valor por defecto)
+area(altura=2, base=5)     # por nombre, en cualquier orden
+```
+
+- Una función sin `return` devuelve `None`.
+- `return a, b` devuelve **una tupla**, que se desempaqueta: `q, r = divmod(17, 5)`.
+- **Parámetros variables**: `*args` recoge los posicionales sobrantes en una tupla y `**kwargs` los nombrados en un dict. Al llamar, `f(*lista)` y `f(**diccionario)` hacen lo contrario: desempaquetan.
+- Los argumentos se pasan **por referencia al objeto**: si la función modifica una lista que recibe, el cambio se ve fuera.
+
+### La trampa del valor por defecto mutable
+
+El valor por defecto se evalúa **una sola vez**, cuando se define la función. Si es una lista, todas las llamadas comparten la misma lista. Vuelve a la simulación de la primera lección, escenario «El argumento por defecto mutable», y después arréglalo:
+
+<CodeExercise
+  id="defecto-mutable"
+  title="Arregla el valor por defecto"
+  starter={`
+    def add_item(item, bag=[]):
+        bag.append(item)
+        return bag
+
+    r1 = add_item("manzana")
+    r2 = add_item("pera")
+    print(r1, r2)
+  `}
+  solution={`
+    def add_item(item, bag=None):
+        if bag is None:
+            bag = []
+        bag.append(item)
+        return bag
+
+    r1 = add_item("manzana")
+    r2 = add_item("pera")
+    print(r1, r2)
+  `}
+  hints={[
+    "El problema es que [] se crea una vez, al definir la función.",
+    "Usa None como valor por defecto y crea la lista dentro de la función.",
+    "def add_item(item, bag=None): / if bag is None: bag = []",
+  ]}
+  check={`
+    a = add_item("x")
+    b = add_item("y")
+    assert a == ["x"] and b == ["y"], f"Cada llamada sin bag debe empezar vacía: salen {a} y {b}"
+    mia = ["z"]
+    assert add_item("w", mia) is mia and mia == ["z", "w"], "Si te pasan una lista, hay que añadir a ESA lista"
+  `}
+>
+Cada llamada sin `bag` debería empezar con una lista vacía.
+</CodeExercise>
+
+### Lambdas y ordenar con key
+
+Una `lambda` es una función anónima de una expresión: `lambda x: x ** 2`. Su uso estrella es como `key` de `sorted`, `min`, `max` o del `apply` de pandas: la función que dice **por qué** comparar.
+
+<CodeExercise
+  id="ordenar-key"
+  title="Ordenar con key"
+  starter={`
+    jugadores = [("Ana", 25, 31), ("Luis", 19, 31), ("Eva", 30, 12), ("Iker", 22, 48)]
+    # (nombre, edad, puntos)
+
+    # 1) Por puntos, de mayor a menor
+    por_puntos = sorted(jugadores, key=___, reverse=True)
+
+    # 2) Por puntos de mayor a menor y, a igualdad, por edad de menor a mayor
+    desempate = sorted(jugadores, key=lambda j: ___)
+
+    print([j[0] for j in por_puntos])
+    print([j[0] for j in desempate])
+  `}
+  solution={`
+    jugadores = [("Ana", 25, 31), ("Luis", 19, 31), ("Eva", 30, 12), ("Iker", 22, 48)]
+
+    por_puntos = sorted(jugadores, key=lambda j: j[2], reverse=True)
+
+    desempate = sorted(jugadores, key=lambda j: (-j[2], j[1]))
+
+    print([j[0] for j in por_puntos])
+    print([j[0] for j in desempate])
+  `}
+  hints={[
+    "key recibe cada tupla y devuelve lo que se compara: los puntos son j[2].",
+    "Si key devuelve una tupla, se compara el primer elemento y, si empatan, el segundo.",
+    "Para «mayor a menor» en una parte y «menor a mayor» en otra, cambia el signo: (-j[2], j[1]).",
+  ]}
+  check={`
+    assert [j[0] for j in por_puntos][0] == "Iker" and [j[0] for j in por_puntos][-1] == "Eva", "Por puntos: Iker primero, Eva última"
+    assert [j[0] for j in desempate] == ["Iker", "Luis", "Ana", "Eva"], f"Con desempate por edad esperaba ['Iker', 'Luis', 'Ana', 'Eva'] y sale {[j[0] for j in desempate]}"
+  `}
+>
+Ordena una lista de tuplas de dos formas.
+</CodeExercise>
+
+### Ámbitos: la regla LEGB
+
+Cuando usas un nombre, Python lo busca en este orden: **L**ocal (la función), **E**nclosing (funciones que la contienen), **G**lobal (el módulo) y **B**uilt-in (`len`, `print`…). Asignar dentro de una función crea una variable **local**, aunque exista una global con el mismo nombre; para modificar la global hace falta `global x` (y casi nunca es buena idea: mejor recibir y devolver).
+
+<Quiz
+  id="legb"
+  options={["1", "2", "UnboundLocalError", "None"]}
+  answer={2}
+  explanation="Como x se asigna dentro de f, Python decide al compilar la función que x es local en TODA la función. El print intenta leer esa x local antes de que tenga valor: UnboundLocalError. Solución: no reutilizar el nombre, o pasarlo como argumento."
+  hints={["¿Es x local o global dentro de f? Python lo decide mirando toda la función, no línea a línea."]}
+>
+```python
+x = 1
+def f():
+    print(x)
+    x = 2
+f()
+```
+¿Qué pasa al llamar a `f()`?
+</Quiz>
+
+### Recursividad
+
+Una función recursiva se llama a sí misma con un problema más pequeño, y necesita un **caso base** que pare. Es natural para estructuras anidadas (árboles, JSON, carpetas).
+
+<CodeExercise
+  id="aplanar"
+  title="Aplanar listas anidadas"
+  starter={`
+    def flatten(items):
+        resultado = []
+        for x in items:
+            if isinstance(x, list):
+                resultado.extend(___)
+            else:
+                resultado.append(x)
+        return resultado
+
+    print(flatten([1, [2, [3, 4], 5], [[6]], 7]))
+  `}
+  solution={`
+    def flatten(items):
+        resultado = []
+        for x in items:
+            if isinstance(x, list):
+                resultado.extend(flatten(x))
+            else:
+                resultado.append(x)
+        return resultado
+
+    print(flatten([1, [2, [3, 4], 5], [[6]], 7]))
+  `}
+  hints={[
+    "Si x es una lista, aplánala… con la propia función.",
+    "resultado.extend(flatten(x))",
+  ]}
+  check={`
+    assert flatten([1, [2, [3, 4], 5], [[6]], 7]) == [1, 2, 3, 4, 5, 6, 7], "Debe quedar [1, 2, 3, 4, 5, 6, 7]"
+    assert flatten([]) == [] and flatten([[[]]]) == [], "Listas vacías anidadas dan una lista vacía"
+  `}
+>
+Completa la llamada recursiva.
+</CodeExercise>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_03_Python101_Control.ipynb` (condicionales, `match`, bucles, `break`/`continue`/`else`, excepciones y 14 ejercicios resueltos) y `01MIAR_04_Python101_Functions.ipynb` (parámetros, `*args`/`**kwargs`, lambdas, recursividad y *scopes*). El número perfecto es la pregunta 1 de `Examen-Python-2024-2025-1aConvocatoria.pdf`.
+</Callout>
+
+## Para llevar
+
+- `match` compara estructuras; el `else` de un bucle se ejecuta si no hubo `break`.
+- Captura excepciones concretas (`except ValueError`), nunca todas.
+- Nunca uses un mutable como valor por defecto: `None` y créalo dentro.
+- `key=lambda x: …` dice por qué ordenar; una tupla como clave desempata.
+- Asignar dentro de una función crea una variable local (regla LEGB).

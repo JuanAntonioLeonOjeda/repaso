@@ -1,0 +1,288 @@
+Todo en Python es un objeto: un número, una lista, una función, un `DataFrame`, un modelo de scikit-learn. Cuando escribes `modelo.fit(X, y)` estás llamando a un **método** de un objeto que guarda **datos** (los coeficientes aprendidos). Saber escribir tus propias clases te permite leer el código de las librerías y empaquetar tus modelos, *datasets* y *pipelines* de la misma forma.
+
+## Clase, objeto, self
+
+Una **clase** es una plantilla; un **objeto** (o instancia) es algo construido con ella.
+
+```python
+class Empleado:
+    empresa = "VIU"                      # atributo de CLASE: compartido por todos
+
+    def __init__(self, nombre, salario): # constructor: se llama al crear el objeto
+        self.nombre = nombre             # atributos de INSTANCIA: uno por objeto
+        self.salario = salario
+
+    def subir_sueldo(self, cantidad):    # método: función que recibe el objeto como self
+        self.salario += cantidad
+
+ana = Empleado("Ana", 30000)
+ana.subir_sueldo(500)                    # equivale a Empleado.subir_sueldo(ana, 500)
+```
+
+`self` no es una palabra reservada: es el nombre que, por convenio, se le da al primer parámetro, que es **el propio objeto**. Por eso `ana.subir_sueldo(500)` y `Empleado.subir_sueldo(ana, 500)` son lo mismo.
+
+Cuando lees `ana.empresa`, Python busca primero en el objeto, luego en su clase y luego en las clases padre. Si **asignas** `ana.empresa = "otra"`, creas un atributo de instancia que tapa el de la clase solo para `ana`.
+
+<Quiz
+  id="atributo-clase"
+  options={["['x'] y []", "['x'] y ['x']", "[] y []", "Da error"]}
+  answer={1}
+  explanation="etiquetas es un atributo de CLASE: hay una sola lista compartida por todos los objetos. a.etiquetas.append('x') no asigna nada, modifica esa lista común. Si cada objeto necesita su lista, créala en __init__ con self.etiquetas = []."
+  hints={["¿Dónde se crea la lista: en __init__ o en el cuerpo de la clase?"]}
+>
+```python
+class Muestra:
+    etiquetas = []
+
+a, b = Muestra(), Muestra()
+a.etiquetas.append("x")
+print(a.etiquetas, b.etiquetas)
+```
+¿Qué imprime?
+</Quiz>
+
+## Métodos especiales
+
+Los métodos con doble guion bajo (*dunder*) hacen que tus objetos se comporten como los nativos: `__repr__` decide cómo se imprimen, `__eq__` qué significa `==`, `__add__` qué hace `+`, `__len__` qué devuelve `len()`, `__getitem__` qué hace `obj[i]`. Así es como NumPy hace que `a + b` sume arrays elemento a elemento.
+
+<CodeExercise
+  id="vector"
+  title="Un vector con operadores"
+  starter={`
+    class Vector:
+        def __init__(self, *componentes):
+            self.c = list(componentes)
+
+        def __repr__(self):
+            return f"Vector({', '.join(str(x) for x in self.c)})"
+
+        def __len__(self):
+            return ___
+
+        def __add__(self, otro):
+            if len(self) != len(otro):
+                raise ValueError("dimensiones distintas")
+            return Vector(*[a + b for a, b in ___])
+
+        def __mul__(self, k):            # vector * escalar
+            return ___
+
+        def __eq__(self, otro):
+            return isinstance(otro, Vector) and ___
+
+    v = Vector(1, 2, 3)
+    w = Vector(10, 20, 30)
+    print(v + w, v * 2, v == Vector(1, 2, 3))
+  `}
+  solution={`
+    class Vector:
+        def __init__(self, *componentes):
+            self.c = list(componentes)
+
+        def __repr__(self):
+            return f"Vector({', '.join(str(x) for x in self.c)})"
+
+        def __len__(self):
+            return len(self.c)
+
+        def __add__(self, otro):
+            if len(self) != len(otro):
+                raise ValueError("dimensiones distintas")
+            return Vector(*[a + b for a, b in zip(self.c, otro.c)])
+
+        def __mul__(self, k):
+            return Vector(*[a * k for a in self.c])
+
+        def __eq__(self, otro):
+            return isinstance(otro, Vector) and self.c == otro.c
+
+    v = Vector(1, 2, 3)
+    w = Vector(10, 20, 30)
+    print(v + w, v * 2, v == Vector(1, 2, 3))
+  `}
+  hints={[
+    "La longitud es la de la lista interna self.c.",
+    "Para sumar componente a componente recorre las dos listas a la vez con zip(self.c, otro.c).",
+    "__mul__ devuelve un Vector nuevo con cada componente multiplicada por k; __eq__ compara self.c == otro.c.",
+  ]}
+  check={`
+    v = Vector(1, 2, 3)
+    assert repr(v + Vector(10, 20, 30)) == "Vector(11, 22, 33)", "v + w debería ser Vector(11, 22, 33)"
+    assert repr(v * 2) == "Vector(2, 4, 6)", "v * 2 debería ser Vector(2, 4, 6)"
+    assert v == Vector(1, 2, 3) and not (v == Vector(1, 2)) and not (v == [1, 2, 3]), "== compara componentes y solo con otro Vector"
+    assert len(v) == 3, "len(v) debería ser 3"
+    assert repr(v) == "Vector(1, 2, 3)", "Sumar o multiplicar no debe modificar v: hay que devolver un Vector nuevo"
+    try:
+        v + Vector(1, 2)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Sumar vectores de distinta dimensión debe lanzar ValueError")
+  `}
+>
+Completa los métodos especiales para que `+`, `*`, `==` y `len()` funcionen.
+</CodeExercise>
+
+## Herencia
+
+Una clase hija hereda todo de la madre y puede **extender** (añadir) o **reemplazar** (sobrescribir) métodos. `super()` llama a la versión de la madre, que es como se extiende sin copiar código.
+
+```python
+class Gerente(Empleado):
+    def __init__(self, nombre, salario, equipo):
+        super().__init__(nombre, salario)   # extiende: reutiliza el constructor del padre
+        self.equipo = equipo
+
+    def subir_sueldo(self, cantidad):       # reemplaza, pero reutiliza
+        super().subir_sueldo(cantidad * 1.1)
+```
+
+### Clases abstractas
+
+Una clase abstracta define **qué métodos deben existir** sin implementarlos, y no se puede instanciar. Es la idea detrás de las interfaces de scikit-learn: todo estimador tiene `fit` y `predict`, y por eso un `Pipeline` puede encadenar cualquiera.
+
+<CodeExercise
+  id="figuras"
+  title="Una jerarquía con clase abstracta"
+  starter={`
+    from abc import ABC, abstractmethod
+    import math
+
+    class Figura(ABC):
+        @abstractmethod
+        def area(self):
+            ...
+
+        def describir(self):
+            return f"{type(self).__name__} de área {self.area():.2f}"
+
+    class Rectangulo(Figura):
+        def __init__(self, base, altura):
+            self.base = base
+            self.altura = altura
+
+        def area(self):
+            return ___
+
+    class Cuadrado(Rectangulo):
+        def __init__(self, lado):
+            ___                     # reutiliza el constructor de Rectangulo
+
+    class Circulo(Figura):
+        def __init__(self, r):
+            self.r = r
+
+        def area(self):
+            return ___
+
+    figuras = [Rectangulo(2, 3), Cuadrado(2), Circulo(1)]
+    for f in figuras:
+        print(f.describir())
+  `}
+  solution={`
+    from abc import ABC, abstractmethod
+    import math
+
+    class Figura(ABC):
+        @abstractmethod
+        def area(self):
+            ...
+
+        def describir(self):
+            return f"{type(self).__name__} de área {self.area():.2f}"
+
+    class Rectangulo(Figura):
+        def __init__(self, base, altura):
+            self.base = base
+            self.altura = altura
+
+        def area(self):
+            return self.base * self.altura
+
+    class Cuadrado(Rectangulo):
+        def __init__(self, lado):
+            super().__init__(lado, lado)
+
+    class Circulo(Figura):
+        def __init__(self, r):
+            self.r = r
+
+        def area(self):
+            return math.pi * self.r ** 2
+
+    figuras = [Rectangulo(2, 3), Cuadrado(2), Circulo(1)]
+    for f in figuras:
+        print(f.describir())
+  `}
+  hints={[
+    "El área del rectángulo usa self.base y self.altura.",
+    "Un cuadrado es un rectángulo con base = altura = lado: super().__init__(lado, lado).",
+    "Área del círculo: math.pi * self.r ** 2.",
+  ]}
+  check={`
+    assert [f.describir() for f in figuras] == ["Rectangulo de área 6.00", "Cuadrado de área 4.00", "Circulo de área 3.14"], "Las descripciones no coinciden"
+    assert isinstance(Cuadrado(1), Rectangulo) and isinstance(Cuadrado(1), Figura), "Un Cuadrado también es Rectangulo y Figura"
+    try:
+        Figura()
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("Una clase abstracta no se puede instanciar")
+  `}
+>
+`describir` está escrito una vez en la madre y funciona para todas las hijas: eso es el **polimorfismo**.
+</CodeExercise>
+
+## Visibilidad: convenios, no muros
+
+Python no tiene `private` de verdad. Hay convenios:
+
+- `nombre`: público.
+- `_nombre`: «interno, no lo toques desde fuera». Nadie te lo impide.
+- `__nombre`: Python lo **renombra** a `_Clase__nombre` (*name mangling*) para evitar choques con subclases. Desde fuera, `obj.__nombre` da `AttributeError`, pero `obj._Clase__nombre` funciona.
+
+Para validar al asignar, la herramienta idiomática es `@property`:
+
+```python
+class Temperatura:
+    def __init__(self, celsius):
+        self.celsius = celsius            # pasa por el setter
+
+    @property
+    def celsius(self):
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, valor):
+        if valor < -273.15:
+            raise ValueError("por debajo del cero absoluto")
+        self._celsius = valor
+```
+
+<Callout kind="real" title="dataclasses: clases de datos sin escribir el constructor">
+Para clases que solo guardan datos (un registro, una configuración de entrenamiento), en el trabajo se usa `@dataclass`, que genera `__init__`, `__repr__` y `__eq__` por ti:
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class Config:
+    lr: float = 1e-3
+    epochs: int = 50
+    capas: list[int] = field(default_factory=lambda: [64, 32])   # nunca un [] directo
+```
+
+Y para validar datos de entrada (una API, un fichero de configuración), **Pydantic**.
+</Callout>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_06_Python101_OOP.ipynb`: clases, `self`, atributos de clase e instancia, herencia, visibilidad, extensión frente a reemplazo, clases abstractas, sobrecarga de operadores y búsqueda de atributos, con tres ejercicios con tests.
+</Callout>
+
+## Para llevar
+
+- Una clase agrupa datos (atributos) y comportamiento (métodos); `self` es el propio objeto.
+- Los atributos de clase se comparten: los mutables, en `__init__`.
+- Los métodos *dunder* (`__add__`, `__eq__`, `__repr__`…) hacen que tus objetos funcionen con los operadores.
+- `super()` reutiliza el código de la madre; una clase abstracta fija qué métodos deben existir.
+- `_x` es un convenio; `__x` se renombra; `@property` valida al asignar; `@dataclass` para clases de datos.

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { SubjectSlug } from "@/content/types";
 
 /**
- * One small drawing per subject, made of what the subject is about (labelled points,
+ * One small drawing per subject, made of what the subject is about (a Python prompt, labelled points,
  * clusters, a layer of neurons, an agent loop, a descent path, a membership curve).
  */
 export function SubjectIcon({ slug, size = 56 }: { slug: SubjectSlug; size?: number }): ReactNode {
@@ -19,6 +19,17 @@ export function SubjectIcon({ slug, size = 56 }: { slug: SubjectSlug; size?: num
     "aria-hidden": true,
   };
   switch (slug) {
+    case "python":
+      return (
+        <svg {...common}>
+          <rect x="5" y="9" width="46" height="38" rx="6" />
+          <path d="M5 18 H51" opacity={0.45} />
+          <path d="M13 27 L19 31 L13 35" />
+          <path d="M23 36 H33" />
+          <path d="M37 26 C34 26, 34 30, 36 31.5 C34 33, 34 37, 37 37" opacity={0.6} />
+          <path d="M43 26 C46 26, 46 30, 44 31.5 C46 33, 46 37, 43 37" opacity={0.6} />
+        </svg>
+      );
     case "supervisado":
       return (
         <svg {...common}>

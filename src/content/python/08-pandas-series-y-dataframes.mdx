@@ -1,0 +1,247 @@
+pandas es la hoja de cálculo de Python: tablas con columnas de distinto tipo, con nombre en filas y columnas, que se filtran, se agrupan y se juntan en una línea. La pregunta larga del examen (de 4 a 8 puntos de 10) es siempre un análisis con pandas, así que esta lección y la siguiente son las que más rinden.
+
+## Series: un array con etiquetas
+
+Una `Series` es un array de NumPy de una dimensión con un **índice**: una etiqueta por elemento.
+
+```python
+import pandas as pd
+precios = pd.Series([2.0, 3.0, 1.5], index=["Coffee", "Cake", "Tea"])
+precios["Cake"]          # 3.0   (por etiqueta)
+precios[precios > 1.8]   # máscara, como en NumPy
+precios * 2              # vectorizado
+precios.index, precios.values
+```
+
+Al operar dos Series, pandas **alinea por etiqueta**, no por posición: lo que no aparezca en las dos queda `NaN`. Es muy cómodo y, si no lo sabes, muy sorprendente.
+
+### loc frente a iloc
+
+- `.loc[...]` selecciona por **etiqueta**, y en los rangos **el final se incluye**.
+- `.iloc[...]` selecciona por **posición** entera, y como en Python el final se excluye.
+
+Usa siempre uno de los dos. `s[1]` es ambiguo: si el índice es de enteros, es la etiqueta 1; si es de texto, versiones antiguas lo tomaban como posición, pero pandas 3 da `KeyError`.
+
+<Predict
+  id="loc-incluye"
+  answer={["60"]}
+  explanation="loc['a':'c'] incluye el final: 10 + 20 + 30 = 60. En cambio iloc[0:2] serían solo las posiciones 0 y 1 (30). Es lo que pedía el examen de prueba: demostrar que s.loc[:'d'] y s.iloc[:4] seleccionan lo mismo."
+  hints={["Con loc y etiquetas, ¿se incluye la 'c'?"]}
+>
+`s = pd.Series([10, 20, 30, 40], index=["a", "b", "c", "d"])`. ¿Cuánto vale `s.loc["a":"c"].sum()`?
+</Predict>
+
+## DataFrame: una tabla
+
+Un `DataFrame` es un diccionario de Series que comparten índice: cada columna es una Series con su propio tipo.
+
+```python
+df = pd.read_csv("titanic.csv")        # también read_excel, read_json, read_parquet, read_sql
+df.head(6); df.tail(); df.sample(5)
+df.shape                               # (filas, columnas)
+df.info()                              # tipos y no nulos por columna
+df.describe()                          # estadísticos de las columnas numéricas
+df["Age"]                              # una columna: Series
+df[["Name", "Age"]]                    # varias columnas: DataFrame
+df.loc[0, "Name"]; df.iloc[0, 3]       # una celda
+df.loc[df["Age"] > 60, ["Name", "Age"]]   # filas por máscara y columnas por nombre
+```
+
+Filtrar es lo de NumPy con nombres: `df[(df["Sex"] == "female") & (df["Pclass"] == 1)]`, `df[df["Embarked"].isin(["C", "Q"])]`, `df.query("Age > 60 and Pclass == 1")`. Para ordenar, `sort_values("Fare", ascending=False)`; para contar categorías, `value_counts()`; para crear columnas, `df["familia"] = df["SibSp"] + df["Parch"] + 1`; para quitar, `df.drop(columns=["Cabin"])`.
+
+<Callout kind="real" title="pandas 3: copy-on-write y textos con su tipo">
+En pandas 3 (la versión de esta web) han cambiado dos cosas que verás en tutoriales antiguos:
+
+- **Copy-on-write**: el famoso `SettingWithCopyWarning` desaparece. Un filtro siempre se comporta como una copia, así que `df[df.Age > 60]["Fare"] = 0` **no modifica `df`** (y pandas avisa con un `ChainedAssignmentError`). Para modificar, una sola operación: `df.loc[df.Age > 60, "Fare"] = 0`.
+- Las columnas de texto tienen tipo `str` en vez de `object`.
+
+Y evita `inplace=True`: no ahorra memoria y estorba para encadenar operaciones. Mejor `df = df.dropna(...)`.
+</Callout>
+
+<CodeExercise
+  id="titanic-primeros-pasos"
+  title="Primeros pasos con el Titanic"
+  files={["titanic.csv"]}
+  starter={`
+    import pandas as pd
+
+    df = pd.read_csv("titanic.csv")
+
+    # A. número de filas y columnas
+    filas, columnas = ___
+
+    # B. porcentaje de valores nulos por columna (Series de 0 a 100)
+    pct_nulos = ___
+
+    # C. tasa de supervivencia (media de Survived) de las mujeres de primera clase
+    tasa = ___
+
+    print(filas, columnas)
+    print(pct_nulos.round(2))
+    print(round(tasa, 3))
+  `}
+  solution={`
+    import pandas as pd
+
+    df = pd.read_csv("titanic.csv")
+
+    filas, columnas = df.shape
+
+    pct_nulos = df.isna().mean() * 100
+
+    tasa = df.loc[(df["Sex"] == "female") & (df["Pclass"] == 1), "Survived"].mean()
+
+    print(filas, columnas)
+    print(pct_nulos.round(2))
+    print(round(tasa, 3))
+  `}
+  hints={[
+    "df.shape es una tupla (filas, columnas): se desempaqueta directamente.",
+    "df.isna() da True/False; la media de booleanos es la proporción de True. Multiplica por 100.",
+    "Filtra con dos condiciones entre paréntesis y &, elige la columna Survived con .loc y haz .mean().",
+  ]}
+  check={`
+    assert (filas, columnas) == (891, 12), "El Titanic tiene 891 filas y 12 columnas"
+    assert abs(pct_nulos["Cabin"] - 77.10) < 0.01 and abs(pct_nulos["Age"] - 19.87) < 0.01, "Cabin tiene un 77,10 % de nulos y Age un 19,87 %"
+    assert abs(tasa - 0.968) < 0.001, f"Sobrevivió el 96,8 % de las mujeres de primera; sale {tasa:.3f}"
+  `}
+>
+Un calentamiento con el *dataset* del Titanic, que está en tu carpeta de recursos.
+</CodeExercise>
+
+<Callout kind="warn" title="El porcentaje de nulos de la solución del examen">
+En la solución que circula de la primera convocatoria se calcula `isnull().sum() / count() * 100`. Pero `count()` cuenta solo los **no nulos**, así que el resultado no es el porcentaje sobre el total (con un 50 % de nulos daría 100 %). Lo correcto es dividir entre `len(df)`, o directamente `df.isna().mean() * 100`.
+</Callout>
+
+## Valores perdidos
+
+pandas representa lo que falta con `NaN` (y `NaT` en fechas, `pd.NA` en algunos tipos). Las herramientas:
+
+- Detectar: `df.isna()`, `df.isna().sum()` (por columna), `df.isna().sum(axis=1)` (por fila).
+- Quitar: `df.dropna()` (filas con algún NaN), `dropna(subset=["Item", "Location"])`, `dropna(how="all")`, `dropna(axis=1, thresh=8)`.
+- Sustituir: `df.mask(cond, np.nan)` pone NaN donde se cumple; `df.where(cond, otro)` conserva donde se cumple. `replace(["ERROR", "UNKNOWN"], np.nan)`.
+- Rellenar: `fillna(valor)`, `fillna(df.mean())`, `ffill()`, `bfill()`, `interpolate()`.
+
+<MissingValuesSim />
+
+<CodeExercise
+  id="nan-por-fila"
+  title="NaN por fila (examen de prueba)"
+  starter={`
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(7)
+    df = pd.DataFrame(rng.integers(0, 21, size=(10, 10)))   # enteros en [0, 20]
+
+    # reemplaza por NaN los menores de 5
+    df = df.___(___, np.nan)
+
+    nan_por_fila = ___
+    print(nan_por_fila)
+  `}
+  solution={`
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(7)
+    df = pd.DataFrame(rng.integers(0, 21, size=(10, 10)))
+
+    df = df.mask(df < 5, np.nan)
+
+    nan_por_fila = df.isna().sum(axis=1)
+    print(nan_por_fila)
+  `}
+  hints={[
+    "mask(condición, valor) pone valor donde la condición es True. where hace lo contrario.",
+    "df = df.mask(df < 5, np.nan)  (o df.where(df >= 5, np.nan))",
+    "Para contar por fila, suma los True de isna() con axis=1.",
+  ]}
+  check={`
+    original = pd.DataFrame(np.random.default_rng(7).integers(0, 21, size=(10, 10)))
+    assert df.isna().equals(original < 5), "Debe haber NaN exactamente donde el valor era menor que 5"
+    assert nan_por_fila.tolist() == (original < 5).sum(axis=1).tolist(), "El conteo por fila no cuadra: ¿usaste axis=1?"
+  `}
+>
+DataFrame 10×10 de enteros entre 0 y 20: cambia los menores de 5 por NaN y cuenta cuántos NaN hay en cada fila.
+</CodeExercise>
+
+<CodeExercise
+  id="sensores"
+  title="Sensores con huecos (examen)"
+  starter={`
+    import numpy as np
+    import pandas as pd
+
+    nan = np.nan
+    data = [[0.04, 0.25,  nan, 0.25,  nan, 0.43, 0.71, 0.51,  nan,  nan],
+            [ nan,  nan,  nan, 0.04, 0.76,  nan, 0.45, 0.67, 0.76, 0.16],
+            [ nan, 0.26, 0.53,  nan, 0.39, 0.40, 0.22,  nan, 0.24, 0.01],
+            [0.49, 0.26,  nan, 0.62, 0.73, 0.26, 0.85,  nan,  nan,  nan],
+            [ nan,  nan,  nan, 0.04, 0.76,  nan,  nan, 0.67, 0.76, 0.16],
+            [ nan, 0.26, 0.58, 0.25, 0.31, 0.45, 0.26, 0.65, 0.24, 0.11],
+            [0.49, 0.29, 0.45, 0.62, 0.73, 0.26, 0.85,  nan, 0.36,  nan],
+            [ nan,  nan,  nan, 0.04, 0.75, 0.96,  nan, 0.67, 0.76, 0.16],
+            [0.48, 0.24, 0.50, 0.11, 0.39, 0.41,  nan,  nan, 0.24, 0.21],
+            [0.49, 0.27,  nan, 0.62, 0.73, 0.26, 0.85, 0.91,  nan,  nan],
+            [ nan, 0.29, 0.41, 0.08, 0.05,  nan, 0.61,  nan, 0.48, 0.68]]
+    df = pd.DataFrame(data, columns=list("abcdefghij"))
+
+    # 1) descartar los sensores (columnas) con MÁS de 3 NaN
+    df = df.loc[:, ___]
+
+    # 2) interpolar lo que se pueda y 3) rellenar los extremos con el valor adyacente
+    df = ___
+
+    print(df.round(3))
+  `}
+  solution={`
+    import numpy as np
+    import pandas as pd
+
+    nan = np.nan
+    data = [[0.04, 0.25,  nan, 0.25,  nan, 0.43, 0.71, 0.51,  nan,  nan],
+            [ nan,  nan,  nan, 0.04, 0.76,  nan, 0.45, 0.67, 0.76, 0.16],
+            [ nan, 0.26, 0.53,  nan, 0.39, 0.40, 0.22,  nan, 0.24, 0.01],
+            [0.49, 0.26,  nan, 0.62, 0.73, 0.26, 0.85,  nan,  nan,  nan],
+            [ nan,  nan,  nan, 0.04, 0.76,  nan,  nan, 0.67, 0.76, 0.16],
+            [ nan, 0.26, 0.58, 0.25, 0.31, 0.45, 0.26, 0.65, 0.24, 0.11],
+            [0.49, 0.29, 0.45, 0.62, 0.73, 0.26, 0.85,  nan, 0.36,  nan],
+            [ nan,  nan,  nan, 0.04, 0.75, 0.96,  nan, 0.67, 0.76, 0.16],
+            [0.48, 0.24, 0.50, 0.11, 0.39, 0.41,  nan,  nan, 0.24, 0.21],
+            [0.49, 0.27,  nan, 0.62, 0.73, 0.26, 0.85, 0.91,  nan,  nan],
+            [ nan, 0.29, 0.41, 0.08, 0.05,  nan, 0.61,  nan, 0.48, 0.68]]
+    df = pd.DataFrame(data, columns=list("abcdefghij"))
+
+    df = df.loc[:, df.isna().sum() <= 3]
+
+    df = df.interpolate().ffill().bfill()
+
+    print(df.round(3))
+  `}
+  hints={[
+    "df.isna().sum() cuenta los NaN de cada columna; quédate con las que tienen 3 o menos.",
+    "interpolate() rellena los huecos entre dos valores, pero no los del principio de la columna.",
+    "Encadena: df.interpolate().ffill().bfill() (bfill cubre los NaN iniciales).",
+  ]}
+  check={`
+    assert list(df.columns) == ["b", "d", "e", "f", "g", "i"], f"Deben quedar los sensores b, d, e, f, g, i y quedan {list(df.columns)}"
+    assert df.isna().sum().sum() == 0, "No debe quedar ningún NaN"
+    assert abs(df.loc[1, "b"] - 0.255) < 1e-9 and abs(df.loc[4, "g"] - 0.555) < 1e-9, "Los huecos interiores se rellenan interpolando: b[1] = 0,255 y g[4] = 0,555"
+    assert df.loc[0, "e"] == 0.76, "El NaN inicial de e se rellena con el valor siguiente (0,76)"
+  `}
+>
+Pregunta 3 de la primera convocatoria (tarde): datos de 10 sensores, uno por columna. Descarta los que tengan más de 3 NaN, interpola el resto y rellena con el valor adyacente lo que no se pueda interpolar. No debe quedar ningún NaN.
+</CodeExercise>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_09_Pandas.ipynb` (Series, alineación por índice, DataFrame, modificar e iterar), la primera parte de `01MIAR_10_+Pandas.ipynb` (búsqueda, `isin`, ordenación) y los `100-pandas-puzzles-with-solutions.ipynb`, que tienes en la carpeta de la asignatura y son el mejor entrenamiento para el examen.
+</Callout>
+
+## Para llevar
+
+- Una Series es un array con índice; al operar, pandas alinea por etiqueta.
+- `.loc` por etiqueta (incluye el final), `.iloc` por posición (lo excluye).
+- Filtra con máscaras entre paréntesis y `&`; para modificar, una sola operación con `.loc`.
+- Porcentaje de nulos: `df.isna().mean() * 100`.
+- `mask`/`where` para sustituir, `dropna(subset=...)` para quitar, `interpolate().ffill().bfill()` para no dejar huecos.

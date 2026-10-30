@@ -23,9 +23,9 @@ function mdxFiles(subject: string): string[] {
 }
 
 describe("content catalog", () => {
-  it("has six subjects with unique slugs", () => {
-    expect(subjects).toHaveLength(6);
-    expect(new Set(subjects.map((s) => s.slug)).size).toBe(6);
+  it("has seven subjects with unique slugs", () => {
+    expect(subjects).toHaveLength(7);
+    expect(new Set(subjects.map((s) => s.slug)).size).toBe(7);
   });
 
   it("has the TFM as an extra section", () => {

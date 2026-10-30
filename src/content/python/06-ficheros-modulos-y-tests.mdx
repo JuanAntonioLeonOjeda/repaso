@@ -1,0 +1,249 @@
+Un análisis no vive solo en tu cabeza ni en una celda de Jupyter: lee ficheros, escribe resultados, se reparte en módulos que otros importan, depende de librerías con versiones concretas y, si es serio, tiene tests que avisan cuando algo se rompe. Esta lección junta todo eso, que es lo que más se nota al pasar del máster al trabajo.
+
+## Leer y escribir ficheros
+
+```python
+with open("datos.txt", encoding="utf-8") as f:   # 'r' (leer) es el modo por defecto
+    contenido = f.read()                          # todo el fichero en un str
+
+with open("datos.txt", encoding="utf-8") as f:
+    for linea in f:                               # línea a línea, sin cargarlo entero
+        print(linea.rstrip("\n"))
+
+with open("salida.txt", "w", encoding="utf-8") as f:   # 'w' sobrescribe, 'a' añade al final
+    f.write("hola\n")
+```
+
+- `with` **cierra el fichero** aunque salte una excepción. Sin él, un fichero abierto puede quedarse sin escribir del todo.
+- Pon siempre `encoding="utf-8"`: el valor por defecto depende del sistema operativo y es la causa clásica de las «Ã±» en lugar de «ñ».
+- Modos: `"r"`, `"w"`, `"a"`, `"x"` (crear, falla si existe) y `"b"` para binario (`"rb"` para imágenes).
+- Para rutas, `pathlib.Path`: `Path("res") / "datos.csv"`, `.exists()`, `.glob("*.csv")`, `.read_text()`.
+
+### CSV y JSON
+
+El módulo `csv` entiende comillas y separadores dentro de los campos (algo que `linea.split(",")` rompe). `json` convierte entre texto JSON y dicts/listas.
+
+<CodeExercise
+  id="csv-ventas"
+  title="Escribir y leer un CSV"
+  starter={`
+    import csv
+
+    ventas = [
+        {"item": "Coffee", "cantidad": 2, "precio": 2.0},
+        {"item": "Cake", "cantidad": 1, "precio": 3.0},
+        {"item": "Coffee", "cantidad": 3, "precio": 2.0},
+        {"item": "Salad, mixed", "cantidad": 1, "precio": 5.0},   # ¡una coma dentro del campo!
+    ]
+
+    with open("ventas.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["item", "cantidad", "precio"])
+        writer.writeheader()
+        writer.writerows(ventas)
+
+    totales = {}
+    with open("ventas.csv", newline="", encoding="utf-8") as f:
+        for fila in csv.___(f):                    # cada fila como un dict
+            # ojo: el CSV solo guarda texto
+            importe = ___
+            totales[fila["item"]] = totales.get(fila["item"], 0) + importe
+
+    print(totales)
+  `}
+  solution={`
+    import csv
+
+    ventas = [
+        {"item": "Coffee", "cantidad": 2, "precio": 2.0},
+        {"item": "Cake", "cantidad": 1, "precio": 3.0},
+        {"item": "Coffee", "cantidad": 3, "precio": 2.0},
+        {"item": "Salad, mixed", "cantidad": 1, "precio": 5.0},
+    ]
+
+    with open("ventas.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["item", "cantidad", "precio"])
+        writer.writeheader()
+        writer.writerows(ventas)
+
+    totales = {}
+    with open("ventas.csv", newline="", encoding="utf-8") as f:
+        for fila in csv.DictReader(f):
+            importe = int(fila["cantidad"]) * float(fila["precio"])
+            totales[fila["item"]] = totales.get(fila["item"], 0) + importe
+
+    print(totales)
+  `}
+  hints={[
+    "El lector que devuelve cada fila como dict es csv.DictReader.",
+    "Todo lo que lees de un CSV es str: convierte con int() y float() antes de multiplicar.",
+    "importe = int(fila['cantidad']) * float(fila['precio'])",
+  ]}
+  check={`
+    assert totales == {"Coffee": 10.0, "Cake": 3.0, "Salad, mixed": 5.0}, f"Totales esperados: Coffee 10, Cake 3, 'Salad, mixed' 5. Salen {totales}"
+    with open("ventas.csv", encoding="utf-8") as f:
+        assert '"Salad, mixed"' in f.read(), "csv debería haber puesto comillas al campo con coma"
+  `}
+>
+Escribe unas ventas a CSV y vuelve a leerlas para sumar el importe por artículo. Fíjate en cómo el módulo `csv` protege la coma de «Salad, mixed».
+</CodeExercise>
+
+<Callout kind="real" title="En la práctica, pandas">
+Para datos tabulares, `pd.read_csv` y `df.to_csv` hacen todo esto en una línea, y para ficheros grandes se usan formatos binarios como **Parquet** (`df.to_parquet`), que guardan los tipos, ocupan mucho menos y se leen más rápido. El módulo `csv` sigue siendo útil para leer línea a línea ficheros que no caben en memoria o para escribir sin depender de pandas.
+</Callout>
+
+## Módulos, paquetes y entornos
+
+- Un **módulo** es un fichero `.py`; un **paquete**, una carpeta de módulos (con `__init__.py`). `import utils`, `from utils import limpiar`, `import numpy as np`.
+- Al importar un módulo, **se ejecuta todo su código de nivel superior**. Por eso el código que solo debe correr al lanzar el fichero como script va dentro de `if __name__ == "__main__":`.
+- Cada módulo tiene su propio **espacio de nombres**: `math.sqrt` y `numpy.sqrt` no chocan. Evita `from x import *`, que mezcla los nombres de todos.
+
+<Quiz
+  id="name-main"
+  options={[
+    "Siempre: cada vez que se importa o se ejecuta el fichero",
+    "Solo cuando el fichero se ejecuta directamente (python fichero.py), no cuando se importa",
+    "Solo cuando se importa desde otro módulo",
+    "Solo en Jupyter",
+  ]}
+  answer={1}
+  explanation="Python pone __name__ = '__main__' en el fichero que lanzas y __name__ = 'nombre_del_modulo' en los que importas. Así un mismo fichero sirve de librería (sus funciones) y de script (su bloque main)."
+>
+¿Cuándo se ejecuta el código dentro de `if __name__ == "__main__":`?
+</Quiz>
+
+### pip y entornos virtuales
+
+`pip install pandas` instala en el Python activo. Si todos tus proyectos comparten un Python, tarde o temprano uno necesita `pandas 2` y otro `pandas 3`. La solución es un **entorno virtual por proyecto**:
+
+```bash
+python -m venv .venv            # crear
+source .venv/bin/activate       # activar (Windows: .venv\Scripts\activate)
+pip install pandas==3.0.2       # instalar en ESE entorno
+pip freeze > requirements.txt   # apuntar las versiones exactas
+```
+
+<Callout kind="real" title="Lo que se usa hoy">
+El curso usa `pip`, `pipenv` (de ahí el `Pipfile` del repositorio) y conda. En equipos actuales se ha impuesto **uv** (`uv venv`, `uv add pandas`, `uv run script.py`), que hace lo mismo muchísimo más rápido y genera un *lockfile* con las versiones exactas, para que tu compañero y el servidor instalen lo mismo que tú. Lo importante no es la herramienta: es **fijar versiones** y no instalar nada en el Python del sistema.
+</Callout>
+
+## Código que se entiende
+
+El curso dedica una parte a la *artesanía del software*. Lo esencial:
+
+- **Nombres que expliquen**: `precio_medio_por_item` mejor que `pm`; funciones con verbo (`limpiar_fechas`).
+- **Funciones cortas que hacen una cosa**, sin efectos secundarios escondidos.
+- **Comentarios para el porqué**, no para el qué (el qué ya lo dice el código). Nada de historiales de cambios en comentarios: para eso está git.
+- **Docstrings** que explican qué recibe y qué devuelve la función. Herramientas como Sphinx generan documentación a partir de ellas.
+- Un formateador y un *linter* automáticos (hoy, **ruff**) y seguir **PEP 8**: así nadie discute por los espacios.
+
+## Tests
+
+Un test es código que comprueba que otro código hace lo que debe. Con **pytest**, cualquier función que empiece por `test_` en un fichero `test_*.py` es un test, y se comprueba con un simple `assert`:
+
+```python
+# test_limpieza.py
+from limpieza import eliminar_duplicados
+
+def test_conserva_el_orden():
+    assert eliminar_duplicados([3, 1, 3, 2]) == [3, 1, 2]
+
+def test_lista_vacia():
+    assert eliminar_duplicados([]) == []
+```
+
+Se ejecutan con `pytest` en la terminal. La pirámide de tests dice que conviene tener **muchos tests unitarios** (rápidos, de una función), menos de integración y pocos de extremo a extremo. Y **TDD** (*test-driven development*) propone escribir el test antes que el código: test que falla → código mínimo para que pase → mejorar el código con los tests en verde.
+
+Un buen test no es el que pasa: es el que **fallaría si el código estuviera mal**. Ponlo a prueba:
+
+<CodeExercise
+  id="tests-mediana"
+  title="Escribe tests que cacen bugs"
+  starter={`
+    def mediana(xs):
+        """Mediana de una lista de números no vacía."""
+        orden = sorted(xs)
+        n = len(orden)
+        mitad = n // 2
+        return orden[mitad] if n % 2 == 1 else (orden[mitad - 1] + orden[mitad]) / 2
+
+    # Escribe funciones test_... con assert. La comprobación las ejecutará contra esta
+    # mediana (deben pasar) y contra tres versiones con bugs (alguna debe fallar en cada una).
+
+    def test_impar():
+        assert mediana([3, 1, 2]) == 2
+
+    def test_par():
+        ___
+
+    def test_desordenada():
+        ___
+
+    test_impar(); test_par(); test_desordenada()
+    print("tus tests pasan con la mediana correcta")
+  `}
+  solution={`
+    def mediana(xs):
+        """Mediana de una lista de números no vacía."""
+        orden = sorted(xs)
+        n = len(orden)
+        mitad = n // 2
+        return orden[mitad] if n % 2 == 1 else (orden[mitad - 1] + orden[mitad]) / 2
+
+    def test_impar():
+        assert mediana([3, 1, 2]) == 2
+
+    def test_par():
+        assert mediana([1, 2, 3, 4]) == 2.5
+
+    def test_desordenada():
+        assert mediana([9, 1, 5, 3, 7]) == 5
+
+    test_impar(); test_par(); test_desordenada()
+    print("tus tests pasan con la mediana correcta")
+  `}
+  hints={[
+    "Con un número par de elementos la mediana es la media de los dos centrales: mediana([1, 2, 3, 4]) == 2.5.",
+    "Un bug típico es olvidarse de ordenar: prueba una lista desordenada cuya mediana no esté en el centro, como [9, 1, 5, 3, 7].",
+    "Otro bug típico es tomar el central de la derecha con n par: [1, 2, 3, 4] lo caza.",
+  ]}
+  check={`
+    correcta = mediana
+    tests = [f for nombre, f in list(globals().items()) if nombre.startswith("test_") and callable(f)]
+    assert len(tests) >= 3, "Escribe al menos tres funciones test_..."
+    def sin_ordenar(xs):
+        n = len(xs); m = n // 2
+        return xs[m] if n % 2 == 1 else (xs[m - 1] + xs[m]) / 2
+    def par_mal(xs):
+        return sorted(xs)[len(xs) // 2]
+    def division_entera(xs):
+        o = sorted(xs); n = len(o); m = n // 2
+        return o[m] if n % 2 == 1 else (o[m - 1] + o[m]) // 2
+    def pasa(impl):
+        globals()["mediana"] = impl
+        try:
+            for t in tests:
+                t()
+            return True
+        except AssertionError:
+            return False
+        finally:
+            globals()["mediana"] = correcta
+    assert pasa(correcta), "Tus tests deben pasar con la mediana correcta"
+    for bug, nombre in [(sin_ordenar, "no ordena"), (par_mal, "con n par toma un solo central"), (division_entera, "usa // en la media")]:
+        assert not pasa(bug), f"Ningún test caza la versión que {nombre}"
+  `}
+>
+Completa los tests. Después, la comprobación los lanza contra tres medianas con bugs: una que no ordena, una que con n par toma un solo elemento y una que usa `//` en la media.
+</CodeExercise>
+
+<Callout kind="practice" title="En tus notebooks">
+`01MIAR_05_Python101_Files.ipynb` (modos de acceso, CSV, docstrings y Sphinx), la parte de *Software Craftsmanship* y *Testing* de `01MIAR_07_Python101_Advanced.ipynb` (PyTest, TDD, pirámide de tests) y las notas `001-Pip`, `002-Virtual Environments`, `003-Git`, `004-Packages_Modules` y `005-Namespaces` del repositorio del curso.
+</Callout>
+
+## Para llevar
+
+- `with open(..., encoding="utf-8")` siempre; `csv` y `json` para formatos estándar; `pathlib` para rutas.
+- `if __name__ == "__main__":` separa lo que hace el fichero como script de lo que ofrece como módulo.
+- Un entorno virtual por proyecto y versiones fijadas (`requirements.txt` o un *lockfile*).
+- Nombres claros, funciones pequeñas, comentarios del porqué y docstrings.
+- Un test vale lo que los bugs que caza: prueba los casos límite, no solo el ejemplo fácil.
