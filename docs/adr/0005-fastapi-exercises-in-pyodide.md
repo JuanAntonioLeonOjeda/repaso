@@ -1,6 +1,6 @@
 # ADR-0005: FastAPI exercises run in Pyodide with an inline thread pool
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-30
 
 ## Context
