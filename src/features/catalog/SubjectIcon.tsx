@@ -161,6 +161,35 @@ export function SubjectIcon({ slug, size = 56 }: { slug: SubjectSlug; size?: num
           <rect x="30" y="28" width="9" height="7" rx="2" fill="currentColor" fillOpacity={0.2} />
         </svg>
       );
+    case "generativa":
+      // Noise on the left resolving into a shape on the right: diffusion, step by step.
+      return (
+        <svg {...common}>
+          {[
+            [8, 12],
+            [14, 20],
+            [9, 30],
+            [16, 38],
+            [7, 44],
+            [20, 14],
+            [22, 28],
+            [19, 46],
+          ].map(([x, y]) => (
+            <circle
+              key={`${x}-${y}`}
+              cx={x}
+              cy={y}
+              r={1.6}
+              fill="currentColor"
+              fillOpacity={0.5}
+              stroke="none"
+            />
+          ))}
+          <path d="M26 28 H32" strokeDasharray="2 3" opacity={0.6} />
+          <circle cx="42" cy="22" r="7" opacity={0.6} />
+          <path d="M33 46 C36 36, 48 36, 51 46" />
+        </svg>
+      );
     case "fastapi":
       return (
         <svg {...common}>

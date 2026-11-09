@@ -4,3 +4,7 @@ torch==2.13.0
 torchvision==0.28.0
 transformers==5.20.2
 scikit-learn==1.9.1
+# IA generativa de imágenes: figures, the Fréchet distance and SD-Turbo.
+matplotlib==3.11.2
+scipy==1.18.1
+diffusers==0.42.0

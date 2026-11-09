@@ -1,0 +1,161 @@
+El autoencoder pone cada dígito donde le conviene y deja huecos por todas partes. El **autoencoder variacional** (VAE) arregla eso con dos cambios. El codificador ya no devuelve un punto, sino una **distribución** (una media y una varianza por dimensión). Y la pérdida castiga que esas distribuciones se alejen de una gaussiana estándar. El resultado es un espacio latente ordenado y sin huecos, del que se puede sacar un punto al azar y decodificarlo en un dígito.
+
+## Codificar una distribución
+
+```python
+class VAE(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.encoder, self.decoder = Encoder(2 * LATENT), Decoder()   # el codificador saca 4 números
+
+    def forward(self, x):
+        mu, logvar = self.encoder(x).chunk(2, dim=1)                   # media y log-varianza, (B, 2) cada una
+        z = mu + torch.exp(0.5 * logvar) * torch.randn_like(mu)        # truco de la reparametrización
+        return self.decoder(z), mu, logvar
+```
+
+Para cada dígito, el codificador dice: "su código está por aquí ($\mu$), más o menos con este margen ($\sigma$)". Durante el entrenamiento se **sortea** un punto de esa zona y se decodifica. Así el decodificador aprende que todos los puntos cercanos a $\mu$ deben dar un dígito parecido: no hay puntos aislados, hay regiones.
+
+### El truco de la reparametrización
+
+Sortear $z \sim \mathcal{N}(\mu, \sigma^2)$ dentro de la red es un problema: el backprop no sabe derivar a través de "sacar un número al azar". El truco es reescribir el sorteo para que el azar sea una entrada externa:
+
+$$
+z = \mu + \sigma \cdot \varepsilon, \qquad \varepsilon \sim \mathcal{N}(0, I)
+$$
+
+$\varepsilon$ no depende de ningún parámetro, y $z$ es una función derivable de $\mu$ y $\sigma$. Los gradientes llegan al codificador sin problema. Se usa `logvar` en vez de $\sigma$ porque puede ser cualquier número real, mientras que una desviación típica tiene que ser positiva: $\sigma = e^{\text{logvar}/2}$.
+
+## La pérdida: reconstruir y ordenar
+
+$$
+\mathcal{L} = \underbrace{\text{BCE}(\hat{x}, x)}_{\text{reconstrucción}} + \underbrace{\text{KL}\big(\mathcal{N}(\mu, \sigma^2) \,\|\, \mathcal{N}(0, I)\big)}_{\text{orden en el espacio latente}}
+$$
+
+La divergencia KL entre dos gaussianas tiene fórmula cerrada. Por cada dimensión latente:
+
+$$
+\text{KL} = \tfrac{1}{2}\left(\sigma^2 + \mu^2 - 1 - \ln \sigma^2\right)
+$$
+
+Vale 0 solo si $\mu = 0$ y $\sigma = 1$. Empuja las medias hacia el origen y las varianzas hacia 1, así que los códigos de todos los dígitos acaban repartidos dentro de una gaussiana estándar, solapándose lo justo para no dejar huecos.
+
+```python
+def vae_loss(logits, x, mu, logvar):
+    rec = F.binary_cross_entropy_with_logits(logits, x, reduction="sum") / len(x)
+    kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / len(x)
+    return rec, kl
+```
+
+<CodeExercise
+  id="reparametrizacion"
+  title="Reparametrización y KL, con NumPy"
+  starter={`
+    import numpy as np
+
+    def reparametrizar(mu, logvar, eps):
+        sigma = np.exp(___ * logvar)
+        return mu + sigma * eps
+
+    def kl_gaussiana(mu, logvar):
+        """KL(N(mu, sigma²) || N(0, 1)), sumada sobre las dimensiones latentes."""
+        return 0.5 * np.sum(np.exp(logvar) + mu ** 2 - 1 - ___)
+
+    rng = np.random.default_rng(0)
+    mu, logvar = np.array([1.0, -0.5]), np.array([0.0, np.log(0.25)])
+    z = reparametrizar(mu, logvar, rng.standard_normal((100_000, 2)))
+    print("media de z:", z.mean(axis=0).round(2), " desviación:", z.std(axis=0).round(2))
+    print("KL:", round(kl_gaussiana(mu, logvar), 4))
+  `}
+  solution={`
+    import numpy as np
+
+    def reparametrizar(mu, logvar, eps):
+        sigma = np.exp(0.5 * logvar)
+        return mu + sigma * eps
+
+    def kl_gaussiana(mu, logvar):
+        """KL(N(mu, sigma²) || N(0, 1)), sumada sobre las dimensiones latentes."""
+        return 0.5 * np.sum(np.exp(logvar) + mu ** 2 - 1 - logvar)
+
+    rng = np.random.default_rng(0)
+    mu, logvar = np.array([1.0, -0.5]), np.array([0.0, np.log(0.25)])
+    z = reparametrizar(mu, logvar, rng.standard_normal((100_000, 2)))
+    print("media de z:", z.mean(axis=0).round(2), " desviación:", z.std(axis=0).round(2))
+    print("KL:", round(kl_gaussiana(mu, logvar), 4))
+  `}
+  hints={[
+    "logvar es el logaritmo de la varianza σ²; la desviación σ es la raíz: e^(logvar / 2).",
+    "En la fórmula de la KL, ln σ² es justo logvar.",
+    "np.exp(0.5 * logvar) y ... - 1 - logvar.",
+  ]}
+  check={`
+    assert np.allclose(z.mean(axis=0), mu, atol=0.02), "La media de las muestras tiene que ser mu"
+    assert np.allclose(z.std(axis=0), [1.0, 0.5], atol=0.02), "La desviación de las muestras tiene que ser σ = e^(logvar/2): 1 y 0,5"
+    assert abs(kl_gaussiana(np.zeros(3), np.zeros(3))) < 1e-12, "La KL de una gaussiana estándar contra sí misma es 0"
+    assert abs(kl_gaussiana(np.array([1.0]), np.array([0.0])) - 0.5) < 1e-12, "Desplazar la media 1 sin cambiar la varianza cuesta 0,5"
+    assert kl_gaussiana(np.array([0.0]), np.array([np.log(4.0)])) > 0, "Una varianza distinta de 1 también se penaliza"
+  `}
+>
+Escribe el sorteo reparametrizado y la KL en forma cerrada. El `check` comprueba que las muestras tienen la media y la desviación correctas, y que la KL vale 0 solo para la gaussiana estándar.
+</CodeExercise>
+
+<Predict
+  id="kl"
+  answer={["1.125", "1,125", "1.13", "1,13"]}
+  tolerance={0.005}
+  explanation="Dimensión 1: ½(4 + 0 − 1 − ln 4) = ½(3 − 1,386) ≈ 0,807. Dimensión 2: ½(0,25 + 0 − 1 − ln 0,25) = ½(−0,75 + 1,386) ≈ 0,318. Total ≈ 1,125. Fíjate en que las dos se penalizan: una varianza demasiado grande y una demasiado pequeña. La pequeña (0,5) es la que el codificador querría para reconstruir con precisión; la KL se lo impide en parte, y ese tira y afloja es el corazón del VAE."
+  hints={["Aplica la fórmula a cada dimensión y suma.", "σ = 2 da σ² = 4; σ = 0,5 da σ² = 0,25. Las medias son 0."]}
+>
+El codificador da, para un dígito, $\mu = (0, 0)$ y $\sigma = (2;\ 0{,}5)$. ¿Cuánto vale la KL con la gaussiana estándar?
+</Predict>
+
+## El resultado
+
+Misma arquitectura, mismas 20 épocas. Al final, la reconstrucción vale 132,7 en train (133,6 en test) y la KL, 6,77: el precio de ordenar el espacio apenas empeora la reconstrucción respecto al autoencoder (133,1 en test). En la figura de la lección anterior, el panel derecho es el VAE: los códigos de test tienen media $(-0{,}05;\ -0{,}05)$ y desviación $(1{,}01;\ 1{,}15)$, muy cerca de la gaussiana estándar, y las clases se reparten casi sin huecos (los 6 forman dos grupos y los 0 y 1 quedan algo apartados).
+
+Ahora generar es sacar puntos de $\mathcal{N}(0, I)$ y decodificarlos:
+
+![32 dígitos generados por el VAE a partir de puntos sorteados de una gaussiana estándar](/tutorials/generativa/muestras-vae.png)
+
+Más borrosas que las del autoencoder, pero **están todos los dígitos**: en 2.000 muestras, el clasificador de la lección 7 cuenta entre 150 y 266 de cada uno, también 261 unos y 155 ceros (el autoencoder generaba 2 unos). Y como el espacio está ordenado, se puede recorrer. Esta es la rejilla de 15 × 15 puntos entre −2,5 y 2,5 en cada dimensión, decodificados:
+
+![Mapa del espacio latente del VAE: una rejilla de 15 por 15 puntos decodificados, donde cada dígito se transforma poco a poco en el vecino](/tutorials/generativa/mapa-vae.png)
+
+Cada dígito se transforma poco a poco en el vecino: el 7 en 9 y en 1, el 0 en 6 y en 2. Hay pocas manchas, sobre todo en los cruces entre dígitos (la zona central de 3, 5 y 8, o el paso de 2 a 0). Esa continuidad es lo que permite interpolar entre dos imágenes o mover un atributo, y es la idea que reaparece en el espacio latente de Stable Diffusion.
+
+<Quiz
+  id="borrosas"
+  options={[
+    "Porque el decodificador tiene pocas capas",
+    "Porque para un mismo código caben varias imágenes plausibles, y con una pérdida píxel a píxel la mejor apuesta es su promedio, que es borroso; la KL, además, obliga a solapar los códigos de dígitos distintos",
+    "Porque MNIST tiene poca resolución",
+    "Porque la reparametrización añade ruido a la salida",
+  ]}
+  answer={1}
+  explanation="Si un punto del espacio latente puede corresponder a un 4 de trazo grueso o a uno fino, una pérdida que compara píxel a píxel (BCE o MSE) se minimiza prediciendo la media de los dos: un 4 desenfocado. Con solo 2 dimensiones latentes, cada punto resume muchísimos dígitos distintos, y el efecto es fuerte. Las GAN (lección 4) y la difusión (lección 5) no promedian de esta forma, y por eso generan imágenes más nítidas."
+  hints={["Piensa qué imagen minimiza el error cuadrático cuando hay dos respuestas igual de buenas."]}
+>
+Las muestras del VAE son reconocibles, pero borrosas. ¿Por qué?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **El VAE de Stable Diffusion** comprime cada imagen de 512 × 512 × 3 a un tensor latente de 64 × 64 × 4, y la difusión trabaja ahí (lección 8). Allí la KL lleva un peso muy pequeño: interesa sobre todo reconstruir bien.
+- **β-VAE**: multiplicar la KL por un $\beta$ mayor que 1 ordena más el espacio y separa factores (grosor, inclinación), a costa de la reconstrucción. Con $\beta$ pequeño se acerca a un autoencoder normal.
+- **Detección de anomalías y datos tabulares**: los VAE se usan también para generar datos sintéticos y para puntuar lo raro con la probabilidad del modelo.
+</Callout>
+
+<Temario
+  links={[
+    { to: "no-supervisado/deep-clustering", why: "El VAE y VaDE: un espacio latente forzado a parecerse a una gaussiana (o a una mezcla)." },
+    { to: "razonamiento/incertidumbre-y-bayes", why: "Probabilidad a priori y a posteriori: el prior gaussiano del VAE, en el lenguaje de Bayes." },
+    { to: "deep-learning/entrenar-una-red", why: "Backpropagation: por qué el sorteo tiene que quedar fuera del camino del gradiente." },
+  ]}
+/>
+
+## Para llevar
+
+- El VAE codifica una gaussiana por imagen ($\mu$, $\sigma$) y decodifica un punto sorteado de ella.
+- Reparametrización: $z = \mu + \sigma \varepsilon$, para que el gradiente atraviese el sorteo.
+- Pérdida = reconstrucción + KL con $\mathcal{N}(0, I)$; la KL ordena el espacio latente y elimina los huecos.
+- Genera sacando puntos de $\mathcal{N}(0, I)$; las muestras son variadas pero borrosas.
