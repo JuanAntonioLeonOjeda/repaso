@@ -8,4 +8,3 @@ export {
   type ManifestState,
   type Sample,
 } from "./manifest";
-export { resolveTemarioLink, Temario, type TemarioLink } from "./Temario";

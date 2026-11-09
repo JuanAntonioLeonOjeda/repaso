@@ -4,9 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { illustrations } from "@/features/illustrations";
+import { resolveTemarioLink } from "@/features/lesson";
 import { simulations } from "@/features/simulations";
-
-import { resolveTemarioLink } from "@/features/tfm";
 
 import { extras, sections, subjects } from "./catalog";
 

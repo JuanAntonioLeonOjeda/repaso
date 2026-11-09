@@ -94,6 +94,10 @@ export const es = {
     figure: (n: number): string => `Figura ${n} generada por el código`,
     solutionLabel: "Solución",
   },
+  temario: {
+    title: "Del temario",
+    label: "Relación con el temario",
+  },
   callout: {
     real: "En el trabajo real",
     warn: "Ojo",

@@ -3,8 +3,10 @@ import type { MDXComponents } from "mdx/types";
 import { CodeExercise, Predict, Quiz, RunCode } from "@/features/exercises";
 import { illustrations } from "@/features/illustrations";
 import { simulations } from "@/features/simulations";
-import { ExperimentPlots, ExperimentTable, LocalImage, Temario } from "@/features/tfm";
+import { ExperimentPlots, ExperimentTable, LocalImage } from "@/features/tfm";
 import { Callout, Figure } from "@/features/ui";
+
+import { Temario } from "./Temario";
 
 /**
  * Everything a lesson can use without importing it. Authoring rules for these live in
