@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 
@@ -26,6 +26,15 @@ describe("routes", () => {
     for (const tutorial of tutorials) {
       expect(screen.getByRole("link", { name: new RegExp(tutorial.title) })).toBeInTheDocument();
     }
+  });
+
+  it("the header links to the tutorials section of the home page", () => {
+    renderAt("/vision");
+    const nav = screen.getByRole("navigation", { name: "Principal" });
+    expect(within(nav).getByRole("link", { name: "Tutoriales" })).toHaveAttribute(
+      "href",
+      "/#tutoriales",
+    );
   });
 
   it("a tutorial is browsed like a subject", () => {
