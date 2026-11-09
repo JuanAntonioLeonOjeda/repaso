@@ -1,0 +1,142 @@
+El MLP aplana la imagen y, para él, el píxel (0, 0) y el (0, 1) no tienen más relación que el (0, 0) y el (31, 31). Tiene que aprender por separado que un borde arriba a la izquierda y el mismo borde abajo a la derecha son lo mismo. Una **red convolucional** parte de dos ideas que una foto cumple: lo que importa es **local** (un borde, una textura, un ojo) y es **igual en cualquier sitio** de la imagen. Con esas dos ideas metidas en la arquitectura, la red necesita muchos menos parámetros y aprende mucho mejor.
+
+## Un bloque convolucional
+
+La CNN de este tutorial apila tres bloques iguales. Es el patrón de las VGG, que viste en la práctica: dos convoluciones 3×3 y un *max pooling*.
+
+```python
+def conv_block(c_in, c_out):
+    return nn.Sequential(
+        nn.Conv2d(c_in, c_out, kernel_size=3, padding=1),   # 3×3, misma altura y anchura
+        nn.BatchNorm2d(c_out),
+        nn.ReLU(),
+        nn.Conv2d(c_out, c_out, kernel_size=3, padding=1),
+        nn.BatchNorm2d(c_out),
+        nn.ReLU(),
+        nn.MaxPool2d(2),                                    # divide alto y ancho entre 2
+    )
+```
+
+- **`padding=1` con un filtro 3×3** mantiene el tamaño: $(32 + 2 - 3)/1 + 1 = 32$. Así solo encoge el pooling, y la cuenta de formas es fácil.
+- **`BatchNorm2d`** normaliza cada canal con la media y la varianza del lote, y luego aplica una escala y un desplazamiento que se aprenden. Estabiliza el entrenamiento y permite learning rates más altos. Por eso las convoluciones de una red con BN se pueden escribir sin sesgo (`bias=False`): el desplazamiento de la BN ya hace ese papel. Aquí se deja el sesgo por simplicidad.
+- **Cada bloque divide el tamaño entre 2 y, a partir del segundo, dobla los canales** (3 → 32 → 64 → 128): la red cambia resolución espacial por "qué hay" (más mapas de características, más pequeños).
+
+## La red completa, forma a forma
+
+```python
+class SmallCNN(nn.Module):
+    def __init__(self, dropout=0.0):
+        super().__init__()
+        self.features = nn.Sequential(
+            conv_block(3, 32),     # (B, 3, 32, 32)  -> (B, 32, 16, 16)
+            conv_block(32, 64),    #                 -> (B, 64, 8, 8)
+            conv_block(64, 128),   #                 -> (B, 128, 4, 4)
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(),          # (B, 2048)
+            nn.Dropout(dropout),   # en la lección 5
+            nn.Linear(128 * 4 * 4, 10),
+        )
+
+    def forward(self, x):
+        return self.classifier(self.features(x))
+```
+
+Seguir la forma del tensor capa a capa es la habilidad más útil para depurar una CNN. El error típico, `mat1 and mat2 shapes cannot be multiplied`, casi siempre significa que el número de entradas de la `Linear` no cuadra con lo que sale del `Flatten`. El truco: pasa un tensor falso y mira.
+
+```python
+x = torch.randn(8, 3, 32, 32)
+for block in model.features:
+    x = block(x)
+    print(tuple(x.shape))   # (8, 32, 16, 16)  (8, 64, 8, 8)  (8, 128, 4, 4)
+```
+
+El esquema general de una CNN de clasificación es este (dibujado con dos bloques y global average pooling, que verás más abajo; la `SmallCNN` tiene tres bloques y un `Flatten`):
+
+<CnnDiagram />
+
+<Predict
+  id="entradas-lineal"
+  answer="8192"
+  explanation="Tres poolings dividen el lado entre 8: 64 → 32 → 16 → 8. Del último bloque salen 128 canales de 8×8, y el Flatten da 128 · 8 · 8 = 8.192 valores. La Linear tendría que ser nn.Linear(8192, 10); con nn.Linear(2048, 10) el forward falla con «mat1 and mat2 shapes cannot be multiplied». Es el motivo para usar global average pooling (más abajo): con él da igual el tamaño de la imagen."
+  hints={["Cada bloque divide el lado entre 2: hay tres bloques.", "Canales del último bloque × lado final × lado final."]}
+>
+Si entrenaras la misma `SmallCNN` con imágenes de **64×64**, ¿cuántas entradas necesitaría la `nn.Linear` final?
+</Predict>
+
+## Contar parámetros
+
+<Predict
+  id="params-bloque"
+  answer="10272"
+  explanation="Primera convolución: 3 · 3 · 3 · 32 pesos + 32 sesgos = 896. Su BatchNorm: 2 · 32 = 64 (escala y desplazamiento por canal; la media y la varianza acumuladas no se entrenan, son buffers). Segunda convolución: 3 · 3 · 32 · 32 + 32 = 9.248. Su BatchNorm: 64. Total: 896 + 64 + 9.248 + 64 = 10.272. El pooling y la ReLU no tienen parámetros."
+  hints={[
+    "Una Conv2d tiene k · k · c_in · c_out pesos más c_out sesgos.",
+    "Una BatchNorm2d entrena 2 parámetros por canal (γ y β).",
+    "896 + 64 + 9.248 + 64",
+  ]}
+>
+¿Cuántos parámetros entrenables tiene `conv_block(3, 32)`?
+</Predict>
+
+La red completa tiene **308.394 parámetros**: 287.904 en las convoluciones y sus BN, y 20.490 en la capa final. Son **5,5 veces menos** que el MLP (1.707.274).
+
+## El resultado
+
+Mismo bucle, mismo optimizador, mismas 20 épocas; solo cambia el modelo:
+
+| Época | Pérdida train | Acc. train | Pérdida val. | Acc. val. |
+| ----: | ------------: | ---------: | -----------: | --------: |
+| 1 | 1,145 | 59,0% | 1,071 | 64,0% |
+| 6 | 0,306 | 89,5% | **0,531** | **82,6%** |
+| 10 | 0,114 | 96,2% | 0,798 | 78,6% |
+| 20 | 0,066 | 97,7% | 0,793 | 82,4% |
+
+| Modelo | Parámetros | Mejor acc. val. | Tiempo (20 épocas) |
+| ------ | ---------: | --------------: | -----------------: |
+| MLP | 1.707.274 | 54,0% (época 16) | 74 s |
+| CNN | 308.394 | **82,6%** (época 6) | 241 s |
+
+**De 54% a 82,6%** con 5,5 veces menos parámetros. Ya en la primera época la CNN (64%) supera el mejor resultado del MLP. Cada época cuesta algo más del triple, porque una convolución hace muchas más operaciones por parámetro que una capa densa. Aun así, son 12 segundos por época.
+
+El problema también se ve: la CNN **sobreajusta igual que el MLP**, solo que más arriba. La mejor validación llega en la época 6. Después, train sube hasta el 98% mientras la validación da tumbos entre el 79% y el 83%, y su pérdida sube de 0,53 a 0,79. La lección 5 se ocupa de eso.
+
+<Quiz
+  id="por-que-gana"
+  options={[
+    "Porque tiene más capas, y más profundidad siempre es mejor",
+    "Porque comparte cada filtro por toda la imagen y solo mira vecindarios: aprende un detector de bordes una vez y lo usa en todas partes",
+    "Porque BatchNorm es lo que da la mejora, la convolución da igual",
+    "Porque entrena durante más épocas",
+  ]}
+  answer={1}
+  explanation="Pesos compartidos y conectividad local. Un filtro 3×3 que detecta un borde horizontal sirve en cualquier posición, así que no hay que aprenderlo 1.024 veces. Por eso la CNN tiene menos parámetros y generaliza mejor: la arquitectura ya trae la suposición correcta sobre las imágenes (el sesgo inductivo). BatchNorm ayuda a entrenar, pero no añade ninguna suposición sobre las imágenes."
+  hints={["Piensa qué tiene que aprender el MLP para reconocer un gato en la esquina contraria a donde lo vio."]}
+>
+La CNN tiene 5,5 veces menos parámetros que el MLP y acierta mucho más. ¿Por qué?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Casi nadie diseña su CNN desde cero.** Para un problema real se parte de una arquitectura conocida (ResNet, EfficientNet, ConvNeXt) y, sobre todo, de sus pesos preentrenados (lección 6). Escribir una CNN pequeña sirve para entender las piezas y para problemas muy alejados de las fotos normales.
+- **`torchinfo.summary(model, input_size=(1, 3, 32, 32))`** imprime la forma y los parámetros de cada capa, como el `model.summary()` de Keras.
+- **Global average pooling** (`nn.AdaptiveAvgPool2d(1)`) en lugar de `Flatten` hace la media de cada mapa: la red acepta cualquier tamaño de imagen y la capa final queda en 128 · 10 pesos. Es lo que usan las ResNet y tu TFM.
+</Callout>
+
+<Callout kind="practice" title="De tus prácticas (VC04–VC05)">
+La sección «¿Por qué convolutional neural networks?: CIFAR dataset» del notebook entrena en CIFAR-10 primero un MLP y después una CNN, y compara sus curvas. Es exactamente la comparación de estas dos lecciones, en Keras.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/redes-convolucionales", why: "Convolución, padding, stride, pooling y cuántos parámetros tiene una Conv2D." },
+    { to: "deep-learning/optimizadores-y-regularizacion", why: "Batch normalization y por qué estabiliza el entrenamiento." },
+    { to: "tfm/el-modelo", why: "Un backbone convolucional real (ResNet50) con global average pooling." },
+  ]}
+/>
+
+## Para llevar
+
+- Bloque VGG: (conv 3×3 → BN → ReLU) × 2 → max pool. Cada bloque divide el lado entre 2; los canales se doblan de bloque en bloque.
+- Sigue la forma del tensor capa a capa; pasa un `torch.randn` para comprobarla.
+- Una Conv2d tiene $k^2 \cdot c_{in} \cdot c_{out} + c_{out}$ parámetros; una BN, 2 por canal.
+- La CNN pasa del 54% al 82,6% con 5,5 veces menos parámetros, pero desde la época 6 también memoriza.

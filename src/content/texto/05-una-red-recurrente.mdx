@@ -1,0 +1,124 @@
+La bolsa de embeddings no distingue «es bueno, no malo» de «es malo, no bueno». Una **red recurrente** lee la reseña palabra a palabra y mantiene un estado que resume lo leído hasta ese momento, así que el orden cuenta. La LSTM de la asignatura añade puertas para recordar lo importante durante más tiempo. En esta lección montas una LSTM bidireccional, le enseñas a no leer el relleno y mides si el orden vale lo que cuesta.
+
+## La LSTM en PyTorch
+
+```python
+from torch import nn
+from torch.nn.utils.rnn import pack_padded_sequence
+
+class BiLSTMClassifier(nn.Module):
+    def __init__(self, vocab_size, dim=128, hidden=128, dropout=0.3):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, dim, padding_idx=PAD)
+        self.lstm = nn.LSTM(dim, hidden, batch_first=True, bidirectional=True)
+        self.dropout = nn.Dropout(dropout)
+        self.classifier = nn.Linear(2 * hidden, 5)
+
+    def forward(self, ids, lengths):
+        packed = pack_padded_sequence(self.embedding(ids), lengths.cpu(), batch_first=True, enforce_sorted=False)
+        _, (h, _) = self.lstm(packed)            # h: (2, B, hidden), último estado de cada dirección
+        both = torch.cat([h[0], h[1]], dim=1)    # (B, 2·hidden)
+        return self.classifier(self.dropout(both))
+```
+
+- **`batch_first=True`**: la entrada es `(B, T, dim)`, como el resto del tutorial. Por defecto, por motivos históricos, la LSTM de PyTorch espera `(T, B, dim)`.
+- La LSTM devuelve la salida en cada paso y el estado final `(h, c)`. Para clasificar basta con el estado oculto final `h`: es el resumen de toda la reseña.
+
+<Predict
+  id="params-lstm"
+  answer="264192"
+  explanation="Cada dirección tiene 4 bloques (puertas de entrada, olvido y salida, y la candidata), cada uno con pesos sobre la entrada (128 · 128), pesos sobre el estado anterior (128 · 128) y dos vectores de sesgo de 128: PyTorch guarda bias_ih y bias_hh por separado, aunque se suman. Por dirección: 4 · (16.384 + 16.384 + 128 + 128) = 132.096. Bidireccional, el doble: 264.192. En Keras sale un poco menos, porque usa un solo sesgo por puerta."
+  hints={[
+    "Una LSTM tiene 4 conjuntos de pesos (3 puertas y la candidata a memoria).",
+    "Cada conjunto: hidden × input + hidden × hidden pesos, más dos sesgos de tamaño hidden en PyTorch (bias_ih y bias_hh).",
+    "4 · (128·128 + 128·128 + 128 + 128) por dirección, y dos direcciones.",
+  ]}
+>
+¿Cuántos parámetros tiene `nn.LSTM(128, 128, bidirectional=True)`?
+</Predict>
+
+## No leer el relleno
+
+En un lote, las reseñas cortas llevan relleno al final. Una LSTM que lo leyese llegaría al final de la secuencia después de procesar decenas de `<pad>`, y su estado final hablaría más del relleno que de la reseña. `pack_padded_sequence` empaqueta el lote junto con la longitud real de cada texto, y la LSTM se detiene en el último token de verdad de cada uno.
+
+<Quiz
+  id="empaquetar"
+  options={[
+    "Nada: la máscara de la lección 3 ya se encarga",
+    "El estado final de las reseñas cortas sería el de después de leer todo el relleno: la misma reseña daría una predicción distinta según lo larga que fuese la más larga de su lote",
+    "Un error, porque la LSTM no acepta relleno",
+    "Que la red entrena más rápido",
+  ]}
+  answer={1}
+  explanation="Sin empaquetar, la LSTM procesa todas las posiciones del tensor. La dirección hacia delante acaba en la última posición, que en las reseñas cortas es relleno: su estado final ha pasado por N vectores de <pad>. Eso depende de con quién comparte lote la reseña, así que la predicción cambia según el lote. En validación y en producción, el mismo texto daría resultados distintos. La máscara no sirve aquí: una LSTM no la consulta, por eso existe el empaquetado. Ordenar por longitud antes de hacer los lotes (lección 8) reduce el problema, pero no lo elimina."
+  hints={["¿Qué posición del tensor es la «última» para la dirección hacia delante?"]}
+>
+¿Qué pasaría si pasases el tensor relleno directamente a la LSTM, sin `pack_padded_sequence`?
+</Quiz>
+
+## Leer en los dos sentidos
+
+Una LSTM normal lee de izquierda a derecha, y su estado final recuerda mejor el final de la reseña. Con `bidirectional=True` hay dos LSTM: una lee hacia delante y otra hacia atrás. `h[0]` es el estado de la primera al llegar al final, y `h[1]` el de la segunda al llegar al principio. Juntos, el clasificador recibe un resumen que ha visto toda la reseña desde los dos lados.
+
+<Quiz
+  id="bidireccional"
+  options={[
+    "Para clasificar una reseña completa, sí: tienes todo el texto antes de decidir",
+    "Nunca, porque leer hacia atrás no tiene sentido en un idioma",
+    "Siempre, también para predecir la siguiente palabra mientras se escribe",
+    "Solo si las reseñas son muy largas",
+  ]}
+  answer={0}
+  explanation="La bidireccionalidad necesita la secuencia completa antes de decidir. Para clasificar un texto ya escrito es gratis: tienes la reseña entera, y así el principio (a menudo el título, que concentra la opinión) llega fresco al clasificador. Para generar texto o predecir en tiempo real (la siguiente palabra, el siguiente valor de una serie temporal) no se puede: no conoces el futuro. Por eso BERT, que se usa para entender texto, mira en los dos sentidos, y GPT, que genera, solo mira lo anterior (de izquierda a derecha)."
+  hints={["Para leer hacia atrás hace falta tener el final del texto. ¿Lo tienes en cada caso?"]}
+>
+¿Cuándo tiene sentido una red bidireccional?
+</Quiz>
+
+## El resultado
+
+Mismo vocabulario, mismas 200.000 reseñas, mismo bucle (AdamW, `lr=1e-3`, recorte del gradiente a norma 1) y 5 épocas:
+
+| Época | Pérdida train | Acc. train | Acc. val. | MAE val. | Tiempo |
+| ----: | ------------: | ---------: | --------: | -------: | -----: |
+| 1 | 1,062 | 52,9% | 55,4% | 0,529 | 404 s |
+| 2 | 0,943 | 58,4% | 57,0% | 0,499 | 396 s |
+| 3 | 0,890 | 61,0% | **58,0%** | **0,485** | 399 s |
+| 4 | 0,842 | 63,4% | 57,3% | 0,491 | 396 s |
+| 5 | 0,791 | 66,1% | 57,3% | 0,497 | 395 s |
+
+| Modelo | Parámetros | Mejor acc. val. | MAE val. | Tiempo por época |
+| ------ | ---------: | --------------: | -------: | ---------------: |
+| TF-IDF + logística | 1.780.805 | 56,5% | 0,529 | 31 s (entrenamiento completo, CPU) |
+| Bolsa de embeddings | 3.840.645 | 54,2% | 0,556 | 19 s |
+| BiLSTM | 4.105.477 | **58,0%** | **0,485** | 399 s |
+
+**El orden vale algo: 3,8 puntos más que la bolsa de embeddings y 1,5 más que TF-IDF**, y el mejor MAE hasta ahora. Casi todos los parámetros siguen en la tabla de embeddings; la LSTM solo añade 264.192.
+
+Pero mira el precio: **cada época tarda 21 veces más** que la bolsa de embeddings en MPS (en una GPU con cuDNN la brecha es menor), porque la LSTM tiene que procesar las palabras una detrás de otra y no puede paralelizar a lo largo de la secuencia. Y después de la época 3 empieza a memorizar: train sigue subiendo (del 61% al 66%) y la validación baja. El checkpoint que se guarda es el de la época 3.
+
+<Callout kind="real" title="En el trabajo">
+- **Recorta el gradiente** (`nn.utils.clip_grad_norm_(model.parameters(), 1.0)`) en las redes recurrentes. Los gradientes que viajan hacia atrás por muchos pasos pueden explotar, y un solo paso enorme estropea el entrenamiento.
+- **Las LSTM ya casi no se usan para texto.** Los transformers preentrenados las superan y se entrenan en paralelo, mientras que la LSTM tiene que ir paso a paso. Siguen teniendo sitio en series temporales, en dispositivos pequeños y cuando hay que procesar un flujo en tiempo real.
+- **La GRU** (`nn.GRU`) es la alternativa con dos puertas en vez de tres: un 25% menos de parámetros y resultados parecidos en muchos problemas.
+</Callout>
+
+<Callout kind="idea" title="En Keras">
+`Bidirectional(LSTM(128))` sobre un `Embedding(..., mask_zero=True)`: la máscara se propaga sola y la LSTM se salta el relleno, lo mismo que `pack_padded_sequence`. Y `LSTM` devuelve por defecto el último estado; con `return_sequences=True`, la salida de cada paso.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/texto-y-secuencias", why: "RNN, el problema del gradiente que se desvanece y las puertas de la LSTM." },
+    { to: "deep-learning/entrenar-una-red", why: "Backpropagation y por qué los gradientes se desvanecen o explotan al atravesar muchas capas." },
+    { to: "deep-learning/optimizadores-y-regularizacion", why: "Dropout y cómo leer el sobreajuste en las curvas." },
+  ]}
+/>
+
+## Para llevar
+
+- `nn.LSTM(dim, hidden, batch_first=True, bidirectional=True)`; para clasificar, el estado final de cada dirección concatenado.
+- `pack_padded_sequence` para que la LSTM se detenga en el final real de cada texto.
+- Bidireccional para clasificar textos completos; nunca para generar.
+- PyTorch guarda dos sesgos por puerta: 264.192 parámetros para una BiLSTM 128 → 128.
+- En nuestra ejecución: 58,0% y MAE 0,485 en validación, lo mejor sin preentrenar, pero con épocas 21 veces más lentas que la bolsa de embeddings (en MPS).

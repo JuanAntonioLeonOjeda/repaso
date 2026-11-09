@@ -1,0 +1,149 @@
+Ya tienes cuatro modelos y el mejor parece claro mirando la validación. Ahora toca el test, una sola vez, y leerlo como lo que es: una etiqueta **ordinal**. Con estrellas, saber cuántas veces aciertas es la mitad de la historia. La otra mitad es **cuánto** te equivocas cuando fallas, y si esos errores se parecen a los que cometería una persona.
+
+## Tres números por modelo
+
+- **Accuracy**: la proporción de reseñas con las estrellas exactas.
+- **MAE**: cuántas estrellas te equivocas, en media.
+- **Acierto a una estrella**: la proporción de predicciones que se quedan a una estrella o menos de la real.
+
+Los tres salen de la matriz de confusión: la casilla $(i, j)$ cuenta las reseñas de $i$ estrellas a las que el modelo dio $j$, y el error de esa casilla es $|i - j|$.
+
+<CodeExercise
+  id="mae-y-cercania"
+  title="Accuracy, MAE y acierto a una estrella desde la matriz"
+  starter={`
+    import numpy as np
+
+    def ordinal_metrics(cm):
+        """cm[i, j]: reseñas de i+1 estrellas predichas como j+1. Devuelve (accuracy, mae, a_una)."""
+        k = cm.shape[0]
+        i, j = np.indices((k, k))
+        distancia = np.abs(i - j)              # error en estrellas de cada casilla
+        n = cm.sum()
+        accuracy = np.trace(cm) / n
+        mae = (cm * ___).sum() / n
+        a_una = cm[distancia <= ___].sum() / n
+        return accuracy, mae, a_una
+
+    cm = np.array([[8, 2, 0],
+                   [1, 6, 3],
+                   [1, 1, 8]])
+    print(ordinal_metrics(cm))
+  `}
+  solution={`
+    import numpy as np
+
+    def ordinal_metrics(cm):
+        """cm[i, j]: reseñas de i+1 estrellas predichas como j+1. Devuelve (accuracy, mae, a_una)."""
+        k = cm.shape[0]
+        i, j = np.indices((k, k))
+        distancia = np.abs(i - j)              # error en estrellas de cada casilla
+        n = cm.sum()
+        accuracy = np.trace(cm) / n
+        mae = (cm * distancia).sum() / n
+        a_una = cm[distancia <= 1].sum() / n
+        return accuracy, mae, a_una
+
+    cm = np.array([[8, 2, 0],
+                   [1, 6, 3],
+                   [1, 1, 8]])
+    print(ordinal_metrics(cm))
+  `}
+  hints={[
+    "El MAE pondera cada casilla por su distancia a la diagonal.",
+    "El acierto a una estrella suma las casillas con distancia 0 o 1.",
+    "(cm * distancia).sum() / n y distancia <= 1.",
+  ]}
+  check={`
+    acc, mae, a_una = ordinal_metrics(cm)
+    assert abs(acc - 22 / 30) < 1e-12, f"Accuracy: (8 + 6 + 8) / 30 = 0,733; sale {acc:.3f}"
+    assert abs(mae - 9 / 30) < 1e-12, f"MAE: los errores de una estrella suman 2 + 1 + 3 + 1 = 7 y el de dos estrellas, 1 · 2 = 2: 9 / 30 = 0,3; sale {mae:.3f}"
+    assert abs(a_una - 29 / 30) < 1e-12, f"A una estrella: todo menos la casilla (3, 1), 29 / 30; sale {a_una:.3f}"
+    rng = np.random.default_rng(0)
+    yt = rng.integers(0, 5, 300); yp = np.clip(yt + rng.integers(-2, 3, 300), 0, 4)
+    m = np.zeros((5, 5), int); np.add.at(m, (yt, yp), 1)
+    _, mae5, una5 = ordinal_metrics(m)
+    assert abs(mae5 - np.abs(yt - yp).mean()) < 1e-12 and abs(una5 - (np.abs(yt - yp) <= 1).mean()) < 1e-12, "Con 5 clases, las métricas tienen que coincidir con las calculadas directamente sobre las predicciones"
+  `}
+>
+Calcula las tres métricas a partir de una matriz de confusión. El ejemplo tiene 3 clases; el `check` prueba también una de 5.
+</CodeExercise>
+
+## Los cuatro modelos en test
+
+| Modelo | Reseñas de train | Accuracy | MAE | A una estrella |
+| ------ | ---------------: | -------: | --: | -------------: |
+| Siempre 3 estrellas | – | 20,0% | 1,200 | 60,0% |
+| TF-IDF + logística | 200.000 | 57,5% | 0,512 | 93,3% |
+| Bolsa de embeddings | 200.000 | 55,3% | 0,540 | 92,5% |
+| BiLSTM | 200.000 | 57,9% | 0,482 | 94,8% |
+| **BETO** | **40.000** | **59,7%** | **0,452** | **95,6%** |
+
+El orden es el mismo que en validación. Con 5.000 reseñas, el error estándar de una accuracy del 60% ronda los 0,7 puntos, así que la ventaja de BETO sobre la LSTM (1,8 puntos) es real pero no enorme. La de BETO sobre TF-IDF (2,2 puntos de accuracy, y un MAE un 12% menor) se nota más.
+
+Fíjate en la última columna: **el 95,6% de las predicciones de BETO están a una estrella o menos de la real**. La accuracy dice que falla 4 de cada 10 reseñas; el acierto a una estrella dice que casi siempre se equivoca por poco.
+
+## Dónde se equivoca BETO
+
+Matriz de confusión de BETO en el test (filas: estrellas reales; columnas: predichas):
+
+| real \ predicha | 1★ | 2★ | 3★ | 4★ | 5★ |
+| --- | --: | --: | --: | --: | --: |
+| **1★** | **763** | 192 | 38 | 4 | 3 |
+| **2★** | 258 | **507** | 215 | 17 | 3 |
+| **3★** | 55 | 212 | **486** | 214 | 33 |
+| **4★** | 4 | 17 | 172 | **496** | 311 |
+| **5★** | 1 | 6 | 39 | 220 | **734** |
+
+Casi todo lo que no está en la diagonal está pegado a ella. Las estrellas intermedias se reparten hacia los dos lados: de las reseñas de 3 estrellas, 212 se van a 2 y 214 a 4. El hueco más grande es entre 4 y 5 (311 reseñas de 4 estrellas tomadas por 5): «muy bueno» y «perfecto» se escriben casi igual.
+
+<Predict
+  id="estrellas-vecinas"
+  answer={["89", "89.1", "89,1"]}
+  tolerance={0.5}
+  explanation="BETO acierta 763 + 507 + 486 + 496 + 734 = 2.986 de 5.000 reseñas, así que comete 2.014 errores. Los de una estrella son las casillas pegadas a la diagonal: 192 + 258 + 215 + 212 + 214 + 172 + 311 + 220 = 1.794. 1.794 / 2.014 ≈ 89,1%. Solo 21 errores son de tres estrellas o más."
+  hints={["Cuenta los errores (todo lo que no está en la diagonal) y, de ellos, los que están justo al lado de la diagonal.", "Errores: 5.000 menos la suma de la diagonal. De una estrella: las ocho casillas a un lado y otro de la diagonal."]}
+>
+De todos los errores de BETO en el test, ¿qué porcentaje son de **una sola estrella**? (Responde con un número del 0 al 100.)
+</Predict>
+
+Esos 21 errores lejanos son los que hay que leer. El script guarda los más confiados. Entre los ocho primeros:
+
+- **La etiqueta no cuadra con el texto.** Una reseña que dice que el producto es muy bonito y tal cual la foto, con 1 estrella. Otra que explica que la funda es muy incómoda, con 5. Una que describe con entusiasmo el olor de un ambientador, con 2. BETO predice lo que dice el texto; quien puso las estrellas, no.
+- **La opinión no es sobre el producto.** Una reseña que da un 10 al producto y llama pésimo al envío, con 4 estrellas; BETO, impresionado por «pésimo» y «nefasto», dice 1. Una devolución por equivocarse de tamaño con una olla «preciosa», con 5 estrellas; BETO lee «devuelto» y «reembolso» y dice 1.
+- **Lo que no se puede saber.** Una reseña de 5 estrellas titulada «cinco estrellas» cuyo texto es una duda técnica sobre el ecualizador.
+
+<Quiz
+  id="errores-lejanos"
+  options={[
+    "Que el modelo es malo y hay que entrenar más",
+    "Que hay que mirar esas reseñas una a una: muchas serán ironía, opiniones sobre el envío y no sobre el producto, o reseñas cuyas estrellas no cuadran con el texto, y eso es un límite de las etiquetas, no del modelo",
+    "Que hay que quitarlas del test para que las métricas salgan mejor",
+    "Nada: con una accuracy alta, unos pocos errores no importan",
+  ]}
+  answer={1}
+  explanation="Los errores de tres o cuatro estrellas son los más informativos. Cuando el modelo está muy seguro y se equivoca por mucho, a menudo es la etiqueta la que no cuadra con el texto: alguien que escribe «perfecto» y pone una estrella por error, una queja sobre el envío en un producto que le encanta, o ironía. No se quitan del test (eso inflaría las métricas), pero se cuentan y se describen: dicen cuánto se puede mejorar de verdad y si hace falta revisar el etiquetado."
+  hints={["Repasa los tipos de error que viste al mirar las imágenes en el tutorial de visión."]}
+>
+BETO falla algunas reseñas por tres o cuatro estrellas con una confianza muy alta. ¿Qué te dice eso?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Ninguna persona acierta el 100%.** Con cinco estrellas, dos personas que leen la misma reseña tampoco coinciden siempre: un 3 para una es un 4 para otra. Antes de perseguir el último punto de accuracy, mide cuánto coinciden dos anotadores. Ese es el techo real.
+- **Si lo que importa es el número, entrénalo como número.** Una regresión (una sola salida y pérdida MSE o L1) o una pérdida ordinal premian acercarse aunque no se acierte exacto. Clasificar en cinco clases y tomar la más probable es lo habitual, pero no lo único.
+- **Agrega cuando el negocio lo permite.** Muchas veces lo que se necesita es "negativa / neutra / positiva". Juntar 1–2 y 4–5 hace el problema mucho más fácil y el modelo, mucho más fiable.
+</Callout>
+
+<Temario
+  links={[
+    { to: "supervisado/metricas", why: "Matriz de confusión, accuracy y el MAE de la regresión." },
+    { to: "supervisado/regresion", why: "Tratar las estrellas como número: regresión y error absoluto." },
+    { to: "vision/evaluar", why: "El test una sola vez, la matriz de confusión y mirar los errores más confiados." },
+  ]}
+/>
+
+## Para llevar
+
+- Con una etiqueta ordinal, accuracy y también MAE y acierto a una estrella. Las tres salen de la matriz de confusión.
+- En test: BETO 59,7% de accuracy, MAE 0,452 y 95,6% a una estrella; el 89% de sus errores son de una sola estrella.
+- Los errores lejanos y muy confiados merecen leerse uno a uno: a menudo son etiquetas que no cuadran con el texto.

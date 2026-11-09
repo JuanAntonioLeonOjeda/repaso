@@ -8,9 +8,16 @@ pista y solución), y notas de cómo se hace cada cosa en un trabajo real.
 - 7 asignaturas · 59 lecciones · 50 simulaciones · 214 ejercicios.
 - Una sección del **TFM** (LumosNet sobre LUMOS): 9 lecciones conectadas con el temario, 8
   simulaciones más y la bitácora de experimentos reevaluada.
-- **Expandir conocimientos**: tutoriales prácticos de lo que el máster no cubrió. El primero,
-  **FastAPI**: 12 lecciones, 2 simulaciones y 47 ejercicios que construyen la API de un modelo
-  de calidad de vinos (con FastAPI de verdad ejecutándose en el navegador, ver ADR-0005).
+- **Tutoriales**: proyectos completos paso a paso, enlazados con el temario.
+  - **Visión: clasificar imágenes** (PyTorch, CIFAR-10): 8 lecciones, 1 simulación y 24
+    ejercicios, del dataset a servir el modelo. El código de PyTorch no corre en el navegador:
+    lo ejecuta `scripts/tutorials/vision.py` y las cifras salen de esa ejecución (ADR-0006).
+  - **Texto: clasificar reseñas** (PyTorch y Hugging Face, reseñas de Amazon en español): 8
+    lecciones y 24 ejercicios, de un baseline TF-IDF a ajustar BETO. Lo ejecuta
+    `scripts/tutorials/texto.py`.
+  - Próximos: IA generativa de imágenes y crea tu LLM.
+  - **FastAPI**: 12 lecciones, 2 simulaciones y 47 ejercicios que construyen la API de un modelo
+    de calidad de vinos (con FastAPI de verdad ejecutándose en el navegador, ver ADR-0005).
 - Funciona en local con Docker. Sin cuentas ni servidor: el progreso se guarda en el navegador.
 - El Python de los ejercicios (numpy, pandas, scikit-learn, matplotlib, NLTK, OpenCV…) se ejecuta con
   Pyodide, que se descarga de un CDN la primera vez (hace falta conexión).
@@ -33,6 +40,9 @@ pista y solución), y notas de cómo se hace cada cosa en un trabajo real.
 ![ESLint](https://img.shields.io/badge/ESLINT-9.39.5-4B32C3?style=for-the-badge&logo=eslint&logoColor=white)
 ![Prettier](https://img.shields.io/badge/PRETTIER-3.9.10-F7B93E?style=for-the-badge&logo=prettier&logoColor=black)
 ![pnpm](https://img.shields.io/badge/PNPM-12.11.2-F69220?style=for-the-badge&logo=pnpm&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PYTORCH-2.13.0-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
+![torchvision](https://img.shields.io/badge/TORCHVISION-0.28.0-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
+![Transformers](https://img.shields.io/badge/TRANSFORMERS-5.20.2-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black)
 ![Docker](https://img.shields.io/badge/DOCKER-NGINX%201.31.2-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 
 ## Arrancar
@@ -79,6 +89,26 @@ VIRTUAL_ENV=.venv-check uv pip install numpy==2.4.6 pandas==3.0.2 scikit-learn==
 
 Como en Pyodide, el código puede usar `await` fuera de una función (los ejercicios de FastAPI
 llaman a la API con `await client.get(...)`): el comprobador lo compila con ese permiso.
+
+## Verificar los tutoriales de deep learning
+
+El código de PyTorch de los tutoriales se ejecuta fuera de la app, con su propio entorno
+(`scripts/tutorials/requirements.txt`: torch, torchvision, transformers y scikit-learn fijados):
+
+```bash
+uv venv .venv-tutorials --python 3.13
+VIRTUAL_ENV=.venv-tutorials uv pip install -r scripts/tutorials/requirements.txt
+
+.venv-tutorials/bin/python scripts/tutorials/vision.py --data /tmp/cifar --out /tmp/vision   # ~25 min en un M4 con MPS
+.venv-tutorials/bin/python scripts/tutorials/texto.py --out /tmp/texto                       # ~1 h en un M4 con MPS
+# --quick en cualquiera de los dos: prueba rápida con un subconjunto
+python scripts/tutorials/vision_curves.py /tmp/vision/results.json > src/features/simulations/tutorials/vision-runs.ts
+cp /tmp/vision/errores.png public/tutorials/vision/errores.png
+```
+
+Visión descarga CIFAR-10 (~170 MB) y los pesos de ResNet-18 (~45 MB); Texto, las reseñas en
+español del Multilingual Amazon Reviews Corpus (~50 MB) y BETO (~440 MB). Nada de eso se
+guarda en el repositorio. Las cifras de las lecciones salen de los `results.json`.
 
 ## Cómo está hecho
 

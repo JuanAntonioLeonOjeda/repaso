@@ -1,0 +1,187 @@
+TF-IDF convierte un texto en un vector de recuentos y se olvida del orden. Las redes de las próximas lecciones leen el texto **como una secuencia**: un número por cada trozo de texto, en orden. Ese paso, de texto a lista de números, se llama **tokenizar**, y sus decisiones (qué es un trozo, qué hacer con las palabras que no conoces, cómo meter en un lote textos de distinta longitud) se arrastran hasta producción.
+
+## De texto a ids
+
+La versión más sencilla: partir en palabras y signos, pasar a minúsculas, construir un **vocabulario** con las palabras frecuentes de train y dar a cada una un número. Dos ids se reservan: `<pad>` (0) para rellenar y `<unk>` (1) para lo que no está en el vocabulario.
+
+```python
+import re
+from collections import Counter
+
+TOKEN = re.compile(r"\w+|[^\w\s]")      # palabras o signos sueltos
+PAD, UNK = 0, 1
+
+def tokenize(text):
+    return TOKEN.findall(text.lower())
+
+def build_vocab(texts, max_size=30_000, min_freq=2):
+    counts = Counter(tok for t in texts for tok in tokenize(t))
+    words = [w for w, c in counts.most_common(max_size - 2) if c >= min_freq]
+    return {"<pad>": PAD, "<unk>": UNK, **{w: i + 2 for i, w in enumerate(words)}}
+
+def encode(text, vocab, max_len=128):
+    return [vocab.get(tok, UNK) for tok in tokenize(text)][:max_len] or [UNK]
+```
+
+Con las 200.000 reseñas, el vocabulario se llena con las 30.000 palabras más frecuentes. Así queda una reseña:
+
+```python
+tokenize("Llegó desconfigurado y el vendedor no contesta.")
+# ['llegó', 'desconfigurado', 'y', 'el', 'vendedor', 'no', 'contesta', '.']
+encode("Llegó desconfigurado y el vendedor no contesta.", vocab)
+# [83, 14415, 6, 9, 134, 8, 2456, 2]
+```
+
+Las palabras frecuentes reciben ids bajos («y» es el 6, «no» el 8); «desconfigurado» es la 14.415. El punto es el 2: el token más frecuente de todos.
+
+## Lotes: relleno y máscara
+
+Una red procesa lotes, y un lote es un tensor rectangular. Las reseñas tienen longitudes distintas, así que se **rellenan** con `<pad>` hasta la más larga **del lote** y se acompaña de una **máscara** que dice qué posiciones son texto de verdad. Rellenar hasta la más larga del lote, y no hasta un máximo fijo, ahorra mucho cálculo con textos cortos.
+
+<CodeExercise
+  id="codificar"
+  title="Vocabulario, ids, relleno y máscara"
+  starter={`
+    import numpy as np
+    from collections import Counter
+
+    PAD, UNK = 0, 1
+
+    def build_vocab(textos, min_freq=2):
+        cuenta = Counter(p for t in textos for p in t.split())
+        palabras = [p for p, c in cuenta.most_common() if c >= ___]
+        return {"<pad>": PAD, "<unk>": UNK, **{p: i + 2 for i, p in enumerate(palabras)}}
+
+    def encode(texto, vocab):
+        return [vocab.get(p, ___) for p in texto.split()]
+
+    def pad_batch(lista_de_ids):
+        largo = max(len(ids) for ids in lista_de_ids)
+        lote = np.full((len(lista_de_ids), largo), PAD)
+        for i, ids in enumerate(lista_de_ids):
+            lote[i, :len(ids)] = ids
+        mascara = (lote != ___).astype(int)
+        return lote, mascara
+
+    train = ["no funciona", "funciona muy bien", "muy mal no funciona", "muy bien"]
+    vocab = build_vocab(train)
+    lote, mascara = pad_batch([encode("funciona muy mal", vocab), encode("genial", vocab)])
+    print(vocab)
+    print(lote)
+    print(mascara)
+  `}
+  solution={`
+    import numpy as np
+    from collections import Counter
+
+    PAD, UNK = 0, 1
+
+    def build_vocab(textos, min_freq=2):
+        cuenta = Counter(p for t in textos for p in t.split())
+        palabras = [p for p, c in cuenta.most_common() if c >= min_freq]
+        return {"<pad>": PAD, "<unk>": UNK, **{p: i + 2 for i, p in enumerate(palabras)}}
+
+    def encode(texto, vocab):
+        return [vocab.get(p, UNK) for p in texto.split()]
+
+    def pad_batch(lista_de_ids):
+        largo = max(len(ids) for ids in lista_de_ids)
+        lote = np.full((len(lista_de_ids), largo), PAD)
+        for i, ids in enumerate(lista_de_ids):
+            lote[i, :len(ids)] = ids
+        mascara = (lote != PAD).astype(int)
+        return lote, mascara
+
+    train = ["no funciona", "funciona muy bien", "muy mal no funciona", "muy bien"]
+    vocab = build_vocab(train)
+    lote, mascara = pad_batch([encode("funciona muy mal", vocab), encode("genial", vocab)])
+    print(vocab)
+    print(lote)
+    print(mascara)
+  `}
+  hints={[
+    "Solo entran en el vocabulario las palabras que aparecen al menos min_freq veces.",
+    "Una palabra que no está en el vocabulario se convierte en el id de <unk>.",
+    "La máscara vale 1 donde el lote no es <pad>: c >= min_freq, vocab.get(p, UNK) y lote != PAD.",
+  ]}
+  check={`
+    assert vocab["<pad>"] == 0 and vocab["<unk>"] == 1, "Los ids 0 y 1 están reservados para <pad> y <unk>"
+    assert set(vocab) == {"<pad>", "<unk>", "funciona", "muy", "bien", "no"}, f"Con min_freq=2 entran funciona, muy, bien y no (mal sale una sola vez); sale {sorted(vocab)}"
+    assert lote.shape == (2, 3), f"El lote se rellena hasta el texto más largo (3 palabras): forma (2, 3); sale {lote.shape}"
+    assert lote[0, 2] == UNK, "«mal» solo aparece una vez en train: tiene que ser <unk>"
+    assert list(lote[1]) == [UNK, PAD, PAD], f"«genial» es desconocida y el resto es relleno: [1, 0, 0]; sale {list(lote[1])}"
+    assert mascara.tolist() == [[1, 1, 1], [1, 0, 0]], f"La máscara marca con 1 el texto real; sale {mascara.tolist()}"
+  `}
+>
+Completa las tres piezas con un tokenizador de juguete que parte por espacios. Fíjate en la última fila: una reseña de una sola palabra desconocida.
+</CodeExercise>
+
+## Palabras desconocidas y subpalabras
+
+Un vocabulario de palabras tiene dos problemas. Las palabras que no están se convierten todas en `<unk>`: un modelo de producto, una errata, una conjugación rara. Y el vocabulario no puede crecer sin fin, porque cada palabra necesita su propio vector.
+
+Con 30.000 palabras y 200.000 reseñas de train, el problema es pequeño aquí: solo el **0,81% de los tokens de validación** cae en `<unk>`. Pero con menos datos o textos más técnicos crece rápido, y toda palabra nueva que aparezca en producción se pierde.
+
+Los transformers lo resuelven con **subpalabras**: el vocabulario tiene palabras frecuentes enteras y trozos (raíces, sufijos, sílabas, letras), y cualquier palabra se puede escribir como una secuencia de trozos. BETO usa *WordPiece* con un vocabulario de 31.002 piezas:
+
+```python
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained("dccuchile/bert-base-spanish-wwm-cased")
+tokenizer.tokenize("Llegó desconfigurado y el vendedor no contesta.")
+```
+
+```python
+['Llegó', 'desconfi', '##gura', '##do', 'y', 'el', 'vendedor', 'no', 'contesta', '.']
+```
+
+Las palabras frecuentes son una sola pieza. «desconfigurado» se parte en tres: `desconfi`, `##gura` y `##do` (el `##` indica que la pieza continúa la anterior). Ninguna palabra se queda fuera, y BETO respeta las mayúsculas: «Llegó» y «llegó» son piezas distintas.
+
+<Quiz
+  id="subpalabras"
+  options={[
+    "Porque ocupan menos memoria que las palabras",
+    "Porque no hay palabras desconocidas (todo se puede escribir con piezas) y palabras emparentadas comparten piezas, así que el modelo aprovecha lo que sabe de «configurar» para «desconfigurado»",
+    "Porque así el texto tiene menos tokens",
+    "Porque los transformers no pueden trabajar con palabras completas",
+  ]}
+  answer={1}
+  explanation="Con subpalabras el vocabulario es fijo y pequeño (unas 30.000 piezas) y aun así cubre cualquier texto: lo raro se parte en trozos frecuentes. Las piezas compartidas transmiten significado entre palabras de la misma familia. El precio es que los textos tienen más tokens que palabras, y un transformer cuesta más cuanto más larga es la secuencia. Es la tokenización BPE/WordPiece que se cita en la lección de texto de la asignatura, y la que se construirá a mano en el tutorial sobre LLM, que está previsto."
+  hints={["¿Qué pasa con una palabra que nunca apareció en train, con cada tipo de vocabulario?"]}
+>
+¿Por qué los modelos actuales tokenizan en subpalabras y no en palabras?
+</Quiz>
+
+## Truncar
+
+Cada red tiene un límite de longitud: BETO, 512 tokens. Y aunque no lo hubiera, procesar secuencias largas cuesta: un transformer hace un cálculo cuadrático con la longitud. Se elige un `max_length` mirando la distribución de longitudes y se corta lo que sobra.
+
+<Quiz
+  id="truncar"
+  options={["Ninguna", "Alrededor del 1%", "Alrededor del 10%", "Alrededor de la mitad"]}
+  answer={1}
+  explanation="El 1,42% de las reseñas de train tiene más de 128 tokens con nuestro tokenizador (cuenta palabras y signos de puntuación, así que salen algo más de tokens que de palabras). Cortar ahí pierde el final de unas pocas reseñas largas a cambio de lotes mucho más baratos. Con el tokenizador de subpalabras de BETO la mediana pasa de 28 a 33 tokens por reseña y se trunca el 2,1%. Unas pocas reseñas superan incluso los 512 tokens que admite BETO."
+  hints={["Recuerda los percentiles de longitud de la lección 1: el 99% de las reseñas tiene 127 palabras o menos."]}
+>
+En este tutorial todas las redes cortan en 128 tokens. ¿Qué parte de las reseñas de entrenamiento pierde algo de texto con nuestro tokenizador de palabras?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Usa el tokenizador del modelo, siempre.** Un modelo preentrenado solo entiende los ids de su propio tokenizador. Se cargan juntos (`AutoTokenizer` y `AutoModel` con el mismo nombre) y se guardan juntos.
+- **Normaliza con cuidado.** Pasar a minúsculas o quitar tildes reduce el vocabulario, pero borra información: «NO FUNCIONA» grita, y en español «sí» y «si» no son lo mismo. BETO tiene versión *cased* (respeta mayúsculas) y *uncased*; aquí se usa la *cased*.
+- **Mira cuántos tokens produce tu texto.** Los límites (y la factura, en las API de LLM) se cuentan en tokens, no en palabras, y en español cada palabra produce más tokens que en inglés con los tokenizadores entrenados sobre todo en inglés.
+</Callout>
+
+<Temario
+  links={[
+    { to: "python/texto", why: "Tokenizar, minúsculas, stopwords y stemming con NLTK." },
+    { to: "deep-learning/texto-y-secuencias", why: "Tokenizar, indexar y representar; subpalabras con BPE o WordPiece." },
+  ]}
+/>
+
+## Para llevar
+
+- Tokenizar: texto → trozos → ids de un vocabulario aprendido en train, con `<pad>` y `<unk>` reservados.
+- Lotes: relleno hasta la secuencia más larga del lote y una máscara que marca el texto real.
+- Las subpalabras eliminan `<unk>` y comparten piezas entre palabras emparentadas.
+- Truncar a un `max_length` elegido mirando la distribución de longitudes.

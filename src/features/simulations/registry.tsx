@@ -19,6 +19,7 @@ export const simulations = {
   AxisSim: lazySim(() => import("./python/AxisSim")),
   EventLoopSim: lazySim(() => import("./fastapi/EventLoopSim")),
   RequestLifecycleSim: lazySim(() => import("./fastapi/RequestLifecycleSim")),
+  TrainingCurvesSim: lazySim(() => import("./tutorials/TrainingCurvesSim")),
   BroadcastingSim: lazySim(() => import("./python/BroadcastingSim")),
   GeneratorPipelineSim: lazySim(() => import("./python/GeneratorPipelineSim")),
   GroupBySim: lazySim(() => import("./python/GroupBySim")),
