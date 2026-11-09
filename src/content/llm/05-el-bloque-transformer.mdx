@@ -1,0 +1,120 @@
+La atención deja que cada token mire a los demás. Un **bloque transformer** añade lo que falta para apilar decenas de ellos sin que el entrenamiento se rompa: una pequeña red densa que procesa cada token por separado, conexiones residuales y normalización. GPT-2, Llama y el modelo de este tutorial son eso mismo repetido: aquí 6 bloques; en los modelos grandes, entre 30 y más de 100.
+
+## El bloque
+
+```python
+class Block(nn.Module):
+    def __init__(self, d, heads, dropout):
+        super().__init__()
+        self.ln1, self.ln2 = nn.LayerNorm(d), nn.LayerNorm(d)
+        self.attn = CausalSelfAttention(d, heads, dropout)
+        self.mlp = nn.Sequential(nn.Linear(d, 4 * d), nn.GELU(), nn.Linear(4 * d, d), nn.Dropout(dropout))
+
+    def forward(self, x):
+        x = x + self.attn(self.ln1(x))     # los tokens se comunican
+        return x + self.mlp(self.ln2(x))   # cada token piensa por su cuenta
+```
+
+- **Atención**: comunicación entre tokens.
+- **MLP**: cálculo dentro de cada token, con una capa oculta 4 veces más ancha y activación GELU. Aquí está la mayor parte de los parámetros, y es donde se cree que se guarda buena parte del "conocimiento".
+- **Conexiones residuales** (`x + ...`): cada subcapa añade una corrección a $x$ en vez de sustituirlo.
+- **LayerNorm antes de cada subcapa** (*pre-norm*, como en GPT-2): normaliza cada vector de token a media 0 y varianza 1, con una escala y un desplazamiento aprendidos.
+
+<Predict
+  id="params-bloque"
+  answer={["1774464", "1.774.464"]}
+  explanation="Atención: qkv = 384 · 1.152 + 1.152 = 443.520; proyección = 384 · 384 + 384 = 147.840. MLP: 384 · 1.536 + 1.536 = 591.360 y 1.536 · 384 + 384 = 590.208. Dos LayerNorm: 2 · (384 + 384) = 1.536. Total: 1.774.464. El MLP se lleva dos terceras partes; en general, un bloque tiene unos 12 · d² parámetros (12 · 384² = 1.769.472, más los sesgos y las normas)."
+  hints={[
+    "qkv es nn.Linear(384, 3 · 384); la proyección, nn.Linear(384, 384).",
+    "El MLP: nn.Linear(384, 1.536) y nn.Linear(1.536, 384). Cada LayerNorm tiene 2 · 384 parámetros.",
+    "443.520 + 147.840 + 591.360 + 590.208 + 1.536",
+  ]}
+>
+Con $d = 384$, ¿cuántos parámetros tiene un `Block`?
+</Predict>
+
+<Quiz
+  id="residual"
+  options={[
+    "Para que el modelo tenga más parámetros y más capacidad sin hacerlo más profundo",
+    "Porque dan al gradiente un camino directo y cada bloque solo aprende una corrección",
+    "Para que la atención de cada bloque pueda ver el token original sin transformar",
+    "Para ahorrar memoria al no tener que guardar las activaciones intermedias",
+  ]}
+  answer={1}
+  explanation="Sin residuales, el gradiente tendría que atravesar todas las capas para llegar a las primeras, y con decenas de bloques se desvanece o explota. Con x + f(x), la derivada respecto a x incluye siempre un término 1: hay una «autopista» directa hacia atrás. Además, al principio f(x) es pequeño y cada bloque empieza cerca de la identidad, así que añadir bloques nunca empeora el punto de partida. Es la misma idea que hizo posibles las ResNet de 100 capas."
+  hints={["¿Qué vale la derivada de x + f(x) respecto a x?"]}
+>
+¿Por qué son imprescindibles las conexiones residuales para apilar muchos bloques?
+</Quiz>
+
+## El modelo completo
+
+```python
+class GPT(nn.Module):
+    def __init__(self, layers=6, d=384, heads=6, dropout=0.2):
+        super().__init__()
+        self.tok_emb = nn.Embedding(VOCAB, d)          # 2.048 tokens
+        self.pos_emb = nn.Embedding(CONTEXT, d)        # 256 posiciones aprendidas, como en GPT-2
+        self.drop = nn.Dropout(dropout)
+        self.blocks = nn.ModuleList(Block(d, heads, dropout) for _ in range(layers))
+        self.ln_f = nn.LayerNorm(d)
+        self.head = nn.Linear(d, VOCAB, bias=False)
+        self.head.weight = self.tok_emb.weight         # pesos compartidos (weight tying)
+        self.apply(self._init_weights)                 # pesos pequeños (std 0,02), como en GPT-2
+
+    def forward(self, idx):
+        pos = torch.arange(idx.shape[1], device=idx.device)
+        x = self.drop(self.tok_emb(idx) + self.pos_emb(pos))
+        for block in self.blocks:
+            x = block(x)
+        return self.head(self.ln_f(x))                 # (B, T, 2.048): una distribución por posición
+```
+
+La atención no sabe nada del orden: si barajas los tokens, cada uno ve el mismo conjunto. Por eso a cada token se le suma un **embedding de posición**. Aquí son 256 vectores aprendidos, uno por posición de la ventana. Los modelos modernos usan RoPE, que rota las consultas y las claves según la posición: codifica la posición relativa y, con ajustes de escala, se adapta mejor a contextos más largos.
+
+<Callout kind="warn" title="La inicialización importa">
+La primera versión del script se olvidó de inicializar los pesos como GPT-2 y dejó los de PyTorch por defecto. Como la matriz de embeddings es también la capa de salida, y `nn.Embedding` empieza con desviación 1, los logits iniciales eran enormes: en la prueba rápida, la pérdida de partida fue 253, cuando un modelo sin entrenar debería dar $\ln 2.048 \approx 7{,}6$. Con pesos de desviación 0,02, empieza en 7,63. Comprobar la pérdida inicial es la prueba más barata de que el modelo está bien montado.
+</Callout>
+
+<Predict
+  id="pesos-compartidos"
+  answer={["786432", "786.432"]}
+  explanation="La capa de salida pasa de 384 dimensiones a 2.048 logits: 384 · 2.048 = 786.432 pesos (sin sesgo). Es la misma forma que la tabla de embeddings (2.048 × 384), así que se usa la misma matriz para las dos cosas: leer un token (embedding) y escribirlo (salida). Ahorra un 6% de los parámetros del modelo y suele mejorar ligeramente el resultado, porque obliga a que tokens parecidos tengan vectores parecidos en la entrada y en la salida."
+  hints={["La capa de salida es nn.Linear(384, 2.048, bias=False).", "384 · 2.048"]}
+>
+¿Cuántos parámetros se ahorran al compartir la matriz de embeddings con la capa de salida?
+</Predict>
+
+## Contar los 11,5 millones
+
+| Pieza | Parámetros |
+| ----- | ---------: |
+| Embedding de tokens (compartido con la salida) | 786.432 |
+| Embedding de posiciones | 98.304 |
+| 6 bloques × 1.774.464 | 10.646.784 |
+| LayerNorm final | 768 |
+| **Total** | **11.532.288** |
+
+GPT-2 pequeño tiene 124 millones con la misma receta: 12 bloques, $d = 768$, un vocabulario de 50.257 y 1.024 posiciones. GPT-3, 175.000 millones: 96 bloques con $d = 12.288$.
+
+<Callout kind="real" title="En el trabajo">
+- **Los modelos actuales cambian detalles, no la receta**: RMSNorm en vez de LayerNorm, SwiGLU en vez de GELU, RoPE en vez de posiciones aprendidas, atención con menos claves y valores (GQA) y, en algunos, *mixture of experts* (varios MLP y un router que elige cuáles usar para cada token).
+- **Lee el `config.json`** de cualquier modelo en Hugging Face: `num_hidden_layers`, `hidden_size`, `num_attention_heads`, `vocab_size`… son exactamente los números de esta lección.
+- **Regla rápida de memoria**: en fp16, cada parámetro ocupa 2 bytes. Un modelo de 7.000 millones necesita unos 14 GB solo para los pesos; para entrenarlo con Adam, varias veces eso.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/texto-y-secuencias", why: "El transformer como pila de bloques de atención." },
+    { to: "vision/una-cnn", why: "Contar parámetros capa a capa, la misma cuenta que aquí." },
+    { to: "deep-learning/optimizadores-y-regularizacion", why: "Batch normalization y dropout; LayerNorm es la misma idea, por token en vez de por lote." },
+  ]}
+/>
+
+## Para llevar
+
+- Bloque = LayerNorm → atención → residual, LayerNorm → MLP → residual.
+- Las residuales dan al gradiente un camino directo y permiten apilar muchos bloques.
+- Posiciones: un embedding por posición, sumado al del token. Salida: la matriz de embeddings compartida.
+- Nuestro GPT: 6 bloques, $d = 384$, 6 cabezas, 11.532.288 parámetros. Unos $12 d^2$ por bloque.

@@ -13,6 +13,7 @@ export type SubjectSlug =
   | "vision"
   | "texto"
   | "generativa"
+  | "llm"
   | "fastapi";
 
 export interface Lesson {

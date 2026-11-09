@@ -21,6 +21,7 @@ export const simulations = {
   RequestLifecycleSim: lazySim(() => import("./fastapi/RequestLifecycleSim")),
   TrainingCurvesSim: lazySim(() => import("./tutorials/TrainingCurvesSim")),
   DiffusionNoiseSim: lazySim(() => import("./tutorials/DiffusionNoiseSim")),
+  SamplingSim: lazySim(() => import("./tutorials/SamplingSim")),
   BroadcastingSim: lazySim(() => import("./python/BroadcastingSim")),
   GeneratorPipelineSim: lazySim(() => import("./python/GeneratorPipelineSim")),
   GroupBySim: lazySim(() => import("./python/GroupBySim")),

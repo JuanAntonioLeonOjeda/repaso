@@ -1,0 +1,111 @@
+ChatGPT, Claude o Llama parecen magia, pero por dentro hacen una sola cosa: **dado un texto, predecir el siguiente trozo**. Lo hacen con un transformer de miles de millones de parámetros, entrenado con billones de palabras, pero la receta es la misma que vas a seguir en este tutorial con un libro y un portátil. Al final tendrás un GPT de 11,5 millones de parámetros, escrito desde cero en PyTorch, que escribe en el castellano de Cervantes. Y sabrás exactamente qué cambia entre ese modelo y uno de verdad.
+
+<Callout kind="note" title="Cómo leer este tutorial">
+Como los anteriores, el código de PyTorch sale de `scripts/tutorials/llm.py`, que se ejecutó de principio a fin en un Mac M4 con MPS (semilla 42). Los textos generados y las cifras son de esa ejecución. Los ejercicios del navegador reconstruyen cada pieza con NumPy.
+</Callout>
+
+## Predecir el siguiente token
+
+Un modelo de lenguaje recibe una secuencia de **tokens** (trozos de texto, la lección 2 explica cuáles) y devuelve, para cada posición, una distribución de probabilidad sobre el vocabulario: qué token es probable que venga después.
+
+Esto es lo que responde el GPT de este tutorial, ya entrenado, a «En un lugar de la» (los cinco tokens más probables; ␣ es un espacio y ⏎ un salto de línea):
+
+| Siguiente token | Probabilidad |
+| --------------- | -----------: |
+| ␣venta | 9,8% |
+| ⏎ | 4,0% |
+| ␣ca | 3,3% |
+| ␣tierra | 2,9% |
+| ␣si | 2,4% |
+
+«Mancha» no está entre los cinco primeros. La primera frase del libro sale una sola vez en todo el texto, y el modelo no la ha memorizado: «Mancha» se queda lejos, con un 1,7%. En cambio da a «venta» un 9,8%: en el Quijote se habla de ventas muchísimas veces («de la venta» sale 36 veces), y eso sí lo ha aprendido. Ha aprendido patrones del libro, no frases sueltas.
+
+Entrenarlo es pura clasificación: la "etiqueta" de cada posición es el token que de verdad viene después en el texto. No hace falta que nadie etiquete nada: el propio texto trae las respuestas. Por eso se puede entrenar con cantidades enormes de texto. Este aprendizaje se llama **autosupervisado**.
+
+Y hay un detalle que hace el entrenamiento muy eficiente: con una ventana de texto, el modelo predice **en todas las posiciones a la vez**. Cada token se usa como contexto para los siguientes y como respuesta para los anteriores.
+
+<Predict
+  id="predicciones-por-ventana"
+  answer="256"
+  explanation="La entrada son los tokens 1 a 256 y la respuesta, los tokens 2 a 257: el mismo texto desplazado una posición. En cada posición hay una predicción (la del token 1 predice el 2, la del 1–2 predice el 3…), así que una ventana da 256 ejemplos de entrenamiento a la vez. Para que la posición 5 no vea la respuesta (el token 6), el modelo usa una máscara causal, que verás en la lección 4."
+  hints={[
+    "La respuesta de cada posición es el token que viene justo después.",
+    "Cada una de las 256 posiciones de la ventana predice el siguiente token.",
+  ]}
+>
+El modelo de este tutorial lee ventanas de 256 tokens. ¿Cuántas predicciones de "siguiente token" se entrenan con una sola ventana?
+</Predict>
+
+## Generar es predecir una y otra vez
+
+Para generar, se le da al modelo un principio (el *prompt*), se elige un token de la distribución que devuelve, se añade al texto y se repite. Cada token nuevo pasa a formar parte del contexto del siguiente. Así es como ChatGPT escribe su respuesta palabra a palabra: no tiene la frase pensada de antemano.
+
+<Quiz
+  id="autorregresivo"
+  options={[
+    "Porque la red no cabe entera en la memoria de la GPU y se ejecuta por trozos",
+    "Porque los servidores limitan a propósito la velocidad de cada usuario",
+    "Porque genera el texto completo y luego lo envía poco a poco para que se lea mejor",
+    "Porque cada token depende de los anteriores, incluidos los que acaba de generar",
+  ]}
+  answer={3}
+  explanation="La generación es autorregresiva: el token n entra como contexto para predecir el n + 1. Entrenar sí se hace en paralelo (todas las posiciones de una ventana a la vez, porque el texto ya existe), pero generar es inevitablemente secuencial. Por eso la velocidad de un LLM se mide en tokens por segundo, y por eso existen trucos como la caché de claves y valores (KV cache), que evita recalcular el contexto en cada paso."
+  hints={["¿Qué necesita el modelo como entrada para predecir el siguiente token?"]}
+>
+¿Por qué un chatbot muestra la respuesta palabra a palabra en vez de toda de golpe?
+</Quiz>
+
+## El corpus: el Quijote entero
+
+Un LLM real se entrena con billones de tokens de webs, libros y código. Para que quepa en un portátil, aquí se usa un solo libro: ***Don Quijote de la Mancha***, de la edición de dominio público de Project Gutenberg. Son 386.614 palabras y 2,1 millones de caracteres, con 92 caracteres distintos (letras con y sin tilde, la ñ, signos de puntuación y la raya de diálogo).
+
+```python
+import urllib.request
+
+def book(gutenberg_id):
+    url = f"https://www.gutenberg.org/cache/epub/{gutenberg_id}/pg{gutenberg_id}.txt"
+    raw = urllib.request.urlopen(url).read().decode("utf-8")
+    start = raw.index("\n", raw.index("***", raw.index("*** START OF")) + 3) + 1
+    end = raw.index("*** END OF")                       # fuera la cabecera y la licencia de Gutenberg
+    return raw[start:end].strip()
+
+quijote = book(2000)
+cut = int(len(quijote) * 0.9)
+train, val = quijote[:cut], quijote[cut:]               # el 90% primero para entrenar, el final para validar
+```
+
+<Quiz
+  id="dividir-el-libro"
+  options={[
+    "Porque frases al azar compartirían escenas y giros con el entrenamiento, y la nota saldría inflada",
+    "Porque así el entrenamiento es más rápido y gasta menos memoria",
+    "Porque el final del libro es lo más difícil y da una medida más exigente",
+    "Da igual cómo se separe mientras la proporción sea el 10%",
+  ]}
+  answer={0}
+  explanation="En texto, los trozos cercanos se parecen mucho: la misma escena, los mismos personajes, frases que se repiten. Si validación y entrenamiento se mezclan frase a frase, el modelo puede acertar en validación por haber visto casi lo mismo, y la medida engaña. Un bloque contiguo al final se parece más a la situación real: texto nuevo. Es el mismo principio que agrupar por paciente en el TFM. El precio es que el final del libro puede ser algo distinto del principio (la segunda parte del Quijote, por ejemplo)."
+  hints={["Piensa en qué compartirían dos frases vecinas de una misma escena."]}
+>
+¿Por qué la validación es el último 10% del libro y no frases elegidas al azar?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Los datos son el producto.** En los LLM de verdad, buena parte del trabajo está en conseguir, filtrar y deduplicar billones de tokens: quitar spam, texto repetido, contenido tóxico y datos personales, y equilibrar idiomas y dominios. Un modelo es tan bueno como su corpus.
+- **Licencias y derechos.** El Quijote es de dominio público. Entrenar con libros, noticias o código con derechos es hoy objeto de litigios. Ante la duda, usa datos con licencia clara.
+- **No entrenes un LLM desde cero en el trabajo.** Salvo en laboratorios grandes, se parte de un modelo preentrenado abierto (Llama, Qwen, Mistral…) y se ajusta (lección 8). Construir uno pequeño, como aquí, sirve para entender qué hay dentro.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/texto-y-secuencias", why: "Texto como secuencia, embeddings, RNN y la atención de los transformers." },
+    { to: "texto/tokenizar", why: "De texto a ids, el vocabulario y por qué se usan subpalabras." },
+    { to: "supervisado/validacion", why: "Separar validación de forma que mida lo que pasará con datos nuevos." },
+  ]}
+/>
+
+## Para llevar
+
+- Un LLM predice el siguiente token; generar es elegir un token, añadirlo y repetir.
+- Se entrena sin etiquetas: el propio texto da las respuestas, una por cada posición de la ventana.
+- Aquí el corpus es el Quijote: 386.614 palabras, validación con el último 10% del libro.
+- Los LLM reales son esto mismo a una escala enorme, más el ajuste con instrucciones (lección 8).

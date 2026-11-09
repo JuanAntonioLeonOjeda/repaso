@@ -1,0 +1,185 @@
+Una red trabaja con números, así que el primer paso es partir el texto en **tokens** y dar a cada uno un id. En el tutorial de texto usaste el tokenizador ya hecho de BETO. Aquí vas a construir el tuyo con el algoritmo que usan GPT, Llama y casi todos los LLM: **Byte Pair Encoding** (BPE). La idea cabe en una frase: empezar con letras sueltas y fusionar, una y otra vez, la pareja que más se repite.
+
+## Ni letras ni palabras
+
+Hay dos extremos, y los dos son malos:
+
+- **Letras**: un vocabulario minúsculo (92 caracteres en el Quijote) y nunca falta ninguna palabra. Pero las secuencias son larguísimas, y el modelo tiene que aprender desde cero que «q», «u» y «e» suelen ir juntas.
+- **Palabras**: secuencias cortas, pero un vocabulario enorme, y cualquier palabra nueva (un nombre, una errata, una conjugación rara) se queda fuera.
+
+BPE se queda en medio: las palabras frecuentes son un solo token y las raras se escriben con varios trozos.
+
+## El algoritmo
+
+1. Parte cada palabra en caracteres.
+2. Cuenta todas las parejas de símbolos vecinos, ponderadas por la frecuencia de la palabra.
+3. Fusiona la pareja más frecuente en un símbolo nuevo y apúntala en la lista de fusiones.
+4. Repite hasta tener el vocabulario del tamaño que quieras.
+
+Para tokenizar un texto nuevo se aplican las mismas fusiones, en el mismo orden.
+
+<CodeExercise
+  id="bpe-a-mano"
+  title="Las fusiones de BPE"
+  starter={`
+    from collections import Counter
+
+    def contar_parejas(palabras):
+        """palabras: {tupla de símbolos: frecuencia}. Cuenta cada pareja de símbolos vecinos."""
+        cuenta = Counter()
+        for simbolos, n in palabras.items():
+            for a, b in zip(simbolos, simbolos[1:]):
+                cuenta[(a, b)] += ___
+        return cuenta
+
+    def fusionar(palabras, pareja):
+        nuevas = {}
+        for simbolos, n in palabras.items():
+            out, i = [], 0
+            while i < len(simbolos):
+                if i < len(simbolos) - 1 and (simbolos[i], simbolos[i + 1]) == pareja:
+                    out.append(simbolos[i] + simbolos[i + 1])
+                    i += ___
+                else:
+                    out.append(simbolos[i])
+                    i += 1
+            nuevas[tuple(out)] = nuevas.get(tuple(out), 0) + n
+        return nuevas
+
+    palabras = {tuple("casa"): 5, tuple("cosa"): 3, tuple("caso"): 4, tuple("cosas"): 2}
+    for paso in range(4):
+        parejas = contar_parejas(palabras)
+        mejor = max(parejas, key=lambda p: (parejas[p], p))
+        print(paso + 1, mejor, parejas[mejor])
+        palabras = fusionar(palabras, mejor)
+    print(palabras)
+  `}
+  solution={`
+    from collections import Counter
+
+    def contar_parejas(palabras):
+        """palabras: {tupla de símbolos: frecuencia}. Cuenta cada pareja de símbolos vecinos."""
+        cuenta = Counter()
+        for simbolos, n in palabras.items():
+            for a, b in zip(simbolos, simbolos[1:]):
+                cuenta[(a, b)] += n
+        return cuenta
+
+    def fusionar(palabras, pareja):
+        nuevas = {}
+        for simbolos, n in palabras.items():
+            out, i = [], 0
+            while i < len(simbolos):
+                if i < len(simbolos) - 1 and (simbolos[i], simbolos[i + 1]) == pareja:
+                    out.append(simbolos[i] + simbolos[i + 1])
+                    i += 2
+                else:
+                    out.append(simbolos[i])
+                    i += 1
+            nuevas[tuple(out)] = nuevas.get(tuple(out), 0) + n
+        return nuevas
+
+    palabras = {tuple("casa"): 5, tuple("cosa"): 3, tuple("caso"): 4, tuple("cosas"): 2}
+    for paso in range(4):
+        parejas = contar_parejas(palabras)
+        mejor = max(parejas, key=lambda p: (parejas[p], p))
+        print(paso + 1, mejor, parejas[mejor])
+        palabras = fusionar(palabras, mejor)
+    print(palabras)
+  `}
+  hints={[
+    "Cada aparición de una pareja cuenta tantas veces como se repite la palabra.",
+    "Al fusionar dos símbolos se avanza dos posiciones de golpe.",
+    "cuenta[(a, b)] += n e i += 2.",
+  ]}
+  check={`
+    p = contar_parejas({tuple("casa"): 5, tuple("cosa"): 3, tuple("caso"): 4, tuple("cosas"): 2})
+    assert p[("a", "s")] == 11, f"«as» aparece en casa (5), caso (4) y cosas (2): 11; sale {p[('a', 's')]}"
+    assert p[("s", "a")] == 10, f"«sa» aparece en casa (5), cosa (3) y cosas (2): 10; sale {p[('s', 'a')]}"
+    f = fusionar({tuple("cosas"): 2}, ("a", "s"))
+    assert f == {("c", "o", "s", "as"): 2}, f"Fusionar «a» + «s» en cosas da c, o, s, as; sale {f}"
+    assert palabras[("casa",)] == 5, "Tras cuatro fusiones, «casa» ya es un solo token"
+    assert ("c", "os", "as") in palabras, "Y «cosas» queda en tres piezas: c, os, as"
+  `}
+>
+Completa las dos funciones y ejecuta cuatro fusiones sobre un vocabulario de juguete. Fíjate en cómo «casa», la palabra más frecuente, acaba siendo un solo token.
+</CodeExercise>
+
+## Bytes en vez de letras
+
+GPT-2 y casi todos los LLM actuales hacen BPE sobre **bytes**, no sobre caracteres: el vocabulario inicial son los 256 valores posibles de un byte. Así cualquier texto (emojis, chino, código) se puede tokenizar sin un solo «desconocido». En UTF-8, la «ñ» o una vocal con tilde son dos bytes, que BPE fusiona enseguida porque aparecen mucho.
+
+Con la librería `tokenizers` de Hugging Face, entrenar el tokenizador del Quijote son cuatro líneas:
+
+```python
+from tokenizers import ByteLevelBPETokenizer
+
+tok = ByteLevelBPETokenizer()
+tok.train_from_iterator([train], vocab_size=2048, min_frequency=2, special_tokens=["<|endoftext|>"])
+tok.save("bpe.json")
+```
+
+Las primeras fusiones que aprende (el espacio se escribe ␣, porque en este tokenizador va pegado a la palabra que sigue):
+
+`␣ + d` · `u + e` · `e + n` · `␣ + l` · `e + s` · `␣ + a` · `q + ue` · `o + s` · `␣ + s` · `e + r` · `␣ + c` · `␣d + e`
+
+Espacio + d, u + e, e + n, espacio + l… Las parejas más frecuentes del castellano. En la fusión 7, «q» se une a «ue», que ya era un símbolo desde la fusión 2: así se forma «que». Al acabar hay 2.048 piezas: los 256 bytes, el token especial y 1.791 fusiones.
+
+Y así tokeniza la primera frase del libro:
+
+`En` · `␣un` · `␣lugar` · `␣de` · `␣la` · `␣Mancha` · `,` · `␣de` · `␣cu` · `yo` · `␣nombre` · `␣no` · `␣quiero` · `␣acor` · `dar` · `me`
+
+Doce palabras, 16 tokens. Las palabras frecuentes (*lugar*, *Mancha*, *nombre*, *quiero*) son un solo token, con su espacio delante; *cuyo* y *acordarme* se parten en trozos. En todo el texto de entrenamiento salen **610.205 tokens**: 3,11 caracteres por token de media.
+
+<Quiz
+  id="tamano-del-vocabulario"
+  options={[
+    "Uno más grande: cuantos más tokens, más corta la secuencia y mejor el modelo",
+    "Uno más pequeño, porque así el modelo tiene menos parámetros que entrenar",
+    "Con un solo libro, un vocabulario enorme dejaría miles de tokens vistos poquísimas veces",
+    "Da igual: el tamaño del vocabulario solo cambia la velocidad del tokenizador",
+  ]}
+  answer={2}
+  explanation="Un vocabulario mayor acorta las secuencias (más texto cabe en la ventana) pero cada token aparece menos, y su embedding y su fila en la capa de salida se aprenden peor. Con 610.205 tokens de entrenamiento y 2.048 en el vocabulario, cada token sale unas 300 veces de media. GPT-2 usa 50.257 y Llama 3, unos 128.000, pero se entrenan con billones de tokens. El tamaño del vocabulario se elige según la cantidad de datos."
+  hints={["¿Cuántas veces aparecería de media cada token en cada caso?"]}
+>
+GPT-2 tiene un vocabulario de 50.257 tokens. Para entrenar con un solo libro, ¿por qué conviene uno de 2.048?
+</Quiz>
+
+<Quiz
+  id="palabras-raras"
+  options={[
+    "Se convierte en un token especial que significa «palabra desconocida»",
+    "Se escribe con varios trozos más frecuentes, en el peor caso byte a byte",
+    "El tokenizador da un error y hay que añadirla a mano al vocabulario",
+    "Se elimina del texto antes de pasárselo al modelo",
+  ]}
+  answer={1}
+  explanation="Con BPE nunca hay palabras desconocidas: en el peor caso, una palabra se escribe byte a byte. «desaguisado», una palabra que en el Quijote sale poco, se parte en cuatro piezas. Por eso un LLM puede escribir nombres o palabras que no ha visto, aunque los idiomas o dominios poco representados en el corpus de su tokenizador gastan más tokens por palabra: son más lentos y más caros de procesar."
+  hints={["Recuerda en qué piezas se partía «desaguisado»."]}
+>
+¿Qué le pasa a una palabra que no está en el vocabulario de BPE?
+</Quiz>
+
+«desaguisado» se tokeniza como `␣desa` · `gui` · `s` · `ado`.
+
+<Callout kind="real" title="En el trabajo">
+- **Un modelo, un tokenizador.** El tokenizador forma parte del modelo: si lo cambias, los ids no significan nada para la red. Se guardan y se cargan juntos.
+- **Cuenta en tokens.** Los límites de contexto y el precio de las API se miden en tokens. En español, los tokenizadores entrenados sobre todo con inglés gastan más tokens por palabra, así que el mismo texto cuesta más y cabe menos.
+- **`tiktoken`** (OpenAI) y **`tokenizers`** (Hugging Face) son las librerías habituales; `AutoTokenizer.from_pretrained` carga el de cualquier modelo publicado.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/texto-y-secuencias", why: "Tokenizar en subpalabras con BPE o WordPiece para que no haya palabras desconocidas." },
+    { to: "texto/tokenizar", why: "El vocabulario de palabras, <unk> y las subpalabras de BETO." },
+    { to: "python/texto", why: "Tokenizar y contar frecuencias: el punto de partida de BPE." },
+  ]}
+/>
+
+## Para llevar
+
+- BPE: empezar por caracteres (o bytes) y fusionar repetidamente la pareja más frecuente.
+- Las palabras frecuentes acaban siendo un token; las raras, varios trozos. Nunca hay desconocidos.
+- El tamaño del vocabulario depende de los datos: aquí 2.048 para 610.205 tokens de entrenamiento.
+- Nuestro tokenizador: 2.048 piezas, 3,11 caracteres por token en el Quijote.
