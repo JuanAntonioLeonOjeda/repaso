@@ -1,0 +1,6 @@
+# Environment for scripts/tutorials/ (not the app): the PyTorch code of the deep learning
+# tutorials. Versions pinned from PyPI (transformers chosen at least two weeks old).
+torch==2.13.0
+torchvision==0.28.0
+transformers==5.20.2
+scikit-learn==1.9.1

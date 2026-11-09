@@ -8,3 +8,6 @@ Asignaturas/
 
 # TFM images from LUMOS patients: generated locally by scripts/tfm/export_assets.py, never committed.
 public/tfm-local/
+
+# Local Python environments (exercise checker, tutorial scripts).
+.venv-*/
