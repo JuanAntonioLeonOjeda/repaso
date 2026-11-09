@@ -6,6 +6,7 @@ import { simulations } from "@/features/simulations";
 import { ExperimentPlots, ExperimentTable, LocalImage } from "@/features/tfm";
 import { Callout, Figure } from "@/features/ui";
 
+import { LessonImage, LessonLink } from "./mdx-elements";
 import { Temario } from "./Temario";
 
 /**
@@ -13,6 +14,8 @@ import { Temario } from "./Temario";
  * `.claude/rules/content-authoring.md`.
  */
 export const mdxComponents: MDXComponents = {
+  a: LessonLink,
+  img: LessonImage,
   Callout,
   Figure,
   Quiz,

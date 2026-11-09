@@ -6,7 +6,7 @@
  */
 import { useSyncExternalStore } from "react";
 
-export const LOCAL_BASE = "/tfm-local";
+export const LOCAL_BASE = `${import.meta.env.BASE_URL}tfm-local`;
 
 export interface LayerInfo {
   size: number;

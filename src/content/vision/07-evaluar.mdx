@@ -129,7 +129,9 @@ Con la matriz de arriba, ¿cuál es la **precisión** de la clase gato? (Respond
 Las métricas dicen dónde falla el modelo; para saber **por qué**, hay que mirar las imágenes. Ordena los errores por confianza y mira los primeros: ahí aparecen etiquetas mal puestas, imágenes ambiguas y los puntos ciegos de verdad.
 
 <Figure caption="Los 12 errores más confiados de la CNN regularizada en el test (de izquierda a derecha y de arriba abajo). Etiqueta real → predicción: avión → barco, coche → camión, camión → coche, gato → rana, pájaro → ciervo, perro → ciervo; pájaro → perro, barco → avión, coche → camión, pájaro → perro, coche → camión, gato → ciervo. Todos con una confianza del 99,9% o más.">
-  <img src="/tutorials/vision/errores.png" alt="Cuadrícula de 2 filas por 6 de imágenes de CIFAR-10 que la CNN clasificó mal con confianza casi total" />
+
+![Cuadrícula de 2 filas por 6 de imágenes de CIFAR-10 que la CNN clasificó mal con confianza casi total](/tutorials/vision/errores.png)
+
 </Figure>
 
 Mirándolas se entienden tres tipos de error:
