@@ -10,6 +10,7 @@ export type SubjectSlug =
   | "optimizacion"
   | "razonamiento"
   | "tfm"
+  | "vision"
   | "fastapi";
 
 export interface Lesson {

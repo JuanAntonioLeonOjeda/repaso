@@ -7,7 +7,7 @@ import { illustrations } from "@/features/illustrations";
 import { resolveTemarioLink } from "@/features/lesson";
 import { simulations } from "@/features/simulations";
 
-import { extras, sections, subjects } from "./catalog";
+import { sections, subjects, tutorials } from "./catalog";
 
 const CONTENT_DIR = join(process.cwd(), "src", "content");
 
@@ -27,13 +27,14 @@ describe("content catalog", () => {
     expect(new Set(subjects.map((s) => s.slug)).size).toBe(7);
   });
 
-  it("has the TFM and the extras as sections apart from the subjects", () => {
+  it("has the TFM and the tutorials as sections apart from the subjects", () => {
     expect(sections.map((s) => s.slug)).toEqual([
       ...subjects.map((s) => s.slug),
       "tfm",
-      ...extras.map((s) => s.slug),
+      ...tutorials.map((s) => s.slug),
     ]);
-    expect(extras.map((s) => s.slug)).toContain("fastapi");
+    // FastAPI keeps its slug when it moves into the tutorials: stored progress depends on it.
+    expect(tutorials.map((s) => s.slug)).toEqual(["vision", "fastapi"]);
   });
 
   for (const subject of sections) {

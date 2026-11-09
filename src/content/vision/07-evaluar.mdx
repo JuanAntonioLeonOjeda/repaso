@@ -1,0 +1,178 @@
+Ya has elegido modelo con la validación. Ahora toca la pregunta que te hará cualquiera que vaya a usarlo: **¿cómo de bien funciona?** La respuesta honesta sale del test, usado **una sola vez**, y no se resume en un número. Un 90% de accuracy puede esconder una clase que falla la mitad de las veces, o errores que el modelo comete con un 99% de confianza. En esta lección evalúas los dos mejores modelos del tutorial y aprendes a leer dónde y por qué fallan.
+
+## El test, una vez y al final
+
+El test no ha intervenido en ninguna decisión: ni en la época, ni en la arquitectura, ni en el learning rate. Por eso mide lo que puedes esperar con imágenes nuevas. Si después de mirarlo cambias algo y vuelves a medir, lo conviertes en una segunda validación y pierdes la medida honesta.
+
+```python
+@torch.no_grad()
+def predict_all(model, loader, device):
+    model.eval()
+    ys, preds, confs = [], [], []
+    for x, y in loader:
+        probs = torch.softmax(model(x.to(device)), dim=1).cpu()
+        conf, pred = probs.max(dim=1)          # probabilidad y clase más probables
+        ys.append(y); preds.append(pred); confs.append(conf)
+    return torch.cat(ys).numpy(), torch.cat(preds).numpy(), torch.cat(confs).numpy()
+```
+
+| Modelo | Acc. validación | Acc. test | Errores en test |
+| ------ | --------------: | --------: | --------------: |
+| CNN regularizada | 89,7% | **88,8%** | 1.125 de 10.000 |
+| ResNet-18 con fine-tuning | 95,0% | **94,3%** | 574 de 10.000 |
+
+Los dos bajan casi un punto de validación a test. Parte puede ser ruido: con 5.000 imágenes de validación, el error estándar de un accuracy del 90% ronda los 0,4 puntos. Y parte es la razón de tener un test: cuando eliges época y modelo mirando la validación, su número tiende a ser algo optimista. El número que se comunica es el del test.
+
+## La matriz de confusión
+
+Una fila por clase real y una columna por clase predicha: la casilla $(i, j)$ cuenta las imágenes de la clase $i$ que el modelo llamó $j$. La diagonal son los aciertos. De ella salen dos métricas por clase:
+
+- **Recall** (fila): de todos los gatos, ¿cuántos reconoce? $\text{recall}_i = C_{ii} / \sum_j C_{ij}$
+- **Precisión** (columna): de todo lo que llama gato, ¿cuánto lo es? $\text{precisión}_j = C_{jj} / \sum_i C_{ij}$
+
+<CodeExercise
+  id="matriz-de-confusion"
+  title="Matriz de confusión y métricas por clase"
+  starter={`
+    import numpy as np
+
+    def confusion_matrix(y_true, y_pred, k):
+        cm = np.zeros((k, k), dtype=int)
+        for t, p in zip(y_true, y_pred):
+            cm[___, ___] += 1                 # filas: clase real; columnas: predicha
+        return cm
+
+    def per_class(cm):
+        recall = cm.diagonal() / cm.sum(axis=___)
+        precision = cm.diagonal() / cm.sum(axis=___)
+        return precision, recall
+
+    y_true = np.array([0, 0, 0, 1, 1, 2, 2, 2, 2])
+    y_pred = np.array([0, 0, 1, 1, 1, 2, 2, 1, 0])
+    cm = confusion_matrix(y_true, y_pred, 3)
+    print(cm)
+    print(per_class(cm))
+  `}
+  solution={`
+    import numpy as np
+
+    def confusion_matrix(y_true, y_pred, k):
+        cm = np.zeros((k, k), dtype=int)
+        for t, p in zip(y_true, y_pred):
+            cm[t, p] += 1                 # filas: clase real; columnas: predicha
+        return cm
+
+    def per_class(cm):
+        recall = cm.diagonal() / cm.sum(axis=1)
+        precision = cm.diagonal() / cm.sum(axis=0)
+        return precision, recall
+
+    y_true = np.array([0, 0, 0, 1, 1, 2, 2, 2, 2])
+    y_pred = np.array([0, 0, 1, 1, 1, 2, 2, 1, 0])
+    cm = confusion_matrix(y_true, y_pred, 3)
+    print(cm)
+    print(per_class(cm))
+  `}
+  hints={[
+    "La fila es la clase real (t) y la columna la predicha (p).",
+    "El recall divide entre el total de cada fila (sumar a lo largo de las columnas, axis=1); la precisión, entre el total de cada columna (axis=0).",
+    "cm[t, p] += 1; recall con axis=1 y precision con axis=0.",
+  ]}
+  check={`
+    from sklearn.metrics import confusion_matrix as sk_cm, precision_score, recall_score
+    rng = np.random.default_rng(0)
+    yt = rng.integers(0, 4, 200)
+    yp = np.where(rng.random(200) < 0.7, yt, rng.integers(0, 4, 200))
+    cm = confusion_matrix(yt, yp, 4)
+    assert np.array_equal(cm, sk_cm(yt, yp)), "La matriz no coincide con la de scikit-learn: ¿filas = clase real?"
+    p, r = per_class(cm)
+    assert np.allclose(r, recall_score(yt, yp, average=None)), "El recall por clase no cuadra: divide la diagonal entre el total de cada fila"
+    assert np.allclose(p, precision_score(yt, yp, average=None)), "La precisión por clase no cuadra: divide la diagonal entre el total de cada columna"
+    p3, r3 = per_class(confusion_matrix(y_true, y_pred, 3))
+    assert np.isclose(r3[2], 0.5) and np.isclose(p3[1], 0.5), "En el ejemplo: recall de la clase 2 = 2/4 y precisión de la clase 1 = 2/4"
+  `}
+>
+Calcula la matriz de confusión y la precisión y el recall de cada clase. El `check` los compara con scikit-learn.
+</CodeExercise>
+
+En la práctica se usa `sklearn.metrics.confusion_matrix` y `classification_report`, los mismos que en supervisado. Esta es la matriz de la CNN regularizada en el test:
+
+| real \ predicha | avión | coche | pájaro | gato | ciervo | perro | rana | caballo | barco | camión |
+| --- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| **avión** | **887** | 10 | 26 | 16 | 11 | 0 | 1 | 3 | 35 | 11 |
+| **coche** | 7 | **947** | 2 | 1 | 1 | 0 | 0 | 0 | 6 | 36 |
+| **pájaro** | 30 | 0 | **843** | 29 | 39 | 25 | 19 | 5 | 6 | 4 |
+| **gato** | 12 | 3 | 34 | **738** | 36 | 110 | 30 | 17 | 11 | 9 |
+| **ciervo** | 4 | 1 | 23 | 22 | **910** | 16 | 12 | 10 | 2 | 0 |
+| **perro** | 6 | 0 | 14 | 92 | 21 | **842** | 8 | 16 | 0 | 1 |
+| **rana** | 6 | 1 | 28 | 23 | 8 | 10 | **918** | 4 | 1 | 1 |
+| **caballo** | 10 | 0 | 13 | 9 | 24 | 25 | 1 | **914** | 1 | 3 |
+| **barco** | 29 | 7 | 3 | 3 | 1 | 1 | 2 | 1 | **944** | 9 |
+| **camión** | 11 | 38 | 2 | 2 | 0 | 1 | 1 | 1 | 12 | **932** |
+
+- **Gato y perro son el gran problema**: 110 gatos tomados por perros y 92 perros por gatos. Gato es la peor clase, con un recall del 73,8%: uno de cada cuatro gatos se le escapa.
+- **Los vehículos se confunden entre sí**: 38 camiones vistos como coches y 36 coches como camiones; aviones y barcos, por el fondo azul (35 y 29).
+- **Los animales se confunden sobre todo con animales y los vehículos con vehículos.** La gran excepción es pájaro y avión (30 y 26), que comparten cielo. El modelo ha aprendido una jerarquía que nadie le enseñó.
+
+<Predict
+  id="precision-gato"
+  answer={["0.789", "0,789", "78.9", "78,9"]}
+  tolerance={0.005}
+  explanation="La columna de gato suma 16 + 1 + 29 + 738 + 22 + 92 + 23 + 9 + 3 + 2 = 935 imágenes predichas como gato, de las que 738 lo son: 738 / 935 ≈ 0,789. Recall (73,8%) y precisión (78,9%) bajos a la vez: el modelo no solo pierde gatos, también llama gato a perros (92), pájaros (29) y ranas (23)."
+  hints={["La precisión de una clase usa su columna: aciertos entre todo lo que se predijo como esa clase.", "Suma la columna «gato» de la matriz y divide 738 entre esa suma."]}
+>
+Con la matriz de arriba, ¿cuál es la **precisión** de la clase gato? (Responde como proporción, por ejemplo 0,5).
+</Predict>
+
+## Mirar los errores
+
+Las métricas dicen dónde falla el modelo; para saber **por qué**, hay que mirar las imágenes. Ordena los errores por confianza y mira los primeros: ahí aparecen etiquetas mal puestas, imágenes ambiguas y los puntos ciegos de verdad.
+
+<Figure caption="Los 12 errores más confiados de la CNN regularizada en el test (de izquierda a derecha y de arriba abajo). Etiqueta real → predicción: avión → barco, coche → camión, camión → coche, gato → rana, pájaro → ciervo, perro → ciervo; pájaro → perro, barco → avión, coche → camión, pájaro → perro, coche → camión, gato → ciervo. Todos con una confianza del 99,9% o más.">
+  <img src="/tutorials/vision/errores.png" alt="Cuadrícula de 2 filas por 6 de imágenes de CIFAR-10 que la CNN clasificó mal con confianza casi total" />
+</Figure>
+
+Mirándolas se entienden tres tipos de error:
+
+- **La etiqueta está mal.** La cuarta es una rana etiquetada como gato: el modelo acierta y el dataset se equivoca. La etiqueta es evidentemente errónea (imagen 2405 del test), y la ResNet también la "falla".
+- **La clase es ambigua.** Las camionetas pickup aparecen etiquetadas unas veces como coche y otras como camión. El avión de la primera imagen está sobre el agua, y todo en la foto dice barco. Ningún modelo puede acertar algo que ni el criterio de etiquetado tiene claro.
+- **Puntos ciegos de verdad.** El gato oscuro sobre el suelo gris, el perro sobre la hierba, el pájaro de primer plano tomado por perro. Aquí sí hay algo que mejorar: más datos de esos casos, o un modelo que vea mejor, como la ResNet.
+
+En números: de los 1.125 errores de la CNN, **285 se cometen con más de un 90% de confianza**. La confianza media es del 95,7% cuando acierta y del 72,8% cuando falla: algo dice, pero no separa bien. La ResNet comete la mitad de errores (574), y 147 siguen teniendo más de un 90% de confianza.
+
+<Quiz
+  id="confianza"
+  options={[
+    "Que el modelo está mal entrenado y hay que tirarlo",
+    "Que la probabilidad del softmax no es una probabilidad calibrada: el modelo puede equivocarse muy seguro, así que un umbral de confianza no basta para filtrar errores",
+    "Que esas imágenes están mal etiquetadas, seguro",
+    "Nada: el 90% de confianza significa que acierta el 90% de las veces",
+  ]}
+  answer={1}
+  explanation="Las redes modernas tienden a ser demasiado confiadas: el softmax de la clase elegida suele ser más alto que la frecuencia real de acierto. Algunos de esos errores serán etiquetas mal puestas (merece la pena revisarlos), pero no todos. Si vas a usar la confianza para decidir (por ejemplo, pasar los casos dudosos a una persona), primero calíbrala en validación (temperature scaling) y mide la calibración con un diagrama de fiabilidad."
+  hints={["¿Garantiza algo el softmax sobre la frecuencia real de acierto?"]}
+>
+Hay errores en los que el modelo da más de un 90% de probabilidad a la clase equivocada. ¿Qué te dice eso?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **La métrica la elige el problema, no la costumbre.** Si confundir un camión con un coche da igual pero perderse un peatón es grave, la que importa es el recall de "peatón", no el accuracy. Decide la métrica antes de entrenar.
+- **Da un intervalo, no solo un número.** Con 10.000 imágenes de test, el error estándar de un accuracy del 90% es $\sqrt{0{,}9 \cdot 0{,}1 / 10\,000} \approx 0{,}3$ puntos. Para decir que un modelo es mejor que otro, la diferencia tiene que superar con holgura ese ruido (unas dos veces el error estándar). Mejor aún, compáralos con las mismas imágenes: test de McNemar o bootstrap.
+- **Evalúa por subgrupos.** Fotos de noche y de día, cámara A y cámara B. Un buen accuracy global puede esconder un subgrupo en el que el modelo no funciona. En el TFM evaluaste por paciente y no por imagen por el mismo motivo.
+</Callout>
+
+<Temario
+  links={[
+    { to: "supervisado/metricas", why: "Matriz de confusión, precisión, recall y F1, y cómo elegir la métrica." },
+    { to: "supervisado/validacion", why: "Por qué el test se usa una sola vez." },
+    { to: "tfm/evaluacion", why: "Evaluar por paciente, con intervalos y por subgrupos, en un problema real." },
+  ]}
+/>
+
+## Para llevar
+
+- El test, una sola vez y al final. Si decides algo mirándolo, deja de ser test.
+- Matriz de confusión: filas reales, columnas predichas. Recall por filas, precisión por columnas.
+- En test: 88,8% la CNN regularizada y 94,3% la ResNet-18. El punto débil de las dos, gato contra perro.
+- Mira los errores más confiados: etiquetas mal puestas, ambigüedades y puntos ciegos.
+- La confianza del softmax no está calibrada.

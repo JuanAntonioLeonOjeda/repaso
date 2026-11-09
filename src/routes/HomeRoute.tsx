@@ -2,7 +2,7 @@ import { ArrowRight } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { Link } from "react-router";
 
-import { extras, subjects, tfm } from "@/content/catalog";
+import { subjects, tfm, tutorials } from "@/content/catalog";
 import type { Subject } from "@/content/types";
 import {
   ProgressRing,
@@ -110,12 +110,12 @@ export function HomeRoute(): ReactNode {
         </Link>
       </section>
 
-      <section aria-labelledby="extras">
-        <h2 id="extras" className={styles.sectionTitle}>
-          {es.home.extrasHeading}
+      <section aria-labelledby="tutoriales">
+        <h2 id="tutoriales" className={styles.sectionTitle}>
+          {es.home.tutorialsHeading}
         </h2>
-        <p className={styles.sectionLead}>{es.home.extrasLead}</p>
-        <SubjectGrid items={extras} progress={progress} />
+        <p className={styles.sectionLead}>{es.home.tutorialsLead}</p>
+        <SubjectGrid items={tutorials} progress={progress} />
       </section>
 
       <section aria-labelledby="como" className={styles.how}>

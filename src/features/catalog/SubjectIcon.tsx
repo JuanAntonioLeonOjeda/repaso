@@ -127,6 +127,25 @@ export function SubjectIcon({ slug, size = 56 }: { slug: SubjectSlug; size?: num
           <path d="M42 12 l8 -6 M42 24 l8 -6" opacity={0.6} />
         </svg>
       );
+    case "vision":
+      // A photo with a 3×3 convolution kernel sliding over it.
+      return (
+        <svg {...common}>
+          <rect x="5" y="9" width="40" height="32" rx="4" opacity={0.45} />
+          <path d="M5 35 L18 23 L27 31 L33 26 L45 36" opacity={0.45} />
+          <circle cx="15" cy="17" r="3" opacity={0.45} />
+          <rect
+            x="29"
+            y="25"
+            width="22"
+            height="22"
+            rx="2"
+            fill="currentColor"
+            fillOpacity={0.15}
+          />
+          <path d="M36.3 25 V47 M43.7 25 V47 M29 32.3 H51 M29 39.7 H51" opacity={0.6} />
+        </svg>
+      );
     case "fastapi":
       return (
         <svg {...common}>

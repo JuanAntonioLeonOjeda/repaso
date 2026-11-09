@@ -1,0 +1,179 @@
+Ya tienes un modelo que aprende. Pero "entrenar 20 épocas y quedarse con lo que salga" deja dos preguntas sin responder: ¿con qué época te quedas? y ¿cuándo paras? Esta lección convierte el bucle en un entrenamiento que se puede dejar solo: validar cada época, guardar el mejor modelo, parar cuando deja de mejorar y mover el learning rate a lo largo del entrenamiento. Y, sobre todo, **leer las curvas** para saber qué tocar después.
+
+## Validar cada época
+
+La función de evaluación es el bucle sin la parte de aprender:
+
+```python
+@torch.no_grad()                       # no guarda el grafo: menos memoria, más rápido
+def evaluate(model, loader, loss_fn, device):
+    model.eval()                       # dropout apagado; BN usa sus estadísticas acumuladas
+    total_loss, correct, seen = 0.0, 0, 0
+    for x, y in loader:
+        x, y = x.to(device), y.to(device)
+        logits = model(x)
+        total_loss += loss_fn(logits, y).item() * len(y)
+        correct += (logits.argmax(dim=1) == y).sum().item()
+        seen += len(y)
+    return {"loss": total_loss / seen, "acc": correct / seen}
+```
+
+`model.train()` y `model.eval()` no entrenan ni evalúan nada: solo cambian el comportamiento de dos tipos de capa. **Dropout** apaga neuronas al azar en `train` y no hace nada en `eval`. **BatchNorm** normaliza con las estadísticas del lote en `train` y con la media móvil que ha ido acumulando en `eval`.
+
+<Quiz
+  id="olvidar-eval"
+  options={[
+    "Nada, model.eval() solo afecta a la velocidad",
+    "La validación sale más ruidosa y peor de lo real: dropout sigue apagando neuronas y BatchNorm normaliza con las estadísticas de cada lote de validación",
+    "La red sigue aprendiendo con los datos de validación",
+    "Da un error porque torch.no_grad() necesita model.eval()",
+  ]}
+  answer={1}
+  explanation="no_grad evita guardar el grafo, pero no cambia el comportamiento de las capas: eso lo hace eval(). Sin eval(), cada evaluación tira neuronas al azar y la BN usa la media del lote de validación en vez de la de entrenamiento. Las métricas salen peores y cambian de una ejecución a otra. En producción es aún peor: una predicción de una sola imagen depende de qué otras imágenes vayan en el mismo lote. La red no aprende porque no hay backward ni step."
+  hints={["no_grad y eval hacen cosas distintas. ¿Qué capas de SmallCNN se comportan distinto en cada modo?"]}
+>
+Evalúas con `torch.no_grad()` pero te olvidas de `model.eval()`. ¿Qué pasa?
+</Quiz>
+
+## Guardar el mejor modelo y parar a tiempo
+
+La época con mejor validación casi nunca es la última. La solución estándar: guardar los pesos cada vez que la validación mejora (un *checkpoint*) y parar si lleva `patience` épocas sin mejorar (*early stopping*). Al final se recargan los pesos del mejor checkpoint.
+
+```python
+def fit(model, train_loader, val_loader, *, epochs, optimizer, device, ckpt, scheduler=None, patience=None):
+    loss_fn = nn.CrossEntropyLoss()
+    history, best_acc, since_best = [], -1.0, 0
+    for epoch in range(1, epochs + 1):
+        train = train_one_epoch(model, train_loader, loss_fn, optimizer, device, scheduler)
+        val = evaluate(model, val_loader, loss_fn, device)
+        history.append({"epoch": epoch, "train": train, "val": val})
+        if val["acc"] > best_acc:
+            best_acc, since_best = val["acc"], 0
+            torch.save(model.state_dict(), ckpt)        # los pesos de la mejor época
+        else:
+            since_best += 1
+            if patience is not None and since_best >= patience:
+                break                                    # early stopping
+    model.load_state_dict(torch.load(ckpt))              # volver a la mejor época
+    return history
+```
+
+<CodeExercise
+  id="early-stopping"
+  title="¿En qué época paras?"
+  starter={`
+    def early_stopping(val_accs, patience):
+        """val_accs[i] es la accuracy de validación de la época i + 1.
+        Devuelve (mejor_epoca, epoca_en_la_que_para), contando desde 1."""
+        best_acc, best_epoch, since_best = -1.0, 0, 0
+        for epoch, acc in enumerate(val_accs, start=1):
+            if acc > best_acc:
+                best_acc, best_epoch, since_best = acc, epoch, ___
+            else:
+                since_best += 1
+                if since_best >= ___:
+                    return best_epoch, epoch
+        return best_epoch, len(val_accs)
+
+    print(early_stopping([0.60, 0.70, 0.74, 0.73, 0.75, 0.74, 0.74, 0.72], patience=3))
+  `}
+  solution={`
+    def early_stopping(val_accs, patience):
+        """val_accs[i] es la accuracy de validación de la época i + 1.
+        Devuelve (mejor_epoca, epoca_en_la_que_para), contando desde 1."""
+        best_acc, best_epoch, since_best = -1.0, 0, 0
+        for epoch, acc in enumerate(val_accs, start=1):
+            if acc > best_acc:
+                best_acc, best_epoch, since_best = acc, epoch, 0
+            else:
+                since_best += 1
+                if since_best >= patience:
+                    return best_epoch, epoch
+        return best_epoch, len(val_accs)
+
+    print(early_stopping([0.60, 0.70, 0.74, 0.73, 0.75, 0.74, 0.74, 0.72], patience=3))
+  `}
+  hints={[
+    "Cuando la validación mejora, el contador de épocas sin mejorar vuelve a empezar.",
+    "Se para cuando el contador llega a la paciencia.",
+    "since_best = 0 al mejorar; if since_best >= patience para cortar.",
+  ]}
+  check={`
+    r = early_stopping([0.60, 0.70, 0.74, 0.73, 0.75, 0.74, 0.74, 0.72], patience=3)
+    assert r == (5, 8), f"La mejor época es la 5 (0,75) y tras 3 épocas sin mejorar se para en la 8; sale {r}"
+    r = early_stopping([0.5, 0.6, 0.7], patience=2)
+    assert r == (3, 3), f"Si siempre mejora, no para antes de tiempo: (3, 3); sale {r}"
+    r = early_stopping([0.8, 0.7, 0.7, 0.9], patience=2)
+    assert r == (1, 3), f"Con paciencia 2 para en la época 3, antes de ver el 0,9 de la 4: (1, 3); sale {r}"
+    r = early_stopping([0.7, 0.7, 0.7], patience=5)
+    assert r == (1, 3), f"Empatar no es mejorar: la mejor sigue siendo la 1; sale {r}"
+  `}
+>
+Escribe la lógica de parada de `fit`: devuelve la época que se guarda y la época en la que se para.
+</CodeExercise>
+
+El tercer caso del `check` es el riesgo de una paciencia corta: paras justo antes de una mejora. Pasa de verdad. En la CNN regularizada de la lección 5, la validación llega al 84,5% en la época 14 y baja al 84,1% y al 83,9% en las dos siguientes. Con `patience=2` el entrenamiento habría parado en la época 16, quedándose con la 14. Sin early stopping, el learning rate siguió bajando y la época 30 llegó al 89,74%: cinco puntos más. (Con `patience=3` o más no habría parado nunca.) Por eso en el modelo bueno de este tutorial no se usa: con un learning rate que baja hasta el final (siguiente sección), se entrena el número de épocas fijado y se guarda el mejor checkpoint.
+
+## Un learning rate que cambia
+
+Un learning rate fijo es un compromiso: alto al principio para avanzar rápido, bajo al final para afinar. Los *schedulers* lo mueven por ti. El que usa la CNN regularizada de la lección 5 es **OneCycleLR**: sube el learning rate durante el primer 30% de los pasos hasta `max_lr` y luego lo baja con forma de coseno hasta casi 0.
+
+```python
+epochs = 30
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-4)
+scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    optimizer, max_lr=3e-3, epochs=epochs, steps_per_epoch=len(train_loader)
+)
+# dentro de train_one_epoch, después de optimizer.step():
+scheduler.step()     # OneCycleLR avanza en cada lote, no en cada época
+```
+
+Por eso `train_one_epoch` recibe ahora un `scheduler` opcional. Un detalle que despista: con OneCycleLR, el `lr=1e-3` del optimizador **no se usa**. El scheduler lo sobrescribe desde el primer paso: empieza en `max_lr / 25` = 0,00012, sube hasta 0,003 y baja hasta 0,00012 / 10.000.
+
+<Predict
+  id="ultimo-lote"
+  answer="72"
+  explanation="45.000 = 351 · 128 + 72: hay 351 lotes completos y un último lote de 72 imágenes. El DataLoader no lo descarta salvo que pongas drop_last=True, así que len(train_loader) = 352 y OneCycleLR planifica 352 · 30 = 10.560 pasos. Si le pasas mal steps_per_epoch, al final da un error porque se pasa del número de pasos planificados."
+  hints={["Hay 45.000 imágenes de entrenamiento (50.000 menos 5.000 de validación).", "Divide 45.000 entre 128 y mira el resto.", "45.000 − 351 · 128"]}
+>
+Con 45.000 imágenes de entrenamiento y `batch_size=128`, ¿cuántas imágenes trae el **último** lote de cada época?
+</Predict>
+
+## Leer las curvas
+
+Con el historial de cada época se dibujan pérdida y accuracy de train y de validación. Estas son las curvas reales de los modelos del tutorial, salidas del mismo script:
+
+<TrainingCurvesSim />
+
+Cómo leerlas:
+
+- **Train baja y validación también**: está aprendiendo. Más épocas pueden ayudar.
+- **Train sigue bajando y la pérdida de validación sube**: sobreajuste. La red memoriza train. Toca regularizar, aumentar datos o parar antes.
+- **Las dos se estancan altas**: el modelo no tiene capacidad suficiente o el learning rate es malo.
+- **La pérdida da saltos o sale `nan`**: learning rate demasiado alto.
+
+<Callout kind="real" title="En el trabajo">
+- **Registra cada experimento.** TensorBoard (`torch.utils.tensorboard`), MLflow o Weights & Biases guardan curvas, hiperparámetros y checkpoints. En el TFM llevaste un registro de experimentos: es eso mismo, automatizado.
+- **Guarda también el optimizador y la época** en el checkpoint (`{"model": ..., "optimizer": ..., "epoch": ...}`) para poder reanudar un entrenamiento largo si se corta.
+- **Fija semillas, pero no esperes resultados idénticos en GPU o MPS.** Algunas operaciones no son deterministas: dos ejecuciones pueden diferir en algunas décimas. Por eso las diferencias pequeñas entre modelos se confirman con varias semillas.
+</Callout>
+
+<Callout kind="idea" title="En Keras">
+Lo que aquí son diez líneas en `fit`, en Keras son *callbacks*: `ModelCheckpoint(save_best_only=True)`, `EarlyStopping(patience=..., restore_best_weights=True)` y `LearningRateScheduler`. La lógica es la misma.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/optimizadores-y-regularizacion", why: "Curvas de aprendizaje, early stopping y por qué baja el learning rate." },
+    { to: "supervisado/validacion", why: "Elegir con validación y reservar el test: el mismo principio que en scikit-learn." },
+    { to: "tfm/entrenamiento", why: "Checkpoints, early stopping y learning rates por fases en un entrenamiento real." },
+  ]}
+/>
+
+## Para llevar
+
+- `model.train()` / `model.eval()` cambian dropout y BatchNorm; `torch.no_grad()` solo ahorra memoria.
+- Guarda el checkpoint de la mejor época de validación y recárgalo al final.
+- Early stopping con paciencia: cuidado con cortar justo antes de que baje el learning rate.
+- OneCycleLR sube y luego baja el learning rate; avanza en cada lote.
+- Las curvas de train y validación dicen si falta capacidad, sobra capacidad o falla el learning rate.

@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 
-import { extras, subjects } from "@/content/catalog";
+import { subjects, tutorials } from "@/content/catalog";
 
 import { routes } from "./routes";
 
@@ -19,15 +19,16 @@ describe("routes", () => {
     }
   });
 
-  it("home lists the extras under their own heading", () => {
+  it("home lists the tutorials under their own heading", () => {
     renderAt("/");
-    expect(screen.getByRole("heading", { name: "Expandir conocimientos" })).toBeInTheDocument();
-    for (const extra of extras) {
-      expect(screen.getByRole("link", { name: new RegExp(extra.title) })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Tutoriales" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Expandir conocimientos" })).toBeNull();
+    for (const tutorial of tutorials) {
+      expect(screen.getByRole("link", { name: new RegExp(tutorial.title) })).toBeInTheDocument();
     }
   });
 
-  it("an extra is browsed like a subject", () => {
+  it("a tutorial is browsed like a subject", () => {
     renderAt("/fastapi");
     expect(screen.getByRole("heading", { level: 1, name: "FastAPI" })).toBeInTheDocument();
   });

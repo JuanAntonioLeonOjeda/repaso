@@ -61,7 +61,9 @@
   /* The TFM: the graphite blue of a radiograph */
   --subject-tfm: #3b5174;
   --subject-tfm-soft: #e3e9f3;
-  /* Extras (tutorials beyond the master) */
+  /* Tutorials */
+  --subject-vision: #9a4a1c;
+  --subject-vision-soft: #f8ebe2;
   --subject-fastapi: #3f7d20;
   --subject-fastapi-soft: #e6f2dd;
 
@@ -162,6 +164,8 @@
   --subject-razonamiento-soft: #0f2b33;
   --subject-tfm: #a9bcdc;
   --subject-tfm-soft: #1b2539;
+  --subject-vision: #f0a37a;
+  --subject-vision-soft: #33200f;
   --subject-fastapi: #9fd67a;
   --subject-fastapi-soft: #1c2a12;
 

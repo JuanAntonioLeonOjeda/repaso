@@ -1,0 +1,192 @@
+Un modelo que solo vive en un notebook no le sirve a nadie. El último paso es guardarlo, cargarlo en otro proceso y darle imágenes nuevas **exactamente igual** que en el entrenamiento. Parece trivial, y es donde más modelos fallan en producción sin dar ningún error: el modelo devuelve una clase, solo que no la correcta.
+
+## Guardar los pesos, no el objeto
+
+```python
+torch.save(model.state_dict(), "cnn_reg.pt")      # un dict {nombre_de_capa: tensor}
+```
+
+El `state_dict` es un diccionario con los tensores de cada capa: pesos, sesgos y también las estadísticas acumuladas de BatchNorm. Para cargarlo, creas el modelo con el mismo código y le pones los pesos:
+
+```python
+model = SmallCNN(dropout=0.3)
+model.load_state_dict(torch.load("cnn_reg.pt", map_location="cpu"))
+model.eval()
+```
+
+Nuestro checkpoint ocupa 1,25 MB: 308.394 parámetros en `float32` (4 bytes cada uno) más las estadísticas de BatchNorm.
+
+<Quiz
+  id="state-dict"
+  options={[
+    "Porque torch.save(model) no funciona con modelos que tienen BatchNorm",
+    "Porque guardar el objeto entero lo serializa con pickle atado a tu clase y a la ruta de tu módulo: si cambias el código o lo mueves, ya no carga; y cargar un pickle ajeno puede ejecutar código",
+    "Porque el state_dict ocupa la mitad",
+    "Porque el state_dict incluye el optimizador",
+  ]}
+  answer={1}
+  explanation="torch.save(model) usa pickle, que guarda una referencia a la clase (módulo y nombre), no su código. Si renombras el fichero o cambias la clase, el modelo deja de cargar. Además, deserializar un pickle puede ejecutar código arbitrario: por eso torch.load usa weights_only=True por defecto desde PyTorch 2.6 y solo acepta tensores y tipos simples. El state_dict son solo tensores con nombre: portable y seguro. El optimizador se guarda aparte si quieres reanudar el entrenamiento."
+  hints={["¿Qué guarda pickle de una clase: su código o una referencia a dónde está?"]}
+>
+¿Por qué se guarda `model.state_dict()` y no `torch.save(model)`?
+</Quiz>
+
+## El mismo preprocesado, siempre
+
+La red solo sabe ver imágenes de 32×32, en RGB, en CHW, en $[0, 1]$ y normalizadas con las estadísticas de CIFAR-10. En producción la imagen llega como un fichero JPEG de cualquier tamaño. La función que la prepara tiene que hacer **lo mismo** que `eval_tf`:
+
+```python
+from PIL import Image
+
+preprocess = transforms.Compose([
+    transforms.Resize((32, 32)),
+    transforms.ToTensor(),
+    transforms.Normalize(CIFAR_MEAN, CIFAR_STD),
+])
+
+@torch.no_grad()
+def predict(image: Image.Image) -> list[tuple[str, float]]:
+    x = preprocess(image.convert("RGB")).unsqueeze(0)   # (1, 3, 32, 32): un lote de una imagen
+    probs = torch.softmax(model(x), dim=1)[0]
+    top = probs.topk(3)
+    return [(CLASSES[i], round(p.item(), 3)) for p, i in zip(top.values, top.indices)]
+```
+
+Con la primera imagen del test, un gato, la CNN regularizada devuelve `[('gato', 0.954), ('perro', 0.046), ('rana', 0.0)]`: la confusión gato-perro de la lección anterior asoma incluso cuando acierta.
+
+Cuando el preprocesado de producción no coincide con el de entrenamiento se habla de *training-serving skew*. El caso clásico: alguien lee las imágenes con OpenCV, que las devuelve en **BGR**, no en RGB.
+
+<CodeExercise
+  id="preprocesar"
+  title="El bug de OpenCV"
+  starter={`
+    import numpy as np
+
+    MEAN = np.array([0.4914, 0.4822, 0.4465])
+    STD = np.array([0.2470, 0.2435, 0.2616])
+
+    def preprocess_train(img_rgb):
+        """Lo que hizo el entrenamiento: uint8 RGB (32, 32, 3) -> float (1, 3, 32, 32)."""
+        x = (img_rgb / 255 - MEAN) / STD
+        return x.transpose(2, 0, 1)[None]
+
+    def preprocess_serving(img_bgr):
+        """En producción la imagen llega de cv2.imread: uint8 BGR (32, 32, 3)."""
+        img_rgb = img_bgr[..., ___]           # BGR -> RGB
+        x = (img_rgb / 255 - ___) / ___
+        return x.transpose(2, 0, 1)[None]
+
+    rng = np.random.default_rng(0)
+    foto_rgb = rng.integers(0, 256, size=(32, 32, 3), dtype=np.uint8)
+    foto_bgr = foto_rgb[..., ::-1]            # lo que devolvería OpenCV
+    print(np.allclose(preprocess_train(foto_rgb), preprocess_serving(foto_bgr)))
+  `}
+  solution={`
+    import numpy as np
+
+    MEAN = np.array([0.4914, 0.4822, 0.4465])
+    STD = np.array([0.2470, 0.2435, 0.2616])
+
+    def preprocess_train(img_rgb):
+        """Lo que hizo el entrenamiento: uint8 RGB (32, 32, 3) -> float (1, 3, 32, 32)."""
+        x = (img_rgb / 255 - MEAN) / STD
+        return x.transpose(2, 0, 1)[None]
+
+    def preprocess_serving(img_bgr):
+        """En producción la imagen llega de cv2.imread: uint8 BGR (32, 32, 3)."""
+        img_rgb = img_bgr[..., ::-1]           # BGR -> RGB
+        x = (img_rgb / 255 - MEAN) / STD
+        return x.transpose(2, 0, 1)[None]
+
+    rng = np.random.default_rng(0)
+    foto_rgb = rng.integers(0, 256, size=(32, 32, 3), dtype=np.uint8)
+    foto_bgr = foto_rgb[..., ::-1]            # lo que devolvería OpenCV
+    print(np.allclose(preprocess_train(foto_rgb), preprocess_serving(foto_bgr)))
+  `}
+  hints={[
+    "Pasar de BGR a RGB es invertir el orden del último eje.",
+    "La normalización tiene que usar las mismas MEAN y STD que el entrenamiento, en el orden RGB.",
+    "img_bgr[..., ::-1] y (img_rgb / 255 - MEAN) / STD.",
+  ]}
+  check={`
+    rng = np.random.default_rng(1)
+    for _ in range(3):
+        rgb = rng.integers(0, 256, size=(32, 32, 3), dtype=np.uint8)
+        esperado = preprocess_train(rgb)
+        obtenido = preprocess_serving(np.ascontiguousarray(rgb[..., ::-1]))
+        assert obtenido.shape == (1, 3, 32, 32), f"La salida debería ser un lote (1, 3, 32, 32); sale {obtenido.shape}"
+        assert np.allclose(esperado, obtenido), "Producción y entrenamiento deberían dar exactamente el mismo tensor"
+    rojo = np.zeros((32, 32, 3), dtype=np.uint8); rojo[..., 2] = 255   # rojo puro en BGR
+    x = preprocess_serving(rojo)
+    assert x[0, 0].mean() > 1.5 and x[0, 2].mean() < -1, "Un rojo puro leído en BGR tiene que acabar en el canal 0 (R) tras la conversión"
+  `}
+>
+El servicio lee las imágenes con OpenCV (BGR). Arregla su preprocesado para que dé exactamente el mismo tensor que el del entrenamiento.
+</CodeExercise>
+
+Sin la conversión, la red recibe un cielo naranja y un fuego azul. Predice algo igualmente, con toda la confianza del mundo, y ningún test de "¿responde la API?" lo detecta. La defensa: **un único módulo de preprocesado** importado por el entrenamiento y por el servicio, y un test que pase la misma imagen por los dos caminos.
+
+## Inferencia
+
+<Quiz
+  id="modo-inferencia"
+  options={[
+    "Solo model.eval(): torch.no_grad() es opcional y no cambia nada",
+    "model.eval() para que dropout y BatchNorm se comporten como en validación, y torch.no_grad() (o torch.inference_mode()) para no construir el grafo de gradientes",
+    "Solo torch.no_grad(): ya desactiva el dropout",
+    "Ninguno: en producción el modelo ya está entrenado",
+  ]}
+  answer={1}
+  explanation="Son dos cosas distintas y hacen falta las dos. eval() cambia el comportamiento de las capas: sin él, dropout apaga neuronas y BatchNorm normaliza con las estadísticas de la petición, así que la misma imagen da resultados distintos según con qué otras vaya en el lote. no_grad / inference_mode evita guardar el grafo para backward: menos memoria y más velocidad. Sin él la predicción sale bien, pero el servicio gasta memoria de más."
+  hints={["Repasa la pregunta de la lección 4 sobre olvidar model.eval()."]}
+>
+¿Qué hace falta para que una predicción en producción sea correcta y eficiente?
+</Quiz>
+
+## Detrás de una API
+
+Con `predict` ya tienes el núcleo de un servicio. El tutorial de FastAPI enseña a envolverlo en una API: cargar el modelo **una vez** al arrancar (lifespan), validar la entrada, predecir en lote y versionar el modelo.
+
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, UploadFile
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    model.load_state_dict(torch.load("cnn_reg.pt", map_location="cpu"))
+    model.eval()
+    yield
+
+app = FastAPI(lifespan=lifespan)
+
+@app.post("/predict")
+def classify(file: UploadFile):        # def, no async def: la inferencia bloquea la CPU (UploadFile necesita python-multipart)
+    image = Image.open(file.file)
+    return {"top3": predict(image)}
+```
+
+<Callout kind="real" title="En el trabajo">
+- **Exporta para servir sin Python o más rápido.** `torch.onnx.export` genera un modelo ONNX que corre en ONNX Runtime o TensorRT; `torch.export` es la puerta de entrada a ExecuTorch (móviles) y a la compilación anticipada. En los dos casos no hace falta tu código de entrenamiento. Comprueba siempre que el modelo exportado da las mismas salidas que el original con un lote de prueba.
+- **Guarda con el modelo todo lo necesario para usarlo**: la versión del código, las clases en orden, el preprocesado (tamaño, media, std) y las métricas de validación. Un `.pt` suelto, sin saber qué clase es el índice 3, no vale para nada.
+- **Monitoriza la entrada, no solo la salida.** Si la distribución de las imágenes cambia (otra cámara, otra luz), el accuracy cae sin aviso. Vigilar la media de los píxeles o la confianza media de las predicciones detecta muchos problemas antes de que los vea un usuario.
+</Callout>
+
+<Callout kind="idea" title="En Keras">
+`model.save("modelo.keras")` guarda arquitectura y pesos juntos en un formato propio (no pickle), y `keras.models.load_model` lo recupera sin el código de la clase si usas capas estándar. PyTorch separa las dos cosas: el código define la arquitectura y el fichero solo trae los pesos.
+</Callout>
+
+<Temario
+  links={[
+    { to: "fastapi/servir-un-modelo", why: "Cargar el modelo una vez, validar la entrada, predecir en lote y versionar." },
+    { to: "fastapi/async-de-verdad", why: "Por qué un endpoint de inferencia va con def y no con async def." },
+    { to: "tfm/despliegue", why: "La API y el contenedor que sirven LumosNet." },
+    { to: "python/imagenes-con-opencv", why: "OpenCV lee en BGR: el origen del bug más típico al servir modelos de visión." },
+  ]}
+/>
+
+## Para llevar
+
+- Guarda `state_dict()`; carga con el mismo código, `load_state_dict` y `eval()`.
+- El preprocesado de producción tiene que ser idéntico al de entrenamiento: mismo tamaño, mismo orden de canales, mismas estadísticas. Un único módulo para los dos.
+- En inferencia, `model.eval()` y `torch.no_grad()`, las dos cosas.
+- Para servirlo: el tutorial de FastAPI. Para servirlo rápido o fuera de Python: ONNX (`torch.onnx.export`) o ExecuTorch (`torch.export`).
