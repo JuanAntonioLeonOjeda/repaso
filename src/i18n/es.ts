@@ -8,6 +8,7 @@ export const es = {
   },
   shell: {
     home: "Asignaturas",
+    tutorials: "Tutoriales",
     themeToLight: "Cambiar a tema claro",
     themeToDark: "Cambiar a tema oscuro",
     footer:
