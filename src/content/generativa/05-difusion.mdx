@@ -1,0 +1,175 @@
+Las GAN generan imágenes nítidas, pero entrenan mal. Los VAE entrenan bien, pero generan imágenes borrosas. Los **modelos de difusión** consiguen las dos cosas con una idea que parece un rodeo: coger imágenes reales, **destruirlas añadiendo ruido poco a poco** y entrenar una red para **deshacer un paso** de esa destrucción. Para generar, se parte de ruido puro y se aplica la red mil veces. Es lo que hay dentro de Stable Diffusion, DALL·E 2 y 3 y casi todos los generadores de imágenes actuales. No está en el temario: esta lección y la siguiente lo cuentan desde cero.
+
+## El proceso hacia delante: destruir
+
+En cada paso $t$ se mezcla la imagen con un poco de ruido gaussiano:
+
+$$
+x_t = \sqrt{1 - \beta_t}\; x_{t-1} + \sqrt{\beta_t}\; \varepsilon, \qquad \varepsilon \sim \mathcal{N}(0, I)
+$$
+
+Con $T = 1000$ pasos y $\beta_t$ creciendo de 0,0001 a 0,02 (el calendario lineal del artículo original de DDPM), al final no queda nada de la imagen: $x_{1000}$ es ruido gaussiano puro. Y hay un atajo clave. Como sumar gaussianas da otra gaussiana, se puede saltar de $x_0$ a cualquier $x_t$ **de una vez**:
+
+$$
+x_t = \sqrt{\bar\alpha_t}\; x_0 + \sqrt{1 - \bar\alpha_t}\; \varepsilon, \qquad \bar\alpha_t = \prod_{s=1}^{t} (1 - \beta_s)
+$$
+
+$\bar\alpha_t$ es el peso al cuadrado de la imagen en el paso $t$: con datos de varianza 1, la parte de la varianza que sigue siendo señal. Muévelo y mira:
+
+<DiffusionNoiseSim />
+
+Y con dígitos reales de MNIST (filas: seis dígitos; columnas: pasos 0, 50, 100, 250, 500, 750 y 999):
+
+![Seis dígitos de MNIST con ruido creciente: pasos 0, 50, 100, 250, 500, 750 y 999](/tutorials/generativa/ruido.png)
+
+<CodeExercise
+  id="salto-directo"
+  title="El salto directo a x_t"
+  starter={`
+    import numpy as np
+
+    T = 1000
+    betas = np.linspace(1e-4, 0.02, T)
+    alpha_bar = np.cumprod(1 - ___)                # ᾱ_t: producto acumulado de (1 − β)
+
+    def q_sample(x0, t, eps):
+        """x_t de un salto: √ᾱ_t · x0 + √(1 − ᾱ_t) · ε."""
+        ab = alpha_bar[t]
+        return np.sqrt(ab) * x0 + np.sqrt(___) * eps
+
+    # Comprobación: 200.000 píxeles con valor 1, ruidos paso a paso hasta t = 300...
+    rng = np.random.default_rng(0)
+    x = np.ones(200_000)
+    for t in range(301):
+        x = np.sqrt(1 - betas[t]) * x + np.sqrt(betas[t]) * rng.standard_normal(x.shape)
+    # ...y de un solo salto
+    salto = q_sample(np.ones(200_000), 300, rng.standard_normal(200_000))
+    print("paso a paso: media", round(x.mean(), 3), "varianza", round(x.var(), 3))
+    print("de un salto: media", round(salto.mean(), 3), "varianza", round(salto.var(), 3))
+  `}
+  solution={`
+    import numpy as np
+
+    T = 1000
+    betas = np.linspace(1e-4, 0.02, T)
+    alpha_bar = np.cumprod(1 - betas)              # ᾱ_t: producto acumulado de (1 − β)
+
+    def q_sample(x0, t, eps):
+        """x_t de un salto: √ᾱ_t · x0 + √(1 − ᾱ_t) · ε."""
+        ab = alpha_bar[t]
+        return np.sqrt(ab) * x0 + np.sqrt(1 - ab) * eps
+
+    # Comprobación: 200.000 píxeles con valor 1, ruidos paso a paso hasta t = 300...
+    rng = np.random.default_rng(0)
+    x = np.ones(200_000)
+    for t in range(301):
+        x = np.sqrt(1 - betas[t]) * x + np.sqrt(betas[t]) * rng.standard_normal(x.shape)
+    # ...y de un solo salto
+    salto = q_sample(np.ones(200_000), 300, rng.standard_normal(200_000))
+    print("paso a paso: media", round(x.mean(), 3), "varianza", round(x.var(), 3))
+    print("de un salto: media", round(salto.mean(), 3), "varianza", round(salto.var(), 3))
+  `}
+  hints={[
+    "ᾱ_t multiplica los factores (1 − β_s) de todos los pasos hasta t: np.cumprod.",
+    "El peso del ruido es la raíz de lo que no es señal: 1 − ᾱ_t.",
+    "np.cumprod(1 - betas) y np.sqrt(1 - ab).",
+  ]}
+  check={`
+    assert abs(alpha_bar[0] - 0.9999) < 1e-9 and abs(alpha_bar[499] - 0.0790) < 0.002, "ᾱ empieza en 0,9999 y en el paso 500 (índice 499) ronda 0,079"
+    assert abs(salto.mean() - x.mean()) < 0.01, "El salto directo tiene que dar la misma media que ir paso a paso"
+    assert abs(salto.var() - x.var()) < 0.01, "Y la misma varianza"
+    assert abs(salto.mean() - np.sqrt(alpha_bar[300])) < 0.01, "La media de x_t es √ᾱ_t veces el píxel original"
+    assert abs(q_sample(np.array([2.0]), 0, np.array([0.0]))[0] - 2 * np.sqrt(0.9999)) < 1e-12, "Sin ruido (ε = 0), x_t es √ᾱ_t · x0"
+  `}
+>
+Calcula $\bar\alpha_t$ y el salto directo, y comprueba con 200.000 píxeles que da lo mismo que añadir el ruido paso a paso.
+</CodeExercise>
+
+<Predict
+  id="alpha-bar"
+  answer={["0.078", "0,078", "0.0778", "0,0778", "0.079", "0,079"]}
+  tolerance={0.005}
+  explanation="Con β pequeños, ln(1 − β) ≈ −β, así que ᾱ_t ≈ e^(−Σβ). Los β de los primeros 500 pasos suman unos 2,535, y e^(−2,535) ≈ 0,079. El valor exacto del producto de esos 500 factores es 0,0786: el que muestra la simulación en t = 500. A mitad del recorrido, la imagen ya conserva menos del 8% de su varianza: el calendario lineal destruye casi todo en la primera mitad, como se ve en la simulación."
+  hints={[
+    "Para β pequeño, 1 − β ≈ e^(−β): el producto se convierte en la exponencial de una suma.",
+    "Los β crecen en línea recta: su suma hasta el paso 500 es (número de pasos) × (β medio).",
+    "500 pasos con β medio ≈ (0,0001 + 0,01) / 2 → Σβ ≈ 2,53; ᾱ ≈ e^(−2,53).",
+  ]}
+>
+Con el calendario lineal de DDPM (β de 0,0001 a 0,02 en 1.000 pasos), ¿cuánto vale $\bar\alpha_{500}$ aproximadamente?
+</Predict>
+
+## El proceso hacia atrás: aprender a quitar ruido
+
+Deshacer un paso exige saber qué ruido se añadió. Eso es lo que aprende la red: dado $x_t$ y el paso $t$, **predecir el ruido $\varepsilon$** que lo ensució. El entrenamiento es sorprendentemente simple:
+
+```python
+for x0, y in loader:                                 # imágenes en [-1, 1]
+    t = torch.randint(0, T, (len(x0),))              # un paso al azar para cada imagen
+    noise = torch.randn_like(x0)
+    xt = q_sample(x0, t, noise, alpha_bar)           # el salto directo
+    loss = F.mse_loss(model(xt, t, y), noise)        # ¿qué ruido le añadí?
+    opt.zero_grad(); loss.backward(); opt.step()
+```
+
+Una sola red sirve para los 1.000 pasos: recibe $t$ como entrada, codificado con senos y cosenos (como las posiciones en un transformer), y lo suma a sus mapas de características. La arquitectura es una **U-Net**: baja de 28×28 a 14×14 y 7×7 para ver el dígito entero, y vuelve a subir a 28×28 con conexiones que copian los detalles finos de la bajada. La de este tutorial tiene 1.013.889 parámetros. Se entrenó 20 épocas con AdamW (`lr=2e-4`), un minuto por época en MPS: la pérdida baja de 0,086 en la primera época a 0,023 en la última.
+
+<Quiz
+  id="predecir-ruido"
+  options={[
+    "Porque predecir la imagen limpia es imposible",
+    "Porque el ruido ocupa menos memoria que la imagen",
+    "Porque el ruido tiene siempre la misma escala (una gaussiana estándar) en todos los pasos, así que la red resuelve un problema parecido en cualquier t; y conocido ε, la imagen limpia se despeja de la fórmula del salto directo",
+    "Porque así no hace falta la U-Net",
+  ]}
+  answer={2}
+  explanation="Predecir x0 o predecir ε es equivalente en teoría: x0 = (x_t − √(1 − ᾱ_t) · ε) / √ᾱ_t. En la práctica, el artículo de DDPM encontró que predecir ε con su pérdida simplificada daba mejores muestras. Una explicación intuitiva: el objetivo tiene siempre media 0 y varianza 1 sea cual sea t, mientras que la escala del error en x0 cambia mucho entre pasos casi limpios y casi puro ruido. Hay variantes (predecir v, que mezcla las dos) que usan muchos modelos actuales."
+  hints={["Mira la fórmula del salto directo: si conoces x_t y ε, ¿puedes despejar x0?"]}
+>
+¿Por qué la red predice el **ruido** y no directamente la imagen limpia?
+</Quiz>
+
+## Generar: mil pasos desde el ruido
+
+Para generar se parte de ruido puro y se recorre el camino al revés, del paso 999 al 0. En cada paso, la red estima el ruido y se quita una parte, y se añade un poco de ruido nuevo (salvo en el último paso), porque cada paso inverso es una gaussiana: se muestrea de ella, no se toma su media. (`t` va como tensor, un valor por imagen.)
+
+```python
+x = torch.randn(n, 1, 28, 28)
+for t in range(T - 1, -1, -1):
+    eps = model(x, t, y)
+    mean = (x - betas[t] / (1 - alpha_bar[t]).sqrt() * eps) / alphas[t].sqrt()
+    x = mean + (betas[t].sqrt() * torch.randn_like(x) if t > 0 else 0)
+```
+
+Así va apareciendo un dígito (pasos 999, 750, 500, 250, 100 y 0):
+
+![Diez dígitos apareciendo desde el ruido: pasos 999, 750, 500, 250, 100 y 0 del proceso inverso](/tutorials/generativa/denoising.png)
+
+En los pasos 999 y 750 solo hay ruido; hacia el paso 500 empieza a intuirse el contorno, en el 250 ya se lee el dígito y de ahí al 0 solo se limpia. Es lo que predice la simulación: con el calendario lineal, ᾱ todavía vale 0,52 en el paso 250, pero solo 0,08 en el 500. Esta figura pide cada dígito con su etiqueta y guía $w = 2$ (lo verás en la lección siguiente), así que cada paso hace dos pasadas de la red: generar los diez dígitos tarda 11 segundos en MPS, con 2.000 pasadas.
+
+Sin pedir ningún dígito en concreto (veremos cómo pedirlo en la siguiente lección):
+
+![64 dígitos generados por el modelo de difusión sin indicarle qué dígito dibujar](/tutorials/generativa/difusion-sin-etiqueta.png)
+
+Variados, con trazos y grosores distintos, y más nítidos que los del VAE. Pero no todos son dígitos: algunos son trazos a medio camino entre dos números, o formas que no son ninguno. Sin una etiqueta que lo oriente, el modelo puede acabar en zonas intermedias. Cuántos de cada tipo salen lo medirá la lección 7.
+
+<Callout kind="real" title="En el trabajo">
+- **Nadie muestrea con 1.000 pasos.** Muestreadores como DDIM o DPM-Solver llegan a una calidad parecida con 20–50 pasos, y los modelos destilados (SD-Turbo, lección 8) con 1–4. La red es la misma; cambia cómo se recorre el camino.
+- **El calendario importa.** El lineal destruye casi toda la imagen en la primera mitad (lo has visto en la simulación); el coseno (Nichol y Dhariwal) reparte mejor la destrucción. Stable Diffusion usa otro calendario casi lineal (`scaled_linear`), y los modelos más recientes van hacia variantes como *flow matching*.
+- **`diffusers`** de Hugging Face trae todo esto hecho: `UNet2DModel`, `DDPMScheduler`, `DDIMScheduler` y pipelines completos. Escribirlo una vez a mano, como aquí, hace que su API se entienda sola.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/redes-convolucionales", why: "Convoluciones con stride y cómo cambia el tamaño de los mapas." },
+    { to: "deep-learning/vision-avanzada", why: "La U-Net de segmentación, la misma arquitectura que aquí quita ruido." },
+    { to: "generativa/vae", why: "Variables latentes gaussianas y el truco de mezclar media y ruido." },
+  ]}
+/>
+
+## Para llevar
+
+- Hacia delante: añadir ruido gaussiano en 1.000 pasos; el salto directo $x_t = \sqrt{\bar\alpha_t} x_0 + \sqrt{1-\bar\alpha_t}\,\varepsilon$ evita recorrerlos.
+- La red (una U-Net que recibe $t$) aprende a predecir el ruido con un MSE.
+- Hacia atrás: desde ruido puro, quitar el ruido estimado paso a paso.
+- En nuestra ejecución: 20 minutos de entrenamiento, 11 segundos para generar 10 dígitos con 1.000 pasos y guía (2.000 pasadas de la red); nítidos, pero sin etiqueta salen también formas ambiguas.

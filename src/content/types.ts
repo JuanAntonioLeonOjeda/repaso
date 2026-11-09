@@ -12,6 +12,7 @@ export type SubjectSlug =
   | "tfm"
   | "vision"
   | "texto"
+  | "generativa"
   | "fastapi";
 
 export interface Lesson {

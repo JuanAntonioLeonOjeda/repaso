@@ -1,0 +1,172 @@
+El primer paso hacia un generador no genera nada: comprime. Un **autoencoder** es una red que aprende a reconstruir su entrada pasando por un cuello de botella. Si consigue escribir un dígito de 784 píxeles con solo **dos números** y recuperarlo después, esos dos números tienen que capturar lo esencial del dígito. A ese espacio pequeño se le llama **espacio latente**, y es la pieza que reutilizan el VAE, la difusión latente y Stable Diffusion.
+
+## Codificador, cuello de botella y decodificador
+
+```python
+from torch import nn
+import torch.nn.functional as F
+
+LATENT = 2
+
+class Encoder(nn.Module):
+    def __init__(self, out):
+        super().__init__()
+        self.net = nn.Sequential(nn.Flatten(), nn.Linear(784, 512), nn.ReLU(),
+                                 nn.Linear(512, 256), nn.ReLU(), nn.Linear(256, out))
+    def forward(self, x):
+        return self.net(x)
+
+class Decoder(nn.Module):
+    """Vector latente -> logits de 28×28 (la sigmoide da la imagen)."""
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(LATENT, 256), nn.ReLU(), nn.Linear(256, 512), nn.ReLU(),
+                                 nn.Linear(512, 784), nn.Unflatten(1, (1, 28, 28)))
+    def forward(self, z):
+        return self.net(z)
+
+class Autoencoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.encoder, self.decoder = Encoder(LATENT), Decoder()
+    def forward(self, x):
+        z = self.encoder(x)            # (B, 2): el dígito resumido en dos números
+        return self.decoder(z), z
+```
+
+Se entrena para que la salida se parezca a la entrada, píxel a píxel. Como los píxeles de MNIST están en $[0, 1]$, la pérdida es la **entropía cruzada binaria** de cada píxel, sumada sobre la imagen: cada píxel es "cuánta tinta hay". No hacen falta etiquetas: es aprendizaje no supervisado.
+
+```python
+logits, z = model(x)
+loss = F.binary_cross_entropy_with_logits(logits, x, reduction="sum") / len(x)
+```
+
+<Predict
+  id="parametros-ae"
+  answer={["533762", "533.762"]}
+  explanation="784 · 512 + 512 = 401.920; 512 · 256 + 256 = 131.328; 256 · 2 + 2 = 514. Total del codificador: 533.762. El decodificador es casi su espejo (534.544) y el autoencoder entero tiene 1.068.306. Casi todo el peso está en la primera y la última capa, las que tocan los 784 píxeles."
+  hints={[
+    "Tres capas lineales: 784 → 512, 512 → 256 y 256 → 2.",
+    "Cada una tiene entradas · salidas pesos más un sesgo por salida.",
+  ]}
+>
+¿Cuántos parámetros tiene el **codificador**?
+</Predict>
+
+## Lo que aprende
+
+20 épocas con Adam (`lr=1e-3`), unos 3 segundos cada una en MPS. La pérdida de reconstrucción baja de 174 a 132,5 en train y queda en 133,1 en test: con dos números por imagen, el autoencoder recupera la forma general del dígito, aunque borrosa.
+
+Lo interesante es el espacio latente. Codificando los 10.000 dígitos de test y pintando cada uno en su punto $(z_1, z_2)$, coloreado por la etiqueta que el modelo **nunca vio**:
+
+![Espacio latente del autoencoder y del VAE: cada punto es un dígito de test en sus dos coordenadas latentes, coloreado por su etiqueta](/tutorials/generativa/latentes.png)
+
+Fíjate en el panel izquierdo. Los dígitos se agrupan por clase sin haber visto etiquetas: los 0 en un brazo, los 1 en otro, los 6 en un tercero. Pero el espacio es **irregular**: brazos largos que llegan a ±40, una zona central donde se amontonan casi todos los demás dígitos, y huecos enormes entre los brazos. Las coordenadas tienen una escala arbitraria (desviación típica de 6 a 8) y nada obliga a que estén centradas.
+
+<CodeExercise
+  id="pca-como-autoencoder"
+  title="PCA es un autoencoder lineal"
+  starter={`
+    import numpy as np
+    from sklearn.datasets import load_digits
+
+    X = load_digits().data                      # 1.797 dígitos de 8×8 = 64 píxeles
+    media = X.mean(axis=0)
+    Xc = X - media
+    _, _, Vt = np.linalg.svd(Xc, full_matrices=False)   # filas de Vt: componentes principales
+
+    def codificar(X, k):
+        W = Vt[:k]                              # (k, 64): el "codificador"
+        return (X - media) @ W.___              # (n, k): el código latente
+
+    def decodificar(Z, k):
+        W = Vt[:k]
+        return Z @ ___ + media                  # (n, 64): la reconstrucción
+
+    for k in (2, 10, 30):
+        R = decodificar(codificar(X, k), k)
+        print(k, "componentes -> error cuadrático medio", round(((X - R) ** 2).mean(), 3))
+  `}
+  solution={`
+    import numpy as np
+    from sklearn.datasets import load_digits
+
+    X = load_digits().data                      # 1.797 dígitos de 8×8 = 64 píxeles
+    media = X.mean(axis=0)
+    Xc = X - media
+    _, _, Vt = np.linalg.svd(Xc, full_matrices=False)   # filas de Vt: componentes principales
+
+    def codificar(X, k):
+        W = Vt[:k]                              # (k, 64): el "codificador"
+        return (X - media) @ W.T                # (n, k): el código latente
+
+    def decodificar(Z, k):
+        W = Vt[:k]
+        return Z @ W + media                    # (n, 64): la reconstrucción
+
+    for k in (2, 10, 30):
+        R = decodificar(codificar(X, k), k)
+        print(k, "componentes -> error cuadrático medio", round(((X - R) ** 2).mean(), 3))
+  `}
+  hints={[
+    "Codificar es proyectar sobre las k componentes: multiplicar por la traspuesta de W.",
+    "Decodificar es el camino inverso: multiplicar el código por W y sumar la media.",
+    "(X - media) @ W.T y Z @ W + media.",
+  ]}
+  check={`
+    from sklearn.decomposition import PCA
+    for k in (2, 10, 30):
+        p = PCA(k).fit(X)
+        assert np.allclose(decodificar(codificar(X, k), k), p.inverse_transform(p.transform(X))), f"Con k = {k}, la reconstrucción debería coincidir con PCA.inverse_transform de scikit-learn"
+    assert codificar(X, 2).shape == (1797, 2), "El código de cada dígito tiene k números"
+    e2 = ((X - decodificar(codificar(X, 2), 2)) ** 2).mean()
+    e30 = ((X - decodificar(codificar(X, 30), 30)) ** 2).mean()
+    assert e30 < e2 / 10, "Con más componentes, el error de reconstrucción tiene que bajar mucho"
+  `}
+>
+Escribe el codificador y el decodificador de PCA con NumPy. Un autoencoder sin activaciones y con pérdida cuadrática aprende el mismo subespacio que PCA; las capas no lineales le permiten curvarlo.
+</CodeExercise>
+
+## Por qué no sabe generar
+
+Para generar habría que elegir un punto del espacio latente y decodificarlo. Pero ¿qué punto? El autoencoder no dice nada de cómo se reparten los códigos. Si sorteas puntos de una gaussiana estándar $\mathcal{N}(0, I)$, caen en la zona central, donde el decodificador sí ha visto dígitos:
+
+![32 dígitos decodificados por el autoencoder a partir de puntos sorteados de una gaussiana estándar](/tutorials/generativa/muestras-ae.png)
+
+Salen dígitos, reconocibles en su mayoría, pero **no todos los dígitos**. El clasificador de la lección 7, aplicado a 2.000 muestras como estas, encuentra solo **2 unos y 91 ceros**, frente a más de 300 doses y cincos (con todos los dígitos igual de representados saldrían unos 200 de cada). Los brazos de los 0 y los 1 están a decenas de unidades del origen, y una gaussiana estándar casi nunca llega tan lejos. Y si sorteas en todo el rango, caes en los huecos entre brazos, donde el decodificador nunca vio nada y produce manchas.
+
+<Quiz
+  id="huecos"
+  options={[
+    "Que el decodificador está mal entrenado",
+    "Que dos dimensiones son muy pocas para generar",
+    "Que el autoencoder necesita etiquetas para generar",
+    "Que nada en el entrenamiento ordena el espacio latente: el codificador pone cada dígito donde le conviene para reconstruir, así que no hay una distribución conocida de la que sacar puntos que caigan siempre en zonas con sentido",
+  ]}
+  answer={3}
+  explanation="El autoencoder solo optimiza la reconstrucción. A ninguna parte de la pérdida le importa dónde acaban los códigos, si hay huecos ni qué escala tienen. Para generar, necesitas saber de qué distribución sacar los puntos y que todo lo que salga de ella se decodifique en algo con sentido. Y no se arregla solo con añadir dimensiones latentes. El VAE de la siguiente lección añade a la pérdida justo eso: que los códigos se parezcan a una gaussiana estándar."
+  hints={["¿Qué término de la pérdida se ocupa de cómo se reparten los códigos?"]}
+>
+¿Qué te dice la figura del espacio latente sobre usar un autoencoder para generar?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Los autoencoders siguen muy vivos, pero no para generar.** Se usan para comprimir (el VAE de Stable Diffusion, lección 8), para detectar anomalías (lo que se reconstruye mal es raro) y para eliminar ruido (*denoising autoencoders*).
+- **Detección de anomalías**: se entrena solo con piezas buenas; una pieza con un defecto se reconstruye peor, y el error de reconstrucción sirve de alarma. Es uno de los usos industriales más habituales.
+- **Más dimensiones latentes, mejor reconstrucción.** Aquí se usan 2 para poder dibujarlas; en la práctica, decenas o cientos.
+</Callout>
+
+<Temario
+  links={[
+    { to: "no-supervisado/deep-clustering", why: "Autoencoders, espacio latente y agrupar sobre los códigos." },
+    { to: "no-supervisado/pca-e-ica", why: "PCA como proyección a pocas dimensiones." },
+    { to: "deep-learning/entrenar-una-red", why: "Entropía cruzada binaria, la pérdida de reconstrucción píxel a píxel." },
+  ]}
+/>
+
+## Para llevar
+
+- Autoencoder: codificador → cuello de botella → decodificador, entrenado a reconstruir, sin etiquetas.
+- Su espacio latente agrupa dígitos parecidos, pero es irregular y está lleno de huecos.
+- Por eso no sabe generar: no hay una distribución conocida de la que sacar códigos.
+- PCA es el caso lineal; las capas no lineales permiten espacios latentes curvos.

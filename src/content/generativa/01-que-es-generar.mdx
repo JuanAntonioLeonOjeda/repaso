@@ -1,0 +1,141 @@
+Los dos tutoriales anteriores construían modelos que **miran** una imagen o un texto y deciden qué es. Este va al revés: modelos que **crean** imágenes nuevas que no estaban en los datos, pero que podrían haber estado. Irás por el mismo camino que siguió el campo: autoencoders, VAE, GAN, difusión y difusión guiada, todo con MNIST para que entrene en un portátil. Y terminarás generando fotos a partir de texto con Stable Diffusion, que es la misma idea con más datos y más cálculo.
+
+<Callout kind="note" title="Cómo leer este tutorial">
+Como los anteriores, el código de PyTorch y de `diffusers` sale de `scripts/tutorials/generativa.py`, que se ejecutó de principio a fin en un Mac M4 con MPS (semilla 42 en el entrenamiento; las muestras de cada figura usan su propia semilla fija). Las imágenes de las lecciones las generaron esos modelos en esa ejecución. Los ejercicios del navegador reproducen cada idea con NumPy.
+</Callout>
+
+## Generar es muestrear
+
+Un clasificador aprende $p(y \mid x)$: dada una imagen, la probabilidad de cada etiqueta. Un modelo generativo aprende algo mucho más ambicioso, $p(x)$: **cómo se distribuyen las propias imágenes**. Si lo consigue, generar es tan "sencillo" como sacar una muestra de esa distribución.
+
+Una imagen de MNIST tiene 28 × 28 = 784 píxeles. Aunque cada píxel fuese solo blanco o negro habría $2^{784}$ imágenes posibles, un número de 237 cifras. Casi todas son ruido; las que parecen dígitos forman una región minúscula y con mucha estructura de ese espacio. Aprender $p(x)$ es aprender dónde está esa región.
+
+El modelo más ingenuo trata cada píxel por separado: aprende la media y la desviación típica de cada uno y genera sorteando cada píxel por su cuenta.
+
+<CodeExercise
+  id="pixeles-independientes"
+  title="Un generador que ignora a los vecinos"
+  starter={`
+    import numpy as np
+    from sklearn.datasets import load_digits
+
+    X = load_digits().data          # 1.797 dígitos de 8×8, valores de 0 a 16
+    mu = X.mean(axis=___)           # una media por píxel
+    sd = X.std(axis=___)            # una desviación típica por píxel
+
+    rng = np.random.default_rng(0)
+    muestras = rng.normal(mu, sd, size=(1000, 64))   # cada píxel, sorteado por separado
+
+    def correlacion(A, i, j):
+        return np.corrcoef(A[:, i], A[:, j])[0, 1]
+
+    # Píxeles 20 y 28: uno encima del otro, en el centro de la imagen
+    print("datos:   ", round(correlacion(X, 20, 28), 3))
+    print("muestras:", round(correlacion(muestras, 20, 28), 3))
+    print(np.clip(muestras[0], 0, 16).reshape(8, 8).round().astype(int))
+  `}
+  solution={`
+    import numpy as np
+    from sklearn.datasets import load_digits
+
+    X = load_digits().data          # 1.797 dígitos de 8×8, valores de 0 a 16
+    mu = X.mean(axis=0)             # una media por píxel
+    sd = X.std(axis=0)              # una desviación típica por píxel
+
+    rng = np.random.default_rng(0)
+    muestras = rng.normal(mu, sd, size=(1000, 64))   # cada píxel, sorteado por separado
+
+    def correlacion(A, i, j):
+        return np.corrcoef(A[:, i], A[:, j])[0, 1]
+
+    # Píxeles 20 y 28: uno encima del otro, en el centro de la imagen
+    print("datos:   ", round(correlacion(X, 20, 28), 3))
+    print("muestras:", round(correlacion(muestras, 20, 28), 3))
+    print(np.clip(muestras[0], 0, 16).reshape(8, 8).round().astype(int))
+  `}
+  hints={[
+    "Cada fila de X es una imagen y cada columna un píxel: la media de cada píxel se hace a lo largo de las filas.",
+    "axis=0 recorre las imágenes.",
+  ]}
+  check={`
+    assert mu.shape == (64,) and sd.shape == (64,), f"Tiene que haber una media y una desviación por píxel (64); sale {mu.shape}"
+    assert np.allclose(muestras.mean(axis=0), mu, atol=1.0), "Las muestras deberían tener, píxel a píxel, la misma media que los datos"
+    assert correlacion(X, 20, 28) > 0.5, "En los datos, dos píxeles vecinos están muy correlacionados"
+    assert abs(correlacion(muestras, 20, 28)) < 0.1, "En las muestras, al sortear cada píxel por separado, la correlación desaparece"
+  `}
+>
+Ajusta una gaussiana a cada píxel de los dígitos de 8×8 de scikit-learn y genera muestras. Después compara la correlación entre dos píxeles vecinos en los datos y en tus muestras.
+</CodeExercise>
+
+<Quiz
+  id="por-que-ruido"
+  options={[
+    "Porque las gaussianas no sirven para imágenes",
+    "Porque 1.797 imágenes son muy pocas",
+    "Porque cada píxel acierta su valor medio, pero nadie le dice a sus vecinos qué ha salido: un trazo es una decisión conjunta de muchos píxeles, y sorteándolos por separado nunca se forma",
+    "Porque habría que redondear los valores",
+  ]}
+  answer={2}
+  explanation="En los datos, los píxeles 20 y 28 tienen una correlación de 0,63: si uno es tinta, el de debajo casi seguro también. En las muestras es prácticamente 0. Las estadísticas de cada píxel están bien, pero la imagen es una mancha. Todo lo que verás en este tutorial (espacio latente, convoluciones, difusión) son formas de modelar esas dependencias entre píxeles sin escribirlas a mano."
+  hints={["Compara las dos correlaciones que imprime el ejercicio."]}
+>
+Las muestras del ejercicio parecen ruido, aunque cada píxel tiene la media y la dispersión correctas. ¿Por qué?
+</Quiz>
+
+## Las cuatro familias del tutorial
+
+| Familia | Idea | Lección |
+| ------- | ---- | ------- |
+| Autoencoder | Comprimir y reconstruir; no genera bien | 2 |
+| VAE | Comprimir a una distribución ordenada de la que se puede muestrear | 3 |
+| GAN | Un generador contra un discriminador | 4 |
+| Difusión | Aprender a quitar ruido, paso a paso | 5–6 y 8 |
+
+Todas se entrenan con MNIST: 60.000 dígitos de 28×28 para entrenar y 10.000 para evaluar. Es pequeño y en blanco y negro, pero tiene lo esencial: si un modelo genera un 7 creíble, ha capturado trazos, grosores y proporciones.
+
+## Evaluar es lo difícil
+
+Un clasificador se evalúa con una cuenta: aciertos entre total. Un generador, no: no hay una respuesta correcta para «dibuja un dígito». Hay que preguntarse varias cosas a la vez:
+
+- **Calidad**: ¿parecen dígitos de verdad?
+- **Variedad**: ¿salen todos los dígitos, con estilos distintos, o siempre el mismo?
+- **Novedad**: ¿son nuevos, o copias de los de entrenamiento?
+- **Control**: si pides un 7, ¿sale un 7?
+
+La lección 7 mide las cuatro. Hasta entonces, mirar las imágenes es una herramienta legítima, pero engañosa: veinte muestras bonitas no dicen nada de la variedad.
+
+<Quiz
+  id="discriminativo"
+  options={[
+    "Un modelo que, a partir de mil imágenes de piezas sin defectos, crea imágenes nuevas para entrenar un detector de defectos",
+    "Un modelo que detecta si una transacción es fraudulenta",
+    "Un modelo que asigna una categoría a cada producto de un catálogo",
+    "Un modelo que predice las estrellas de una reseña",
+  ]}
+  answer={0}
+  explanation="Los demás reciben una entrada y predicen una etiqueta: son discriminativos, p(y | x). El segundo aprende cómo son las imágenes de las piezas, p(x), para producir más. Es uno de los usos más prácticos de los modelos generativos en la industria: aumentar datos escasos. Ojo: un modelo que solo ha visto piezas buenas no inventará defectos; para eso necesita ejemplos de defectos o una forma de condicionar la generación (lección 6)."
+  hints={["¿Cuál de ellos produce datos nuevos en vez de una etiqueta?"]}
+>
+¿Cuál de estos es un problema **generativo**?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Casi nadie entrena un generador de imágenes desde cero.** Se parte de un modelo preentrenado (Stable Diffusion, FLUX…) y se adapta: con LoRA para un estilo o un producto, con ControlNet para controlar la composición. Entrenar uno pequeño, como en este tutorial, sirve para entender qué hay dentro.
+- **Usos que no son arte**: aumentar datos escasos (defectos industriales, imagen médica con anonimización), rellenar o ampliar fotos de producto, generar variantes para pruebas A/B, superresolución, eliminar ruido de imágenes reales.
+- **Los datos de entrenamiento importan legalmente.** Qué imágenes se usaron y con qué licencia condiciona qué puedes hacer con lo generado. Lo verás en la lección 8.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/gans", why: "Discriminativo frente a generativo y la primera familia de generadores que se estudió." },
+    { to: "no-supervisado/deep-clustering", why: "Autoencoders y espacio latente, y la mención a los VAE." },
+    { to: "no-supervisado/probabilistico-y-semisupervisado", why: "Ajustar una distribución a los datos con una mezcla de gaussianas: la idea de aprender p(x), en pequeño." },
+  ]}
+/>
+
+## Para llevar
+
+- Un modelo generativo aprende $p(x)$; generar es muestrear de ella.
+- Los píxeles no son independientes: la estructura está en sus dependencias, y eso es lo que tiene que aprender el modelo.
+- Cuatro familias: autoencoder, VAE, GAN y difusión. Hoy la difusión domina en imágenes.
+- Evaluar exige medir calidad, variedad, novedad y control, no solo mirar unas cuantas muestras.

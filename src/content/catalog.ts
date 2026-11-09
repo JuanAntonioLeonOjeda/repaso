@@ -1,5 +1,6 @@
 import { deepLearning } from "./deep-learning";
 import { fastapi } from "./fastapi";
+import { generativa } from "./generativa";
 import { noSupervisado } from "./no-supervisado";
 import { optimizacion } from "./optimizacion";
 import { python } from "./python";
@@ -29,7 +30,7 @@ export { tfm };
  * "Tutoriales": end-to-end projects browsed like a subject. The deep learning ones put the
  * syllabus together step by step; FastAPI covers a tool the master did not.
  */
-export const tutorials: readonly Subject[] = [vision, texto, fastapi];
+export const tutorials: readonly Subject[] = [vision, texto, generativa, fastapi];
 
 /** Every browsable section (subjects, the TFM and the tutorials), for routing and progress. */
 export const sections: readonly Subject[] = [...subjects, tfm, ...tutorials];

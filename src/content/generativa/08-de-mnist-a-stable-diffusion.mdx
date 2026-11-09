@@ -1,0 +1,130 @@
+Tu modelo de difusión dibuja dígitos de 28×28 a partir de una etiqueta. Stable Diffusion dibuja fotos de 512×512 a partir de una frase. Entre uno y otro hay tres ideas nuevas y mucho cálculo. La primera: hacer la difusión **en el espacio latente de un autoencoder**, no en los píxeles. La segunda: condicionar con **texto** en vez de con una etiqueta. La tercera: **destilar** el modelo para que genere en uno a cuatro pasos en vez de en cincuenta. Al final de la lección habrás generado imágenes con SD-Turbo en el portátil, y sabrás qué hace cada pieza porque ya las has construido en pequeño.
+
+## Difusión latente
+
+Hacer difusión directamente sobre 512 × 512 × 3 = 786.432 valores es carísimo: la U-Net tendría que procesar ese tamaño mil veces por imagen. La **difusión latente** (*Latent Diffusion*, el artículo detrás de Stable Diffusion) separa el trabajo:
+
+1. Un **VAE** comprime cada imagen a un tensor latente de 64 × 64 × 4, y lo descomprime después. Se entrena una vez, solo para reconstruir bien (la KL apenas pesa).
+2. La **difusión** trabaja en ese espacio latente, mucho más pequeño. Aprende la estructura de las imágenes («un zorro tiene orejas»), no los detalles de cada píxel, que pone el decodificador.
+
+Es la combinación de las lecciones 3 y 5: el VAE da el espacio, y la difusión aprende a generar en él.
+
+<Predict
+  id="espacio-latente"
+  answer="48"
+  explanation="La imagen tiene 512 · 512 · 3 = 786.432 valores; el latente, 64 · 64 · 4 = 16.384. 786.432 / 16.384 = 48. El VAE reduce el lado 8 veces (512 → 64) y cambia 3 canales de color por 4 latentes: 8 · 8 · 3 / 4 = 48. La U-Net trabaja con 48 veces menos valores en cada uno de sus pasos."
+  hints={["Cuenta los valores de la imagen (alto × ancho × canales) y los del latente.", "512 · 512 · 3 entre 64 · 64 · 4."]}
+>
+Stable Diffusion comprime una imagen de 512 × 512 × 3 a un latente de 64 × 64 × 4. ¿Cuántas veces menos valores tiene el latente?
+</Predict>
+
+## Condicionar con texto
+
+Tu U-Net recibía un embedding por etiqueta (11 posibles). Para aceptar cualquier frase, Stable Diffusion usa un **codificador de texto** preentrenado de la familia CLIP, entrenado para que textos e imágenes que se corresponden tengan embeddings parecidos. La frase se convierte en una secuencia de vectores (uno por token), y la U-Net los consulta con **atención cruzada** (*cross-attention*): cada zona de la imagen "pregunta" a las palabras cuáles le importan. Es la atención de los transformers, con las consultas en la imagen y las claves y valores en el texto.
+
+La guía de la lección anterior funciona igual: predicción con el texto contra predicción con un texto vacío, y `guidance_scale` alrededor de 7,5 para el Stable Diffusion original.
+
+## SD-Turbo en el portátil
+
+**SD-Turbo** es Stable Diffusion 2.1 **destilado** para generar en 1 a 4 pasos. Se entrenó con *Adversarial Diffusion Distillation*: aprende a imitar en un paso lo que el modelo original hace en muchos, con un discriminador, como el de una GAN, que le exige imágenes nítidas. Según su ficha, no usa guía ni prompt negativo (`guidance_scale=0.0`).
+
+```python
+import torch
+from diffusers import AutoPipelineForText2Image
+
+pipe = AutoPipelineForText2Image.from_pretrained(
+    "stabilityai/sd-turbo", torch_dtype=torch.float16, variant="fp16"
+).to("mps")                                         # "cuda" en una GPU NVIDIA
+
+prompt = "a watercolor painting of a lighthouse on a cliff at sunset"
+image = pipe(prompt, num_inference_steps=1, guidance_scale=0.0).images[0]
+image.save("faro.png")
+```
+
+El pipeline tiene las tres piezas de este tutorial:
+
+| Pieza | Parámetros | Lo que hace |
+| ----- | ---------: | ----------- |
+| Codificador de texto (OpenCLIP) | 340.387.840 | La frase → vectores para la atención cruzada |
+| U-Net | 865.910.724 | Quita el ruido en el espacio latente de 64 × 64 × 4 |
+| VAE | 83.653.863 | Latente ↔ imagen de 512 × 512 |
+
+Casi 1.300 millones de parámetros en total: unas 1.270 veces el modelo de difusión de MNIST.
+
+Con estos cuatro prompts, en inglés porque el codificador de texto se entrenó sobre todo con texto en inglés:
+
+1. *a watercolor painting of a lighthouse on a cliff at sunset*
+2. *a photo of a red fox sitting in fresh snow, close-up*
+3. *an isometric illustration of a tiny library with bookshelves*
+4. *a bowl of ramen on a wooden table, studio photo*
+
+Con **1 paso** (imágenes generadas con SD-Turbo, de Stability AI, bajo su Community License):
+
+![Cuatro imágenes de SD-Turbo con 1 paso: un faro en acuarela, un zorro en la nieve, una biblioteca isométrica y un cuenco de ramen](/tutorials/generativa/sd-turbo-1-paso.jpg)
+
+Y con **4 pasos**, con la misma semilla:
+
+![Las mismas cuatro imágenes de SD-Turbo con 4 pasos](/tutorials/generativa/sd-turbo-4-pasos.jpg)
+
+En el Mac M4, cada imagen de 512 × 512 tarda **1,1 segundos con 1 paso** y **1,9 con 4**. Con 4 pasos hay más detalle y más contraste, pero no es simplemente mejor: el faro pierde el aspecto de acuarela que pedía el texto y se parece más a una ilustración pintada. Con 1 paso la imagen es más suave y más fiel al estilo pedido. Como con la guía de la lección 6, más no siempre es mejor: depende de lo que necesites.
+
+<Quiz
+  id="pocos-pasos"
+  options={[
+    "Porque SD-Turbo usa una U-Net mucho más pequeña",
+    "Porque se ha entrenado (destilado) para predecir en un paso lo que el modelo original consigue en muchos, con un discriminador adversarial que castiga las imágenes borrosas que daría un solo paso de un modelo normal",
+    "Porque genera a menor resolución y luego amplía",
+    "Porque no usa el VAE",
+  ]}
+  answer={1}
+  explanation="La U-Net de SD-Turbo tiene el mismo tamaño que la de Stable Diffusion 2.1: el ahorro está en los pasos, no en la red. Un modelo de difusión normal, con un solo paso, daría una imagen borrosa: el promedio de todas las posibles, como el VAE. La destilación adversarial combina dos señales: imitar al modelo maestro (la difusión con muchos pasos) y engañar a un discriminador (como en una GAN), que es lo que devuelve la nitidez. Es un buen ejemplo de cómo se combinan en la práctica las familias de este tutorial."
+  hints={["¿Qué le pasaba al VAE al predecir la media de varias imágenes posibles? ¿Qué familia del tutorial evita eso?"]}
+>
+Tu modelo de MNIST necesitaba 1.000 pasos. ¿Cómo genera SD-Turbo una imagen en uno?
+</Quiz>
+
+## Usarlo con cabeza
+
+Que generar una imagen cueste un segundo cambia lo que es fácil y lo que es responsable hacer.
+
+- **Licencia.** SD-Turbo se publica con la *Stability AI Community License*: uso libre en investigación y no comercial; el uso comercial exige registrarse con Stability AI y deja de estar cubierto si tu organización supera el millón de dólares de ingresos anuales; y si distribuyes el modelo o un servicio que lo usa, hay que incluir su aviso de licencia y mostrar «Powered by Stability AI». Todo, dentro de su política de uso aceptable. Usarlo implica aceptarla. Cada modelo tiene la suya: léela antes de meter uno en un producto.
+- **Datos de entrenamiento.** Estos modelos aprendieron de miles de millones de imágenes de internet, con sus derechos de autor y sus sesgos. Lo que generan puede reproducir estilos de artistas concretos, logotipos o estereotipos.
+- **Limitaciones declaradas.** Su ficha dice que no genera texto legible, que las caras y las personas pueden salir mal, que su resolución nativa es 512 × 512 y que no está pensado para representar personas o hechos reales de forma fiel.
+- **Personas reales.** Generar imágenes de una persona real sin su consentimiento (y más aún en contextos íntimos o engañosos) puede ser dañino, y en contextos íntimos o para engañar es ilegal en muchos países.
+
+<Quiz
+  id="uso-responsable"
+  options={[
+    "Generar ilustraciones de producto para una tienda online pequeña, revisando las imágenes antes de publicarlas",
+    "Generar variantes de fondos para probar el diseño de una web",
+    "Generar imágenes de piezas industriales sintéticas para entrenar un detector",
+    "Generar una foto realista de un político conocido en un lugar en el que no estuvo, para un artículo de opinión",
+  ]}
+  answer={3}
+  explanation="Las otras tres son usos razonables, siempre que se respete la licencia (aquí, ingresos por debajo del límite comercial) y se revise lo que se publica. Una imagen realista de una persona real en una situación falsa es desinformación: engaña a quien la ve aunque el texto la acompañe, y la ficha del modelo dice expresamente que no está pensado para representar personas o hechos reales. Muchas plataformas exigen además etiquetar el contenido generado, y el Reglamento europeo de IA (artículo 50) obliga a quien publica un deepfake a indicar que es contenido generado artificialmente, con matices para obras artísticas o satíricas."
+  hints={["¿Cuál puede engañar a alguien sobre algo que pasó de verdad?"]}
+>
+¿Cuál de estos usos de un generador de imágenes es claramente problemático?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **No entrenes; adapta.** Para un estilo, un personaje o un producto concretos se entrena un **LoRA** (unos pocos MB) sobre un modelo base con unas decenas de imágenes. Para controlar la composición (pose, bordes, profundidad), **ControlNet**. Para editar una imagen existente, *image-to-image* o *inpainting* con el mismo pipeline.
+- **`diffusers`** cubre casi todos los modelos abiertos (Stable Diffusion, SDXL, FLUX…) con la misma interfaz: cargar el pipeline, elegir el muestreador y los pasos, y la guía.
+- **Mide antes de producción**: tiempo por imagen en tu hardware, memoria, y una batería de prompts de prueba revisada por personas. Los modelos destilados ganan en velocidad y pierden algo de calidad y de fidelidad al prompt.
+</Callout>
+
+<Temario
+  links={[
+    { to: "generativa/vae", why: "El VAE que comprime las imágenes al espacio latente." },
+    { to: "generativa/generacion-condicionada", why: "Condicionar y guiar: la misma fórmula con un texto en vez de una etiqueta." },
+    { to: "deep-learning/texto-y-secuencias", why: "Atención y transformers: la atención cruzada entre la imagen y el texto." },
+    { to: "deep-learning/gans", why: "El discriminador adversarial que usa la destilación de SD-Turbo." },
+  ]}
+/>
+
+## Para llevar
+
+- Stable Diffusion = VAE (espacio latente 48 veces más pequeño) + U-Net de difusión + codificador de texto con atención cruzada.
+- La destilación (en SD-Turbo, adversarial) reduce los pasos de 50 a 1–4 sin cambiar el tamaño de la red.
+- En nuestra ejecución: 1,1 s por imagen de 512 × 512 con 1 paso y 1,9 s con 4 en un Mac M4, con casi 1.300 millones de parámetros.
+- Licencia, datos de entrenamiento, limitaciones y personas reales: cuatro cosas que revisar antes de usarlo.

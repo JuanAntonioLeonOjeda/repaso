@@ -146,11 +146,11 @@ En números: de los 1.125 errores de la CNN, **285 se cometen con más de un 90%
   id="confianza"
   options={[
     "Que el modelo está mal entrenado y hay que tirarlo",
-    "Que la probabilidad del softmax no es una probabilidad calibrada: el modelo puede equivocarse muy seguro, así que un umbral de confianza no basta para filtrar errores",
     "Que esas imágenes están mal etiquetadas, seguro",
+    "Que la probabilidad del softmax no es una probabilidad calibrada: el modelo puede equivocarse muy seguro, así que un umbral de confianza no basta para filtrar errores",
     "Nada: el 90% de confianza significa que acierta el 90% de las veces",
   ]}
-  answer={1}
+  answer={2}
   explanation="Las redes modernas tienden a ser demasiado confiadas: el softmax de la clase elegida suele ser más alto que la frecuencia real de acierto. Algunos de esos errores serán etiquetas mal puestas (merece la pena revisarlos), pero no todos. Si vas a usar la confianza para decidir (por ejemplo, pasar los casos dudosos a una persona), primero calíbrala en validación (temperature scaling) y mide la calibración con un diagrama de fiabilidad."
   hints={["¿Garantiza algo el softmax sobre la frecuencia real de acierto?"]}
 >

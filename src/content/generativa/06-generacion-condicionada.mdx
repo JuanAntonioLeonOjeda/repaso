@@ -1,0 +1,144 @@
+Generar dígitos al azar está bien para entender, pero para casi cualquier uso real hay que poder **pedir**: "dibuja un 7", "una foto de un zorro en la nieve". Esta lección añade a la difusión una condición (aquí, la etiqueta del dígito; en Stable Diffusion, un texto) y la técnica que hace que el modelo le haga caso de verdad: **classifier-free guidance**.
+
+## Darle la etiqueta a la red
+
+La U-Net de la lección anterior ya recibía la etiqueta: cada dígito tiene un embedding aprendido que se suma al del paso $t$, y los dos entran en cada bloque.
+
+```python
+class SmallUNet(nn.Module):
+    def __init__(self, ch=64, emb=128):
+        ...
+        self.time_mlp = nn.Sequential(nn.Linear(emb, emb), nn.SiLU(), nn.Linear(emb, emb))
+        self.label_emb = nn.Embedding(11, emb)          # dígitos 0-9 y NULL (10): "sin etiqueta"
+
+    def forward(self, x, t, y):
+        e = self.time_mlp(time_embedding(t, self.emb_dim)) + self.label_emb(y)
+        ...                                             # e se suma a los mapas de cada bloque
+```
+
+Hay 11 etiquetas, no 10. La undécima, `NULL`, significa "no te digo qué dígito es". Durante el entrenamiento, al **10% de las imágenes** se les cambia la etiqueta por `NULL`:
+
+```python
+y = torch.where(torch.rand(len(y)) < 0.1, torch.full_like(y, NULL), y)
+```
+
+Así, una sola red aprende dos cosas: a quitar ruido sabiendo el dígito (**condicional**) y sin saberlo (**incondicional**). Las muestras sin etiqueta de la lección anterior eran este mismo modelo con `y = NULL`.
+
+<Quiz
+  id="etiqueta-vacia"
+  options={[
+    "Para que el modelo entrene más rápido",
+    "Para tener, con una sola red, la predicción con etiqueta y la predicción sin etiqueta: la guía al generar se construye con la diferencia entre las dos",
+    "Para que el modelo aprenda a ignorar etiquetas mal puestas",
+    "Es una forma de dropout para evitar el sobreajuste",
+  ]}
+  answer={1}
+  explanation="Classifier-free guidance necesita dos estimaciones del ruido en cada paso: con la condición y sin ella. Entrenar dos redes sería caro; quitar la etiqueta a una parte de los ejemplos hace que una misma red sepa hacer las dos cosas. La proporción típica está entre el 10% y el 20%. Algo de regularización hay, pero no es el objetivo: sin la parte incondicional no habría guía."
+  hints={["Mira la fórmula de la guía, un poco más abajo: ¿qué dos predicciones combina?"]}
+>
+¿Para qué se entrena con un 10% de imágenes sin etiqueta?
+</Quiz>
+
+## Classifier-free guidance
+
+Un modelo condicional, por sí solo, hace un caso tibio a la etiqueta: genera algo compatible con "7", pero a menudo ambiguo. La guía exagera lo que la etiqueta aporta. En cada paso se calculan las dos predicciones del ruido y se extrapola desde la incondicional hacia la condicional, más allá de ella:
+
+$$
+\hat\varepsilon = (1 + w)\, \varepsilon_\theta(x_t, t, y) - w\, \varepsilon_\theta(x_t, t, \varnothing)
+$$
+
+Con $w = 0$ es el modelo condicional tal cual. Con $w > 0$, el modelo se mueve con más fuerza en la dirección "lo que cambia al saber que es un 7".
+
+```python
+eps_c = model(x, t, labels)
+eps = eps_c if guidance == 0 else (1 + guidance) * eps_c - guidance * model(x, t, null)
+```
+
+<CodeExercise
+  id="guidance"
+  title="La fórmula de la guía"
+  starter={`
+    import numpy as np
+
+    def guided(eps_cond, eps_uncond, w):
+        """Classifier-free guidance: extrapola desde la predicción sin etiqueta hacia la que la tiene."""
+        return (1 + w) * eps_cond - ___ * eps_uncond
+
+    eps_c = np.array([0.8, -0.2, 0.5])     # ruido estimado sabiendo que es un 7
+    eps_u = np.array([0.5, 0.1, 0.5])      # ruido estimado sin saber qué dígito es
+    for w in [0, 1, 3]:
+        print(w, guided(eps_c, eps_u, w))
+  `}
+  solution={`
+    import numpy as np
+
+    def guided(eps_cond, eps_uncond, w):
+        """Classifier-free guidance: extrapola desde la predicción sin etiqueta hacia la que la tiene."""
+        return (1 + w) * eps_cond - w * eps_uncond
+
+    eps_c = np.array([0.8, -0.2, 0.5])     # ruido estimado sabiendo que es un 7
+    eps_u = np.array([0.5, 0.1, 0.5])      # ruido estimado sin saber qué dígito es
+    for w in [0, 1, 3]:
+        print(w, guided(eps_c, eps_u, w))
+  `}
+  hints={[
+    "Con w = 0 tiene que quedar solo la predicción condicional.",
+    "Los dos coeficientes suman 1: (1 + w) − w.",
+  ]}
+  check={`
+    assert np.allclose(guided(eps_c, eps_u, 0), eps_c), "Con w = 0 la guía no cambia nada: es la predicción condicional"
+    for w in [1, 3, 7]:
+        assert np.allclose(guided(eps_c, eps_u, w) - eps_u, (1 + w) * (eps_c - eps_u)), "La guía multiplica por (1 + w) la diferencia entre condicional e incondicional"
+    assert np.allclose(guided(eps_c, eps_u, 5)[2], 0.5), "Donde la etiqueta no cambia la predicción (componente 3), la guía tampoco"
+  `}
+>
+Escribe la combinación de las dos predicciones. El `check` comprueba la propiedad clave: la guía multiplica por $(1 + w)$ lo que la etiqueta cambia, y deja igual lo que no cambia.
+</CodeExercise>
+
+<Callout kind="note" title="Dos formas de escribir lo mismo">
+En `diffusers` y en muchos artículos verás $\hat\varepsilon = \varepsilon_\varnothing + s\,(\varepsilon_y - \varepsilon_\varnothing)$ con `guidance_scale` $= s$. Es la misma fórmula con $s = 1 + w$: `guidance_scale=1` es el modelo condicional sin guía, y el valor por defecto de Stable Diffusion, 7,5, equivale a $w = 6{,}5$.
+</Callout>
+
+## Cuánta guía
+
+Los mismos puntos de partida (el mismo ruido inicial), pidiendo los dígitos del 0 al 9 dos veces, con $w = 0$, 1, 3 y 7 (una franja de 20 dígitos por cada valor):
+
+![Dígitos del 0 al 9 generados dos veces con el mismo ruido inicial y guía creciente: w = 0, 1, 3 y 7](/tutorials/generativa/guidance.png)
+
+Con $w = 0$, el modelo ya hace bastante caso: el clasificador de la lección 7 reconoce el dígito pedido en el **93,2%** de 2.000 muestras. Con $w = 3$, en el **100%**. Pero mira las franjas de abajo: los trazos engordan, el contraste se satura y las dos versiones de cada dígito se parecen cada vez más. El modelo ya no dibuja "un 7", dibuja "el 7 más típico". La lección 7 pone un número a ese cambio: el FID pasa de 30 con $w = 0$ a 222 con $w = 3$.
+
+<Quiz
+  id="mas-guia"
+  options={[
+    "Siempre la guía más alta, porque los dígitos salen más claros",
+    "Siempre w = 0, porque la guía es un truco que estropea el modelo",
+    "Hay un compromiso: más guía hace que el resultado se ajuste más a lo pedido y sea más nítido, pero reduce la variedad y, demasiado alta, satura y deforma las imágenes",
+    "Da igual, la guía solo cambia la velocidad",
+  ]}
+  answer={2}
+  explanation="La guía empuja cada muestra hacia lo más típico de la clase pedida. Con poca, el modelo a veces dibuja algo ambiguo; con mucha, todos los 7 se parecen y aparecen artefactos (trazos demasiado gruesos o contrastados). Es la misma perilla que el «CFG scale» de cualquier interfaz de Stable Diffusion, y se elige mirando muestras y midiendo, como en la lección siguiente."
+  hints={["Compara la variedad de los dos 7 de cada franja de la figura."]}
+>
+¿Qué valor de guía elegirías?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **La condición puede ser cualquier cosa**: una clase, un texto (Stable Diffusion, con un codificador de texto), una imagen de referencia, un mapa de bordes o de pose (ControlNet). La forma de inyectarla cambia (sumar embeddings, *cross-attention*), pero la guía es la misma.
+- **El prompt negativo** de las interfaces de Stable Diffusion es esta misma fórmula, con la predicción «sin etiqueta» sustituida por la del texto negativo: se extrapola alejándose de lo que no quieres.
+- **La guía duplica el coste**: dos pasadas de la red por paso. Los modelos destilados (lección 8) se entrenan para no necesitarla.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/gans", why: "La cGAN: condicionar un generador con la etiqueta, la misma idea en otra familia." },
+    { to: "deep-learning/texto-y-secuencias", why: "Embeddings: la etiqueta entra a la red como un vector aprendido." },
+    { to: "generativa/difusion", why: "El modelo de difusión que aquí se condiciona y se guía." },
+  ]}
+/>
+
+## Para llevar
+
+- Condicionar: la etiqueta entra como un embedding que se suma al del paso $t$.
+- Entrenar con un 10% de etiquetas vacías da, con una sola red, la predicción condicional y la incondicional.
+- Classifier-free guidance: $\hat\varepsilon = (1+w)\,\varepsilon_y - w\,\varepsilon_\varnothing$; en `diffusers`, `guidance_scale` $= 1 + w$.
+- En nuestra ejecución: con $w = 0$ sale el dígito pedido el 93,2% de las veces; con $w = 3$, el 100%, pero con menos variedad y un FID siete veces peor.

@@ -105,12 +105,12 @@ Ejecútalo y fíjate en dos cosas. Primero, con ocho frases los bigramas apenas 
 <Quiz
   id="bigramas"
   options={[
-    "Porque los bigramas siempre mejoran cualquier modelo",
     "Porque recuperan algo de orden local, y en reseñas el orden local carga mucho significado: negaciones («no funciona») e intensificadores («muy bien»)",
+    "Porque los bigramas siempre mejoran cualquier modelo",
     "Porque reducen el tamaño del vocabulario",
     "Porque la regresión logística no funciona con palabras sueltas",
   ]}
-  answer={1}
+  answer={0}
   explanation="Una bolsa de palabras no sabe qué va con qué. Los bigramas son una forma barata de capturar el orden más cercano, justo donde están las negaciones y los matices. El precio es un vocabulario mucho mayor (aquí, cientos de miles de términos), que un modelo lineal con regularización maneja bien. No siempre mejoran: con textos muy cortos o temas en los que el orden no importa, apenas cambian nada."
   hints={["Piensa en qué pierde una bolsa de palabras y en qué parte del texto está esa información."]}
 >

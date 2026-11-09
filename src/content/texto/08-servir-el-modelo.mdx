@@ -93,11 +93,11 @@ En la CPU del portátil, BETO tarda unos **31 ms por reseña** si se procesan de
   id="max-length"
   options={[
     "Nada: el modelo procesa el texto completo, sea cual sea su longitud",
-    "Si no truncas, una reseña de más de 512 tokens hace fallar a BETO; si truncas a 128 como en el entrenamiento, el modelo solo ve el principio, y eso hay que saberlo (y medirlo) para los textos largos",
     "El pipeline divide el texto en trozos y promedia automáticamente",
+    "Si no truncas, una reseña de más de 512 tokens hace fallar a BETO; si truncas a 128 como en el entrenamiento, el modelo solo ve el principio, y eso hay que saberlo (y medirlo) para los textos largos",
     "Que las reseñas largas tienen siempre más estrellas",
   ]}
-  answer={1}
+  answer={2}
   explanation="BETO tiene 512 posiciones: sin truncar, un texto más largo da error. Con truncation=True y max_length=128 (como en el entrenamiento) no falla, pero el modelo solo lee los primeros 128 tokens. En reseñas, el título y el principio suelen bastar; en contratos o informes, lo importante puede estar al final. Las opciones son una ventana más larga, partir el texto en trozos y combinar sus predicciones, o un modelo con más contexto. En cualquier caso, hay que medir el rendimiento en los textos largos por separado."
   hints={["¿Cuántas posiciones tiene BETO y cuántas usó al entrenar?"]}
 >
@@ -112,11 +112,11 @@ Hoy se puede pedir a un LLM: «Lee esta reseña y responde solo con un número d
   id="llm-o-modelo"
   options={[
     "Siempre un LLM: es más listo que BETO",
-    "Siempre el modelo ajustado: los LLM no saben clasificar",
     "Depende: para empezar sin datos o con pocos ejemplos, un LLM; para millones de textos al día, con latencia y coste acotados, o datos que no pueden salir de casa, un modelo pequeño ajustado, que además suele acertar más en su tarea concreta",
+    "Siempre el modelo ajustado: los LLM no saben clasificar",
     "Ninguno: con TF-IDF basta",
   ]}
-  answer={2}
+  answer={1}
   explanation="Es una decisión de ingeniería, no de moda. Un LLM brilla cuando no tienes etiquetas, la tarea cambia a menudo o necesitas explicar la respuesta. Un modelo de 110 M de parámetros ajustado con tus datos clasifica en milisegundos en una CPU, cuesta casi nada por predicción, funciona sin conexión y, en una tarea estrecha con miles de ejemplos, suele igualar o superar a un LLM generalista. Un patrón habitual en empresa: usar un LLM para etiquetar un primer conjunto de datos (revisado por personas) y entrenar con él un modelo pequeño para producción. TF-IDF sigue siendo el baseline que hay que batir."
   hints={["Piensa en el volumen, la latencia, el coste por predicción y la privacidad."]}
 >

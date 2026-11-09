@@ -19,12 +19,12 @@ Nuestro checkpoint ocupa 1,25 MB: 308.394 parámetros en `float32` (4 bytes cada
 <Quiz
   id="state-dict"
   options={[
-    "Porque torch.save(model) no funciona con modelos que tienen BatchNorm",
     "Porque guardar el objeto entero lo serializa con pickle atado a tu clase y a la ruta de tu módulo: si cambias el código o lo mueves, ya no carga; y cargar un pickle ajeno puede ejecutar código",
+    "Porque torch.save(model) no funciona con modelos que tienen BatchNorm",
     "Porque el state_dict ocupa la mitad",
     "Porque el state_dict incluye el optimizador",
   ]}
-  answer={1}
+  answer={0}
   explanation="torch.save(model) usa pickle, que guarda una referencia a la clase (módulo y nombre), no su código. Si renombras el fichero o cambias la clase, el modelo deja de cargar. Además, deserializar un pickle puede ejecutar código arbitrario: por eso torch.load usa weights_only=True por defecto desde PyTorch 2.6 y solo acepta tensores y tipos simples. El state_dict son solo tensores con nombre: portable y seguro. El optimizador se guarda aparte si quieres reanudar el entrenamiento."
   hints={["¿Qué guarda pickle de una clase: su código o una referencia a dónde está?"]}
 >
@@ -132,11 +132,11 @@ Sin la conversión, la red recibe un cielo naranja y un fuego azul. Predice algo
   id="modo-inferencia"
   options={[
     "Solo model.eval(): torch.no_grad() es opcional y no cambia nada",
-    "model.eval() para que dropout y BatchNorm se comporten como en validación, y torch.no_grad() (o torch.inference_mode()) para no construir el grafo de gradientes",
     "Solo torch.no_grad(): ya desactiva el dropout",
     "Ninguno: en producción el modelo ya está entrenado",
+    "model.eval() para que dropout y BatchNorm se comporten como en validación, y torch.no_grad() (o torch.inference_mode()) para no construir el grafo de gradientes",
   ]}
-  answer={1}
+  answer={3}
   explanation="Son dos cosas distintas y hacen falta las dos. eval() cambia el comportamiento de las capas: sin él, dropout apaga neuronas y BatchNorm normaliza con las estadísticas de la petición, así que la misma imagen da resultados distintos según con qué otras vaya en el lote. no_grad / inference_mode evita guardar el grafo para backward: menos memoria y más velocidad. Sin él la predicción sale bien, pero el servicio gasta memoria de más."
   hints={["Repasa la pregunta de la lección 4 sobre olvidar model.eval()."]}
 >

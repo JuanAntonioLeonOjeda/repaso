@@ -21,7 +21,9 @@
       with its own pinned environment (`scripts/tutorials/requirements.txt`: the TFM's lacks
       `transformers`); BETO fine-tuned on a 40.000-review subset (the train file is sorted by label:
       shuffled with a seed before subsetting)
-- [ ] IA generativa de imágenes
+- [x] IA generativa de imágenes: MNIST (AE, VAE, DCGAN, class-conditional DDPM with CFG, FID on a
+      classifier's features) and SD-Turbo with diffusers (Stability AI Community License accepted by
+      the author); `DiffusionNoiseSim`
 - [ ] Crea tu LLM
 
 ## Close

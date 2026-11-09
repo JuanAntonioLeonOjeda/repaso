@@ -26,7 +26,7 @@ class BiLSTMClassifier(nn.Module):
 
 <Predict
   id="params-lstm"
-  answer="264192"
+  answer={["264192", "264.192"]}
   explanation="Cada dirección tiene 4 bloques (puertas de entrada, olvido y salida, y la candidata), cada uno con pesos sobre la entrada (128 · 128), pesos sobre el estado anterior (128 · 128) y dos vectores de sesgo de 128: PyTorch guarda bias_ih y bias_hh por separado, aunque se suman. Por dirección: 4 · (16.384 + 16.384 + 128 + 128) = 132.096. Bidireccional, el doble: 264.192. En Keras sale un poco menos, porque usa un solo sesgo por puerta."
   hints={[
     "Una LSTM tiene 4 conjuntos de pesos (3 puertas y la candidata a memoria).",
@@ -45,11 +45,11 @@ En un lote, las reseñas cortas llevan relleno al final. Una LSTM que lo leyese 
   id="empaquetar"
   options={[
     "Nada: la máscara de la lección 3 ya se encarga",
-    "El estado final de las reseñas cortas sería el de después de leer todo el relleno: la misma reseña daría una predicción distinta según lo larga que fuese la más larga de su lote",
     "Un error, porque la LSTM no acepta relleno",
     "Que la red entrena más rápido",
+    "El estado final de las reseñas cortas sería el de después de leer todo el relleno: la misma reseña daría una predicción distinta según lo larga que fuese la más larga de su lote",
   ]}
-  answer={1}
+  answer={3}
   explanation="Sin empaquetar, la LSTM procesa todas las posiciones del tensor. La dirección hacia delante acaba en la última posición, que en las reseñas cortas es relleno: su estado final ha pasado por N vectores de <pad>. Eso depende de con quién comparte lote la reseña, así que la predicción cambia según el lote. En validación y en producción, el mismo texto daría resultados distintos. La máscara no sirve aquí: una LSTM no la consulta, por eso existe el empaquetado. Ordenar por longitud antes de hacer los lotes (lección 8) reduce el problema, pero no lo elimina."
   hints={["¿Qué posición del tensor es la «última» para la dirección hacia delante?"]}
 >
@@ -63,12 +63,12 @@ Una LSTM normal lee de izquierda a derecha, y su estado final recuerda mejor el 
 <Quiz
   id="bidireccional"
   options={[
-    "Para clasificar una reseña completa, sí: tienes todo el texto antes de decidir",
     "Nunca, porque leer hacia atrás no tiene sentido en un idioma",
+    "Para clasificar una reseña completa, sí: tienes todo el texto antes de decidir",
     "Siempre, también para predecir la siguiente palabra mientras se escribe",
     "Solo si las reseñas son muy largas",
   ]}
-  answer={0}
+  answer={1}
   explanation="La bidireccionalidad necesita la secuencia completa antes de decidir. Para clasificar un texto ya escrito es gratis: tienes la reseña entera, y así el principio (a menudo el título, que concentra la opinión) llega fresco al clasificador. Para generar texto o predecir en tiempo real (la siguiente palabra, el siguiente valor de una serie temporal) no se puede: no conoces el futuro. Por eso BERT, que se usa para entender texto, mira en los dos sentidos, y GPT, que genera, solo mira lo anterior (de izquierda a derecha)."
   hints={["Para leer hacia atrás hace falta tener el final del texto. ¿Lo tienes en cada caso?"]}
 >
