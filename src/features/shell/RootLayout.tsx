@@ -43,6 +43,9 @@ export function RootLayout(): ReactNode {
         </Link>
         <nav className={styles.nav} aria-label="Principal">
           <Link to="/">{es.shell.home}</Link>
+          {/* The home page section; ScrollRestoration scrolls to the hash and base.css leaves room
+              for the sticky header (scroll-padding-top). */}
+          <Link to={{ pathname: "/", hash: "#tutoriales" }}>{es.shell.tutorials}</Link>
           <ThemeButton />
         </nav>
       </header>
