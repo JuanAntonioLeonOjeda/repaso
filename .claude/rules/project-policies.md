@@ -26,11 +26,15 @@ Python in the browser.
   its notebooks, exams and practices live in `../asignaturas/python-para-ia/` (only its PDF is
   in `Asignaturas/Python para IA/`). That subject is deliberately practical: most exercises
   are past exam questions.
-- **Expandir conocimientos** (`extras` in `catalog.ts`): practical tutorials beyond the
-  syllabus, browsed like a subject. The first is FastAPI (`src/content/fastapi/`). Its
-  exercises run FastAPI in Pyodide with an inline thread pool and call the app with
-  `httpx.AsyncClient` and top-level `await` (ADR-0005); `TestClient` and pytest appear only in
-  non-runnable code.
+- **Tutoriales** (`tutorials` in `catalog.ts`, spec in `specs/tutorials/`): end-to-end
+  projects browsed like a subject. The deep learning ones (Visión done; Texto, IA generativa
+  de imágenes and Crea tu LLM planned) are written in **PyTorch** and link every step to the
+  syllabus with `<Temario>`. PyTorch does not exist in Pyodide: framework code is shown in
+  plain code blocks and verified by `scripts/tutorials/<slug>.py` run with the TFM's
+  environment; every number quoted comes from that run; runnable exercises practise the pieces
+  in NumPy (ADR-0006). FastAPI (`src/content/fastapi/`) is also a tutorial: its exercises run
+  FastAPI in Pyodide with an inline thread pool and call the app with `httpx.AsyncClient` and
+  top-level `await` (ADR-0005); `TestClient` and pytest appear only in non-runnable code.
 
 Priority: **correct and useful content over features**. A wrong formula or a broken exercise
 is a bug of the highest severity; a missing feature is not.
