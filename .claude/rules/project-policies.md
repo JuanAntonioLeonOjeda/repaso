@@ -30,8 +30,8 @@ Python in the browser.
   in `Asignaturas/Python para IA/`). That subject is deliberately practical: most exercises
   are past exam questions.
 - **Tutoriales** (`tutorials` in `catalog.ts`, spec in `specs/tutorials/`): end-to-end
-  projects browsed like a subject. The deep learning ones (Visión, Texto and IA generativa de
-  imágenes done; Crea tu LLM planned) are written in **PyTorch** and link every step to the
+  projects browsed like a subject. The deep learning ones (Visión, Texto, IA generativa de
+  imágenes and Crea tu LLM) are written in **PyTorch** and link every step to the
   syllabus with `<Temario>`. PyTorch does not exist in Pyodide: framework code is shown in
   plain code blocks and verified by `scripts/tutorials/<slug>.py` run with `.venv-tutorials`
   (`scripts/tutorials/requirements.txt`); every number quoted comes from that run; runnable exercises practise the pieces

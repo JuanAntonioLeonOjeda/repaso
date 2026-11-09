@@ -24,7 +24,9 @@
 - [x] IA generativa de imágenes: MNIST (AE, VAE, DCGAN, class-conditional DDPM with CFG, FID on a
       classifier's features) and SD-Turbo with diffusers (Stability AI Community License accepted by
       the author); `DiffusionNoiseSim`
-- [ ] Crea tu LLM
+- [x] Crea tu LLM: byte-level BPE (2.048) and a 6-block GPT (11,5 M) trained on Don Quijote, sampling,
+      LoRA by hand to adapt it to Lazarillo de Tormes, base vs instruct with Qwen2.5-0.5B (Apache 2.0);
+      `SamplingSim` on the GPT's real next-token distribution
 
 ## Close
 
