@@ -1,0 +1,176 @@
+La CNN de la lección 3 acaba acertando casi todo en entrenamiento y bastante menos en validación: memoriza. Hay dos maneras de pelear contra eso, y se usan juntas. La primera es **dar más datos**: si no tienes más fotos, te las inventas con variaciones creíbles de las que ya tienes (*data augmentation*). La segunda es **poner difícil la memorización**: apagar neuronas al azar (*dropout*) y penalizar los pesos grandes (*weight decay*). En esta lección montas las dos y ves cuánto valen en CIFAR-10.
+
+## Data augmentation
+
+Un coche desplazado unos píxeles o visto en espejo sigue siendo un coche. Si en cada época la red ve cada imagen con un recorte y una orientación distintos, no puede memorizar los píxeles exactos y tiene que aprender lo que de verdad define la clase.
+
+```python
+CIFAR_MEAN = (0.4914, 0.4822, 0.4465)
+CIFAR_STD = (0.2470, 0.2435, 0.2616)
+
+train_tf = transforms.Compose([
+    transforms.RandomCrop(32, padding=4),   # rellena 4 px de negro y recorta 32×32 en un sitio al azar
+    transforms.RandomHorizontalFlip(),      # espejo con probabilidad 0,5
+    transforms.ToTensor(),
+    transforms.Normalize(CIFAR_MEAN, CIFAR_STD),
+])
+eval_tf = transforms.Compose([transforms.ToTensor(), transforms.Normalize(CIFAR_MEAN, CIFAR_STD)])
+```
+
+Las transformaciones aleatorias se aplican **cada vez que se lee una imagen**. El dataset no crece en disco: en cada época la misma foto llega distinta. Ese recorte con relleno, más el espejo, es el aumento clásico de CIFAR-10.
+
+<CodeExercise
+  id="recorte-y-volteo"
+  title="RandomCrop con padding y volteo, a mano"
+  starter={`
+    import numpy as np
+
+    def crop_and_flip(img, top, left, flip, pad=4):
+        """img: (alto, ancho, canales). Rellena pad píxeles de ceros por cada lado,
+        recorta una ventana del tamaño original empezando en (top, left) y, si flip, la voltea."""
+        h, w = img.shape[:2]
+        padded = np.pad(img, ((pad, pad), (pad, pad), (0, 0)))
+        out = padded[top:top + ___, left:left + ___]
+        if flip:
+            out = out[:, ___]
+        return out
+
+    img = np.arange(32 * 32 * 3).reshape(32, 32, 3)
+    print(crop_and_flip(img, top=4, left=4, flip=False).shape)
+  `}
+  solution={`
+    import numpy as np
+
+    def crop_and_flip(img, top, left, flip, pad=4):
+        """img: (alto, ancho, canales). Rellena pad píxeles de ceros por cada lado,
+        recorta una ventana del tamaño original empezando en (top, left) y, si flip, la voltea."""
+        h, w = img.shape[:2]
+        padded = np.pad(img, ((pad, pad), (pad, pad), (0, 0)))
+        out = padded[top:top + h, left:left + w]
+        if flip:
+            out = out[:, ::-1]
+        return out
+
+    img = np.arange(32 * 32 * 3).reshape(32, 32, 3)
+    print(crop_and_flip(img, top=4, left=4, flip=False).shape)
+  `}
+  hints={[
+    "La ventana tiene el mismo alto y ancho que la imagen original.",
+    "Voltear en horizontal es invertir el eje de las columnas: un slice con paso −1.",
+    "padded[top:top + h, left:left + w] y out[:, ::-1].",
+  ]}
+  check={`
+    img = np.arange(32 * 32 * 3).reshape(32, 32, 3)
+    centro = crop_and_flip(img, 4, 4, False)
+    assert centro.shape == (32, 32, 3), f"El recorte debería ser 32×32×3; sale {centro.shape}"
+    assert np.array_equal(centro, img), "Con top = left = pad y sin volteo, el recorte es la imagen original"
+    esquina = crop_and_flip(img, 0, 0, False)
+    assert np.all(esquina[:4] == 0) and np.all(esquina[:, :4] == 0), "Recortando desde (0, 0), las 4 primeras filas y columnas son relleno (ceros)"
+    assert np.array_equal(esquina[4:, 4:], img[:28, :28]), "El resto de la esquina es la imagen desplazada 4 píxeles"
+    v = crop_and_flip(img, 4, 4, True)
+    assert np.array_equal(v[:, 0], img[:, 31]), "Volteada, la primera columna es la última de la original"
+    assert np.array_equal(v[0, 0], img[0, 31]), "El volteo no debe tocar el orden de los canales"
+  `}
+>
+Reproduce `RandomCrop(32, padding=4)` y `RandomHorizontalFlip()` sin el azar: recibes la posición del recorte y si hay volteo.
+</CodeExercise>
+
+Hay que elegir aumentos que **no cambien la etiqueta** y que produzcan imágenes que podrían aparecer de verdad.
+
+<Quiz
+  id="que-aumentar"
+  options={[
+    "Volteo horizontal",
+    "Recortes con desplazamientos de pocos píxeles",
+    "Volteo vertical",
+    "Pequeños cambios de brillo y contraste",
+  ]}
+  answer={2}
+  explanation="En CIFAR-10 no hay aviones, barcos ni caballos boca abajo: el volteo vertical genera imágenes que nunca aparecerán en test y obliga a la red a gastar capacidad en ellas. Las otras tres producen fotos plausibles. El criterio depende del dominio: en imágenes de satélite o de microscopio, rotar 90° o voltear en vertical sí es válido, porque ahí no hay un arriba. Y con dígitos, rotar 180° convierte un 6 en un 9."
+  hints={["Piensa si la imagen transformada podría estar en el conjunto de test."]}
+>
+¿Qué aumento **no** tiene sentido para CIFAR-10?
+</Quiz>
+
+## El error de aumentar también la validación
+
+La práctica de la asignatura lo deja como ejercicio propuesto, y es un bug muy común con augmentation. Si haces el split sobre un único dataset con `train_tf`, las imágenes de validación también se recortan y voltean al azar. La validación cambia en cada época, sale más baja de lo real y ya no se puede comparar con la del modelo sin aumentos.
+
+La solución: dos vistas de los mismos ficheros, cada una con su transformación, y **los mismos índices** de split:
+
+```python
+train_full = datasets.CIFAR10("data/", train=True, transform=train_tf)   # con aumentos
+val_full = datasets.CIFAR10("data/", train=True, transform=eval_tf)      # sin aumentos
+train_idx, val_idx = split_indices(len(train_full), n_val=5000)          # mismo reparto que antes
+
+train_loader = DataLoader(Subset(train_full, train_idx), batch_size=128, shuffle=True, num_workers=4)
+val_loader = DataLoader(Subset(val_full, val_idx), batch_size=128, shuffle=False, num_workers=4)
+```
+
+<Quiz
+  id="validacion-aumentada"
+  options={[
+    "Sí: así la validación es más exigente, y eso es bueno",
+    "No: la validación tiene que medir lo mismo que el test (imágenes sin tocar) y ser igual en cada época, para poder comparar épocas y modelos",
+    "Da igual, porque los aumentos son pequeños",
+    "Solo importa si se usa early stopping",
+  ]}
+  answer={1}
+  explanation="La validación sirve para decidir: qué época guardar, qué modelo es mejor. Para eso tiene que ser fija y parecerse a lo que verá el modelo de verdad. Con aumentos aleatorios es ruidosa (cada época ve recortes distintos) y no se puede comparar con la del modelo sin aumentos. Los aumentos solo se aplican a train. La única excepción a propósito es el test-time augmentation: promediar las predicciones de varias versiones de la imagen, y se aplica igual en validación y en test."
+  hints={["¿Para qué usas la validación en el bucle de la lección 4?"]}
+>
+¿Tiene sentido validar con las imágenes aumentadas?
+</Quiz>
+
+## Dropout y weight decay
+
+- **Dropout** (`nn.Dropout(0.3)`): en cada paso de entrenamiento pone a cero un 30% de las activaciones al azar y escala el resto por $1/0{,}7$. La red no puede depender de una neurona concreta. Se pone antes de las capas densas; en la `SmallCNN`, antes de la `Linear` final. En `model.eval()` no hace nada.
+- **Weight decay** (`AdamW(..., weight_decay=5e-4)`): en cada paso encoge un poco todos los pesos hacia 0. Es la regularización L2 de la asignatura, aplicada como manda AdamW: separada del gradiente, para que Adam no la deforme. AdamW ya trae `weight_decay=0.01` por defecto, así que el MLP y la CNN de antes también lo llevaban, y más fuerte. Aquí se baja a `5e-4`, un valor habitual para CNN en CIFAR-10. En la práctica se suele excluir de los sesgos y de los parámetros de BatchNorm; aquí se aplica a todos por simplicidad.
+
+El modelo regularizado junta las tres cosas, más el OneCycleLR de la lección 4 y 30 épocas en vez de 20, porque con aumentos la red tarda más en aprender:
+
+```python
+model = SmallCNN(dropout=0.3).to(device)
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-4)
+scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-3, epochs=30, steps_per_epoch=len(train_loader))
+history = fit(model, train_loader, val_loader, epochs=30, optimizer=optimizer, device=device,
+              ckpt="cnn_reg.pt", scheduler=scheduler)
+```
+
+## Cuánto vale
+
+| Modelo | Épocas | Mejor acc. val. | Acc. train en esa época | Pérdida val. mínima | Tiempo |
+| ------ | -----: | --------------: | ----------------------: | ------------------: | -----: |
+| CNN | 20 | 82,6% (época 6) | 89,5% | 0,531 (época 6) | 241 s |
+| CNN regularizada | 30 | **89,7%** (época 30) | 93,9% | **0,317** (época 30) | 344 s |
+
+Mismo modelo, mismos 308.394 parámetros: **siete puntos más**, con aumentos, dropout, un learning rate que cambia y 10 épocas más. (El weight decay no explica la mejora: la CNN de antes ya llevaba el de AdamW por defecto.) Este experimento cambia varias cosas a la vez; para saber cuánto aporta cada una habría que quitarlas de una en una. Y la forma de las curvas es otra (míralas en `TrainingCurvesSim`, en la lección 4):
+
+- **La validación mejora hasta la última época.** Con la CNN sin regularizar se estancaba en la época 6; aquí la pérdida de validación baja casi siempre, de 1,27 a 0,32.
+- **Al final del entrenamiento, el hueco entre train y validación es de unos 4 puntos** (93,9% − 89,7%), frente a los 15 de la CNN sin regularizar en su última época (97,7% − 82,4%). Ojo al leerlo: el accuracy de train se mide con aumentos y dropout activados, así que infravalora lo que el modelo sabe de verdad sobre esas imágenes.
+- **Las primeras épocas son peores** (53% en la primera, frente al 64% de la CNN normal). Es el precio de ponérselo difícil. Si hubieras comparado los modelos a las 5 épocas, habrías descartado el bueno.
+
+<Callout kind="real" title="En el trabajo">
+- **Primero augmentation, luego lo demás.** Es la regularización que más rinde en visión y casi no cuesta nada. Para ir más allá: `transforms.RandAugment` o `TrivialAugmentWide` (políticas automáticas), y técnicas como *mixup* o *cutmix*, que mezclan dos imágenes y sus etiquetas.
+- **Si el cuello de botella es la CPU** (la GPU espera a que lleguen lotes), sube `num_workers` o mueve los aumentos a la GPU (`torchvision.transforms.v2` acepta tensores en GPU).
+- **Albumentations** es la librería habitual cuando hay máscaras o cajas que aumentar a la vez que la imagen (segmentación y detección).
+</Callout>
+
+<Callout kind="practice" title="De tus prácticas (VC04–VC05)">
+«Reduciendo overfitting mediante data augmentation» crea un `ImageDataGenerator` de Keras que genera muestras sintéticas sobre la marcha, y te pide inspeccionarlas antes de entrenar. Su ejercicio propuesto es justo el error de esta lección: hacer bien el split de validación para que la ejecución con aumentos se pueda comparar con la de sin aumentos.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/augmentation-y-transfer-learning", why: "Qué aumentos usar y por qué funcionan." },
+    { to: "deep-learning/optimizadores-y-regularizacion", why: "Dropout, regularización L2 y el diagnóstico del sobreajuste." },
+    { to: "supervisado/validacion", why: "Validar siempre en las mismas condiciones que se usarán en producción." },
+  ]}
+/>
+
+## Para llevar
+
+- Augmentation: variaciones que no cambian la etiqueta y podrían aparecer de verdad. En CIFAR-10, recorte con padding y volteo horizontal.
+- Los aumentos solo en train: dos datasets con distinta transformación y los mismos índices.
+- Dropout antes de la capa densa; weight decay con AdamW.
+- En nuestra ejecución, la misma CNN pasa del 82,6% al 89,7% en validación, y deja de sobreajustar.

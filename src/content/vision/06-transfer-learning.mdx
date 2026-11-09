@@ -1,0 +1,146 @@
+Tu CNN ha aprendido a ver con 45.000 imágenes. Una ResNet entrenada en **ImageNet** aprendió con 1,2 millones de fotos y 1.000 clases, y ya sabe ver: sus primeras capas detectan bordes y colores, y las siguientes, texturas, ojos y ruedas. El *transfer learning* consiste en reutilizar ese conocimiento: quitas la última capa, pones una nueva con tus 10 clases y entrenas lo justo. Es lo que se hace en casi todos los proyectos de visión reales, y lo que hiciste en el TFM con ResNet50.
+
+## La receta en dos fases
+
+```python
+from torchvision import models
+
+model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)   # pesos de ImageNet
+for p in model.parameters():
+    p.requires_grad = False                     # congelar todo
+model.fc = nn.Linear(model.fc.in_features, 10)  # cabeza nueva: 512 -> 10, entrenable
+```
+
+1. **Extracción de características**: la red preentrenada está congelada y solo aprende la cabeza nueva. Es rápido, y el optimizador no toca los pesos de la red.
+2. **Fine-tuning**: se descongela todo y se sigue entrenando con un learning rate **diez veces menor**, para ajustar las capas a tus imágenes sin borrar lo aprendido.
+
+```python
+# Fase 1: solo la cabeza, lr normal
+optimizer = torch.optim.AdamW(model.fc.parameters(), lr=1e-3)
+fit(model, train_loader, val_loader, epochs=3, optimizer=optimizer, device=device, ckpt="resnet_head.pt")
+
+# Fase 2: todo, lr pequeño
+for p in model.parameters():
+    p.requires_grad = True
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
+fit(model, train_loader, val_loader, epochs=3, optimizer=optimizer, device=device, ckpt="resnet_ft.pt")
+```
+
+<TransferDiagram />
+
+En la fase 1 solo se entrena la cabeza: `nn.Linear(512, 10)`, con 512 · 10 + 10 = **5.130** parámetros. Es la misma cuenta que la de la cabeza de VGG16 en la lección de la asignatura, porque las dos redes entregan 512 características. Por eso la fase 1 es tan barata: el backward solo llega hasta la última capa.
+
+<Predict
+  id="entrenables-cabeza"
+  answer="11181642"
+  explanation="La ResNet-18 original tiene 11.689.512 parámetros, de los que su fc (512 → 1000) se lleva 512 · 1000 + 1000 = 513.000. Al cambiarla por la cabeza de 5.130: 11.689.512 − 513.000 + 5.130 = 11.181.642. En la fase 2 se entrenan todos, unas 2.180 veces más que en la fase 1."
+  hints={[
+    "Parte del total de la ResNet-18 original y cambia su capa fc por la nueva.",
+    "La fc original es nn.Linear(512, 1000): 512 · 1000 + 1000 parámetros.",
+    "11.689.512 − 513.000 + 5.130",
+  ]}
+>
+La ResNet-18 de ImageNet tiene **11.689.512** parámetros, incluida su capa final `nn.Linear(512, 1000)`. En la fase 2, con la cabeza de 10 clases y todo descongelado, ¿cuántos parámetros se entrenan?
+</Predict>
+
+<Callout kind="warn" title="Congelar los pesos no congela BatchNorm">
+`requires_grad = False` impide que el optimizador cambie los pesos, pero no las estadísticas acumuladas de BatchNorm, que son buffers. Como `fit` pone el modelo en `model.train()`, en la fase 1 esas medias y varianzas se van actualizando con las imágenes de CIFAR-10, y el backbone cambia un poco aunque no se entrene. En este tutorial se acepta. Para congelarlo de verdad, pon las capas de BatchNorm del backbone en `eval()` después de cada `model.train()`. Con datos muy distintos de ImageNet y lotes pequeños, la diferencia se nota.
+</Callout>
+
+La simulación del TFM muestra las dos estrategias para repartir el learning rate entre backbone y cabeza. Allí eran 50 épocas con ResNet50; aquí son 3 + 3, pero la idea de la estrategia «por fases» es la misma:
+
+<LrScheduleSim />
+
+## Hablar el idioma de la red preentrenada
+
+La ResNet aprendió con imágenes de ImageNet, normalizadas con **sus** estadísticas y de unos 224×224 píxeles. Hay que darle las imágenes de la misma manera:
+
+```python
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+
+train_tf = transforms.Compose([
+    transforms.Resize(160),
+    transforms.RandomCrop(160, padding=20),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+])
+eval_tf = transforms.Compose([transforms.Resize(160), transforms.ToTensor(), transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
+```
+
+- **Ampliar de 32 a 160 píxeles.** Una ResNet reduce el lado 32 veces. Con 32×32 de entrada, la última etapa trabajaría con un único píxel. Con 160 trabaja con un mapa de 5×5, y los filtros encuentran los objetos al tamaño al que aprendieron a verlos. Lo estándar es 224; aquí se usa 160 para que cada época tarde la mitad, perdiendo un poco de accuracy.
+- **Normalizar con las estadísticas de ImageNet**, no con las de CIFAR-10.
+
+<Quiz
+  id="estadisticas-imagenet"
+  options={[
+    "Porque son más precisas que las de CIFAR-10",
+    "Porque los pesos de la primera capa se aprendieron esperando entradas normalizadas así: con otras estadísticas, la red ve colores y contrastes desplazados",
+    "Porque PyTorch da un error si no se usan",
+    "Da igual cuáles uses, la red se adapta en la primera época",
+  ]}
+  answer={1}
+  explanation="Los filtros de la primera convolución están calibrados para una distribución de entrada concreta. Las estadísticas de CIFAR-10 y de ImageNet no se parecen tanto, pero con datos médicos o de satélite la diferencia es enorme: si cambias la normalización, desplazas todas las activaciones y la red preentrenada rinde peor justo cuando más falta te hace. En fine-tuning la red acaba adaptándose, pero partiendo de peor sitio. Los pesos de torchvision traen su preprocesado: ResNet18_Weights.IMAGENET1K_V1.transforms()."
+  hints={["¿Con qué datos se entrenaron los pesos de la primera capa?"]}
+>
+¿Por qué hay que normalizar con la media y la std de ImageNet al usar una ResNet preentrenada?
+</Quiz>
+
+<Quiz
+  id="lr-pequeno"
+  options={[
+    "Porque con más parámetros entrenables la GPU se queda sin memoria",
+    "Porque los pesos ya son buenos: un learning rate alto, sumado a los gradientes grandes que llegan de una cabeza recién inicializada, los destrozaría en pocos pasos (olvido catastrófico)",
+    "Porque Adam no funciona con learning rates altos",
+    "Para que el entrenamiento sea más rápido",
+  ]}
+  answer={1}
+  explanation="El fine-tuning parte de un buen punto: solo quieres moverte un poco. Con lr = 1e-3 en toda la red, los primeros pasos pueden borrar los filtros de ImageNet antes de que la cabeza haya aprendido algo útil. Por eso se entrena primero la cabeza (fase 1), para que los gradientes que llegan al backbone tengan sentido, y luego todo con un lr diez veces menor. La alternativa es usar learning rates distintos por grupo de capas (discriminative learning rates): pequeño en el backbone, normal en la cabeza. Lo probaste en el TFM como estrategia «differential»."
+  hints={["Piensa qué gradientes recibe el backbone justo cuando la cabeza todavía es aleatoria."]}
+>
+¿Por qué el fine-tuning usa un learning rate diez veces menor?
+</Quiz>
+
+## El resultado
+
+| Modelo | Parámetros entrenados | Épocas | Mejor acc. val. | Tiempo por época |
+| ------ | --------------------: | -----: | --------------: | ---------------: |
+| CNN regularizada (desde cero) | 308.394 | 30 | 89,7% | 11 s |
+| ResNet-18, fase 1 (solo cabeza) | 5.130 | 3 | 80,6% | ~1 min |
+| ResNet-18, fase 2 (fine-tuning) | 11.181.642 | 3 | **95,0%** | ~3 min |
+
+Tres lecturas:
+
+- **La fase 1 sola se queda por debajo de tu CNN** (80,6% frente a 89,7%). Las características de ImageNet son genéricas, y estas fotos de 32×32 ampliadas a 160 no se parecen a las de ImageNet. Una cabeza lineal sobre ellas no basta.
+- **El fine-tuning da el salto: un 95,0% en tres épocas.** Cinco puntos por encima de lo mejor que has conseguido desde cero, después de unos 13 minutos de entrenamiento entre las dos fases. Desde cero, la red tiene que aprender a ver con 45.000 fotos; la preentrenada solo tiene que reajustar lo que ya sabe.
+- **Cada época cuesta mucho más**: la ResNet tiene 36 veces más parámetros que tu CNN y trabaja con imágenes 25 veces más grandes. En una GPU de verdad serían segundos; en el portátil, minutos.
+
+<Callout kind="real" title="En el trabajo">
+- **Transfer learning por defecto.** Con menos de unas decenas de miles de imágenes por clase, casi siempre gana a entrenar desde cero, y en mucho menos tiempo. Entrenar desde cero queda para dominios muy distintos de las fotos normales (o para cuando tienes millones de imágenes).
+- **Elige el backbone por coste y por precisión.** ResNet-18/50 son el punto de partida clásico; EfficientNet y ConvNeXt dan más precisión por cálculo. `timm` (de Hugging Face) tiene cientos de modelos preentrenados con la misma interfaz: `timm.create_model("convnext_tiny", pretrained=True, num_classes=10)`.
+- **Modelos fundacionales**: los embeddings de CLIP o DINOv2 más un clasificador lineal (*linear probing*) rinden muy bien sin fine-tuning. Es la fase 1 de esta lección, con un backbone mucho más grande.
+</Callout>
+
+<Callout kind="practice" title="De tus prácticas (VC04–VC05)">
+«Trabajando con redes pre-entrenadas» acondiciona CIFAR-10 «como en la VGG», congela todas las capas convolucionales y entrena una cabeza nueva (transfer learning), y después descongela bloques convolucionales (fine-tuning). Aquí se usa ResNet-18, más pequeña y más precisa que VGG16, pero las dos fases son las mismas. El ejercicio propuesto, combinar fine-tuning con data augmentation, es lo que hace este tutorial.
+</Callout>
+
+<Callout kind="idea" title="En Keras">
+`base = VGG16(weights="imagenet", include_top=False)`, `base.trainable = False`, una cabeza con la API funcional, `compile` y `fit`. Para la fase 2: `base.trainable = True` y **volver a compilar** con un learning rate menor. En PyTorch se crea un optimizador nuevo; el efecto es el mismo.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/augmentation-y-transfer-learning", why: "Extracción de características frente a fine-tuning, y cuándo usar cada una." },
+    { to: "deep-learning/redes-convolucionales", why: "Por qué las primeras capas aprenden cosas generales y las últimas, específicas." },
+    { to: "tfm/entrenamiento", why: "Las estrategias «phased» y «differential» con ResNet50 en un problema real." },
+  ]}
+/>
+
+## Para llevar
+
+- Transfer learning: backbone preentrenado + cabeza nueva. Fase 1 con todo congelado, fase 2 con todo a un lr diez veces menor.
+- Entra en la red como ella espera: tamaño parecido al de su entrenamiento y estadísticas de ImageNet.
+- La fase 1 entrena 5.130 parámetros de 11,2 millones.
+- En CIFAR-10: 80,6% solo con la cabeza, 95,0% tras tres épocas de fine-tuning, frente al 89,7% de la mejor CNN desde cero.

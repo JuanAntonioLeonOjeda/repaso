@@ -1,0 +1,145 @@
+El modelo funciona en el script. Para que sirva hay que guardarlo de forma que otro proceso lo cargue con su tokenizador, predecir rápido cuando llegan muchas reseñas a la vez y tratar los textos que no se parecen a los de entrenamiento. Y antes de desplegar nada, conviene hacerse una pregunta que en 2019 no existía: **¿haría falta este modelo, o bastaría con preguntarle a un LLM?**
+
+## Guardar modelo y tokenizador juntos
+
+```python
+model.save_pretrained("modelo-estrellas")       # config.json + model.safetensors
+tokenizer.save_pretrained("modelo-estrellas")   # vocabulario y configuración del tokenizador
+```
+
+La carpeta lleva todo lo necesario: la arquitectura (`config.json`, con los nombres de las clases que pusimos en `id2label`), los pesos en *safetensors* (un formato que, a diferencia de pickle, no puede ejecutar código al cargarse) y el tokenizador. La nuestra ocupa 440 MB, casi todo pesos: 110 millones de parámetros a 4 bytes.
+
+Para usarlo, `pipeline` junta tokenizador, modelo y softmax:
+
+```python
+from transformers import pipeline
+
+clasificador = pipeline("text-classification", model="modelo-estrellas", device="cpu")
+clasificador("Se rompió a la semana y el vendedor no responde. No lo recomiendo.")
+```
+
+Con cuatro reseñas escritas para el tutorial:
+
+| Reseña | Predicción | Probabilidad |
+| ------ | :--------: | -----------: |
+| «Llegó en dos días y funciona perfectamente. Muy contento con la compra.» | 5★ | 0,86 |
+| «Cumple, sin más. Por este precio no se puede pedir mucho.» | 4★ | 0,58 |
+| «Se rompió a la semana y el vendedor no responde. No lo recomiendo.» | 1★ | 0,95 |
+| «No está mal, pero esperaba bastante más por lo que cuesta.» | 3★ | 0,77 |
+
+Razonables, y con la confianza donde toca: muy alta en los extremos, más baja en el «cumple, sin más», que igual podría ser un 3.
+
+## Lotes y longitud
+
+En producción las reseñas llegan de una en una (una API) o a miles (un proceso nocturno). Procesarlas en lotes aprovecha mucho mejor el hardware, pero cada lote se rellena hasta su texto más largo. Si se mezclan al azar reseñas de 10 y de 120 tokens, la mayor parte del cálculo se gasta en relleno. El truco: **ordenar por longitud** antes de hacer los lotes.
+
+<CodeExercise
+  id="relleno-por-lotes"
+  title="Cuánto relleno te ahorras ordenando"
+  starter={`
+    import numpy as np
+
+    def padding_share(lengths, batch_size):
+        """Proporción de posiciones de relleno si se hacen lotes en el orden dado."""
+        total = relleno = 0
+        for start in range(0, len(lengths), batch_size):
+            lote = lengths[start:start + batch_size]
+            ancho = max(lote)                          # se rellena hasta el más largo del lote
+            total += ancho * len(lote)
+            relleno += ancho * len(lote) - ___
+        return relleno / total
+
+    rng = np.random.default_rng(0)
+    longitudes = list(np.clip(rng.lognormal(3.4, 0.7, 2000).astype(int), 3, 128))
+    print("al azar:  ", round(padding_share(longitudes, 32), 3))
+    print("ordenadas:", round(padding_share(___, 32), 3))
+  `}
+  solution={`
+    import numpy as np
+
+    def padding_share(lengths, batch_size):
+        """Proporción de posiciones de relleno si se hacen lotes en el orden dado."""
+        total = relleno = 0
+        for start in range(0, len(lengths), batch_size):
+            lote = lengths[start:start + batch_size]
+            ancho = max(lote)                          # se rellena hasta el más largo del lote
+            total += ancho * len(lote)
+            relleno += ancho * len(lote) - sum(lote)
+        return relleno / total
+
+    rng = np.random.default_rng(0)
+    longitudes = list(np.clip(rng.lognormal(3.4, 0.7, 2000).astype(int), 3, 128))
+    print("al azar:  ", round(padding_share(longitudes, 32), 3))
+    print("ordenadas:", round(padding_share(sorted(longitudes), 32), 3))
+  `}
+  hints={[
+    "El relleno de un lote es su tamaño rectangular menos los tokens reales que contiene.",
+    "Para la segunda línea, pasa las longitudes ordenadas.",
+    "relleno += ancho * len(lote) - sum(lote) y padding_share(sorted(longitudes), 32).",
+  ]}
+  check={`
+    assert padding_share([4, 4, 4, 4], 2) == 0, "Si todas miden lo mismo no hay relleno"
+    assert abs(padding_share([1, 3], 2) - 2 / 6) < 1e-12, "Un lote [1, 3] se rellena a 2 × 3 = 6 posiciones, de las que 2 son relleno"
+    azar, orden = padding_share(longitudes, 32), padding_share(sorted(longitudes), 32)
+    assert orden < azar / 5, f"Ordenando, el relleno debería caer mucho (al azar {azar:.2f}, ordenado {orden:.2f})"
+  `}
+>
+Calcula qué parte del cálculo se va en relleno con lotes al azar y con lotes ordenados por longitud. Las longitudes imitan las de las reseñas: muchas cortas y pocas largas.
+</CodeExercise>
+
+En la CPU del portátil, BETO tarda unos **31 ms por reseña** si se procesan de una en una y **24 ms** en lotes de 32, sin ordenar. Los lotes del script van sin ordenar, así que una parte del cálculo se va en relleno; ordenándolos, como en el ejercicio, el ahorro sería mayor. En una API que recibe una reseña cada vez, lo que manda es la latencia de una sola.
+
+<Quiz
+  id="max-length"
+  options={[
+    "Nada: el modelo procesa el texto completo, sea cual sea su longitud",
+    "Si no truncas, una reseña de más de 512 tokens hace fallar a BETO; si truncas a 128 como en el entrenamiento, el modelo solo ve el principio, y eso hay que saberlo (y medirlo) para los textos largos",
+    "El pipeline divide el texto en trozos y promedia automáticamente",
+    "Que las reseñas largas tienen siempre más estrellas",
+  ]}
+  answer={1}
+  explanation="BETO tiene 512 posiciones: sin truncar, un texto más largo da error. Con truncation=True y max_length=128 (como en el entrenamiento) no falla, pero el modelo solo lee los primeros 128 tokens. En reseñas, el título y el principio suelen bastar; en contratos o informes, lo importante puede estar al final. Las opciones son una ventana más larga, partir el texto en trozos y combinar sus predicciones, o un modelo con más contexto. En cualquier caso, hay que medir el rendimiento en los textos largos por separado."
+  hints={["¿Cuántas posiciones tiene BETO y cuántas usó al entrenar?"]}
+>
+En producción llega una reseña de 900 palabras. ¿Qué pasa?
+</Quiz>
+
+## ¿Y un LLM?
+
+Hoy se puede pedir a un LLM: «Lee esta reseña y responde solo con un número de 1 a 5». Sin datos etiquetados, sin entrenar, en una tarde. ¿Para qué todo lo anterior?
+
+<Quiz
+  id="llm-o-modelo"
+  options={[
+    "Siempre un LLM: es más listo que BETO",
+    "Siempre el modelo ajustado: los LLM no saben clasificar",
+    "Depende: para empezar sin datos o con pocos ejemplos, un LLM; para millones de textos al día, con latencia y coste acotados, o datos que no pueden salir de casa, un modelo pequeño ajustado, que además suele acertar más en su tarea concreta",
+    "Ninguno: con TF-IDF basta",
+  ]}
+  answer={2}
+  explanation="Es una decisión de ingeniería, no de moda. Un LLM brilla cuando no tienes etiquetas, la tarea cambia a menudo o necesitas explicar la respuesta. Un modelo de 110 M de parámetros ajustado con tus datos clasifica en milisegundos en una CPU, cuesta casi nada por predicción, funciona sin conexión y, en una tarea estrecha con miles de ejemplos, suele igualar o superar a un LLM generalista. Un patrón habitual en empresa: usar un LLM para etiquetar un primer conjunto de datos (revisado por personas) y entrenar con él un modelo pequeño para producción. TF-IDF sigue siendo el baseline que hay que batir."
+  hints={["Piensa en el volumen, la latencia, el coste por predicción y la privacidad."]}
+>
+¿Cuándo usarías un LLM y cuándo un modelo ajustado como este?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Para servir**: el pipeline detrás de una API de FastAPI (como en el tutorial de visión), o servidores especializados como Text Embeddings Inference o Triton cuando el volumen es alto.
+- **Exportar a ONNX** (`optimum` de Hugging Face) y **cuantizar** a int8 reduce el tamaño a la cuarta parte y acelera la CPU. Mide la accuracy después de cuantizar: suele perder décimas.
+- **Vigila la deriva.** El lenguaje cambia (productos nuevos, expresiones nuevas). Guarda una muestra de predicciones, revísala cada cierto tiempo y reentrena cuando las métricas sobre datos recientes bajen.
+</Callout>
+
+<Temario
+  links={[
+    { to: "fastapi/servir-un-modelo", why: "El modelo detrás de una API: cargarlo una vez, validar, predecir en lote y versionar." },
+    { to: "vision/guardar-y-servir", why: "Guardar pesos, el mismo preprocesado en producción, y eval y no_grad." },
+    { to: "deep-learning/texto-y-secuencias", why: "Los modelos tipo BERT para entender texto y tipo GPT para generarlo." },
+  ]}
+/>
+
+## Para llevar
+
+- `save_pretrained` del modelo **y** del tokenizador en la misma carpeta; `pipeline` para usarlos.
+- Lotes ordenados por longitud: mucho menos relleno y mucho menos cálculo.
+- Trunca como en el entrenamiento y mide aparte los textos largos.
+- LLM para empezar sin datos; modelo pequeño ajustado para volumen, coste, latencia o privacidad.

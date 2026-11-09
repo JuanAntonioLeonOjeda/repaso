@@ -1,0 +1,181 @@
+En este tutorial vas a construir, de principio a fin, una red que mira una foto pequeña y dice qué hay en ella: avión, coche, pájaro, gato… Es lo mismo que hiciste por partes en la práctica de Deep Vision, ahora montado como un proyecto y en **PyTorch**, el framework que usaste en el TFM y el que vas a encontrar en casi cualquier equipo de visión. El orden de las lecciones es el orden real del trabajo: **datos → modelo de referencia → modelo bueno → entrenarlo bien → evaluarlo → servirlo**. Y todo empieza por los datos, que es donde se cometen los errores más caros.
+
+<Callout kind="note" title="Cómo leer este tutorial">
+El código de PyTorch no se puede ejecutar en el navegador: Pyodide no trae PyTorch, y entrenar una CNN en una pestaña tardaría horas. Todo ese código está sacado de `scripts/tutorials/vision.py`, que lo ejecuta de principio a fin. Las cifras que verás (accuracy, tiempos, parámetros) son de una ejecución real en un Mac M4 con MPS y semilla 42. Los ejercicios que sí se ejecutan aquí reproducen cada pieza con NumPy, para que veas qué hace PyTorch por dentro.
+</Callout>
+
+## CIFAR-10
+
+60.000 imágenes en color de **32×32 píxeles**, repartidas por igual en **10 clases**: 50.000 para entrenar y 10.000 para test. Es pequeño, pero no es fácil: a 32×32 un gato y un perro se parecen mucho, y un barco puede ocupar media foto o una esquina.
+
+```python
+from torchvision import datasets
+
+raw = datasets.CIFAR10("data/", train=True, download=True)
+print(raw.data.shape)      # (50000, 32, 32, 3): N, alto, ancho, canales (uint8, 0–255)
+print(raw.classes)         # ['airplane', 'automobile', 'bird', 'cat', ...]
+image, label = raw[0]      # una imagen PIL y un entero
+```
+
+Las imágenes vienen como `uint8` en formato **HWC** (alto, ancho, canal), que es como las guardan PIL, OpenCV y matplotlib. PyTorch, en cambio, quiere **CHW**: los canales primero. De eso se encarga `transforms.ToTensor()`, que hace dos cosas: pasa de HWC a CHW y divide entre 255 para dejar los valores en $[0, 1]$.
+
+<CodeExercise
+  id="a-tensor"
+  title="Lo que hace ToTensor"
+  starter={`
+    import numpy as np
+
+    def to_tensor(img):
+        """img: uint8 (alto, ancho, canales). Devuelve float32 (canales, alto, ancho) en [0, 1]."""
+        x = img.astype(np.float32) / ___
+        return np.transpose(x, ___)
+
+    img = np.zeros((32, 32, 3), dtype=np.uint8)
+    img[:, :, 0] = 255          # una imagen roja pura
+    x = to_tensor(img)
+    print(x.shape, x[0].max(), x[1].max())
+  `}
+  solution={`
+    import numpy as np
+
+    def to_tensor(img):
+        """img: uint8 (alto, ancho, canales). Devuelve float32 (canales, alto, ancho) en [0, 1]."""
+        x = img.astype(np.float32) / 255
+        return np.transpose(x, (2, 0, 1))
+
+    img = np.zeros((32, 32, 3), dtype=np.uint8)
+    img[:, :, 0] = 255          # una imagen roja pura
+    x = to_tensor(img)
+    print(x.shape, x[0].max(), x[1].max())
+  `}
+  hints={[
+    "Un uint8 llega como mucho a 255.",
+    "np.transpose recibe el nuevo orden de los ejes: el eje que quieres primero es el 2 (canales).",
+    "x = img.astype(np.float32) / 255 y np.transpose(x, (2, 0, 1)).",
+  ]}
+  check={`
+    rng = np.random.default_rng(0)
+    prueba = rng.integers(0, 256, size=(4, 5, 3), dtype=np.uint8)
+    t = to_tensor(prueba)
+    assert t.shape == (3, 4, 5), f"La forma debería ser (3, 4, 5) para una imagen 4×5 RGB; sale {t.shape}"
+    assert t.dtype == np.float32, "El resultado debería ser float32"
+    assert np.allclose(t[1, 2, 3], prueba[2, 3, 1] / 255), "El píxel (fila 2, columna 3) del canal verde no cuadra: ¿has ordenado bien los ejes?"
+    assert 0 <= t.min() and t.max() <= 1, "Los valores deberían quedar entre 0 y 1"
+  `}
+>
+Escribe lo que hace `transforms.ToTensor()` con una imagen: pasar de `uint8` HWC a `float32` CHW en $[0, 1]$.
+</CodeExercise>
+
+## Normalizar con las estadísticas de train
+
+Además de pasar a $[0, 1]$, se resta la **media** y se divide entre la **desviación típica** de cada canal. Así cada canal queda centrado en 0 y con escala parecida, y los gradientes de la primera capa salen de un tamaño razonable desde el primer paso. Es la misma idea que el `StandardScaler` de supervisado, aplicada a cada canal de color.
+
+```python
+import torch
+
+pixels = torch.tensor(raw.data, dtype=torch.float32) / 255   # (50000, 32, 32, 3)
+mean = pixels.mean(dim=(0, 1, 2))   # una media por canal: tensor([0.4914, 0.4822, 0.4465])
+std = pixels.std(dim=(0, 1, 2))     #                      tensor([0.2470, 0.2435, 0.2616])
+```
+
+Se calcula **solo con las imágenes de entrenamiento** y después se escribe como constante. (Estos valores son los de las 50.000 imágenes de train de CIFAR-10, antes de apartar la validación. Con 5.000 imágenes más o menos la media apenas cambia, pero en un proyecto propio calcúlalas con el train ya partido.) Esos son los números que verás en todos los tutoriales de CIFAR-10. Las transformaciones quedan así:
+
+```python
+from torchvision import transforms
+
+CIFAR_MEAN = (0.4914, 0.4822, 0.4465)
+CIFAR_STD = (0.2470, 0.2435, 0.2616)
+
+eval_tf = transforms.Compose([
+    transforms.ToTensor(),                      # HWC uint8 -> CHW float en [0, 1]
+    transforms.Normalize(CIFAR_MEAN, CIFAR_STD) # (x - media) / std, canal a canal
+])
+```
+
+<Predict
+  id="normalizar"
+  answer={["1.19", "1,19", "1.186", "1,186"]}
+  tolerance={0.01}
+  explanation="ToTensor: 200 / 255 = 0,7843. Normalize: (0,7843 − 0,4914) / 0,2470 = 0,2929 / 0,2470 ≈ 1,19. Un rojo bastante intenso queda algo más de una desviación típica por encima de la media del canal."
+  hints={[
+    "Primero ToTensor (dividir entre 255) y después Normalize con la media y la std del canal rojo.",
+    "(200/255 − 0,4914) / 0,2470",
+  ]}
+>
+Un píxel tiene el valor 200 en el canal rojo. ¿Cuánto vale después de `ToTensor()` y `Normalize(CIFAR_MEAN, CIFAR_STD)`? (Media del rojo: 0,4914; desviación típica: 0,2470.)
+</Predict>
+
+<Quiz
+  id="fuga"
+  options={[
+    "Ninguno: la media de 60.000 imágenes es prácticamente la misma que la de 50.000",
+    "Que el test deja de ser independiente: una decisión del preprocesado ha mirado los datos de test",
+    "Que la red entrena más despacio",
+    "Que Normalize da error si la media no viene de train",
+  ]}
+  answer={1}
+  explanation="En CIFAR-10 la diferencia numérica sería mínima, pero el principio es el que te salva en los proyectos reales: todo lo que se aprende de los datos (medias, escalas, vocabularios, umbrales) se aprende solo de train. Si no, el test deja de medir cómo funcionará el modelo con datos que nunca ha visto. Con datasets pequeños o con deriva entre train y test, la diferencia sí se nota."
+  hints={["Piensa en para qué sirve el conjunto de test."]}
+>
+Un compañero calcula la media y la desviación típica con las 60.000 imágenes (train + test). ¿Qué problema hay?
+</Quiz>
+
+<Temario
+  links={[
+    { to: "supervisado/limpieza-de-datos", why: "Escalar con estadísticas de train y aplicarlas tal cual a validación y test." },
+    { to: "python/imagenes-con-opencv", why: "Una imagen es un array alto × ancho × canales de uint8." },
+    { to: "deep-learning/tu-primera-red-en-keras", why: "Dividir entre 255 en la práctica de MNIST: el mismo motivo." },
+  ]}
+/>
+
+## Train, validación y test
+
+CIFAR-10 trae dos conjuntos, train y test. Para tomar decisiones (cuántas épocas, qué arquitectura, qué learning rate) hace falta un tercero: **validación**. Se saca de train, y el test no se toca hasta el final. Si eliges el modelo mirando el test, el test deja de ser una medida honesta.
+
+```python
+import torch
+from torch.utils.data import DataLoader, Subset
+
+def split_indices(n, n_val, seed=42):
+    """El mismo reparto train/validación para todos los modelos, para que sean comparables."""
+    perm = torch.randperm(n, generator=torch.Generator().manual_seed(seed)).tolist()
+    return perm[n_val:], perm[:n_val]
+
+train_full = datasets.CIFAR10("data/", train=True, transform=eval_tf)
+test = datasets.CIFAR10("data/", train=False, transform=eval_tf)
+train_idx, val_idx = split_indices(len(train_full), n_val=5000)   # 45.000 / 5.000
+
+train_loader = DataLoader(Subset(train_full, train_idx), batch_size=128, shuffle=True, num_workers=4)
+val_loader = DataLoader(Subset(train_full, val_idx), batch_size=128, shuffle=False, num_workers=4)
+test_loader = DataLoader(test, batch_size=256, shuffle=False, num_workers=4)
+```
+
+Las tres piezas de PyTorch para los datos:
+
+- **`Dataset`**: sabe cuántos ejemplos hay (`len`) y devuelve el ejemplo `i` ya transformado (`ds[i]`). `datasets.CIFAR10` es uno ya hecho; para tus propios datos escribirás una clase con `__len__` y `__getitem__`.
+- **`Subset`**: un `Dataset` restringido a una lista de índices. Así se hace el split sin copiar imágenes.
+- **`DataLoader`**: agrupa en lotes, baraja (`shuffle=True` solo en train) y prepara los lotes en paralelo (`num_workers`) mientras la GPU trabaja.
+
+Cada lote sale con forma `(128, 3, 32, 32)` para las imágenes y `(128,)` para las etiquetas: enteros de 0 a 9, sin one-hot. Ya lo verás en la lección 2: `CrossEntropyLoss` los quiere así.
+
+<Callout kind="real" title="En el trabajo">
+- **Mira las imágenes antes de entrenar.** Una cuadrícula de 64 ejemplos con su etiqueta detecta etiquetas cruzadas, imágenes negras o duplicados en dos minutos. CIFAR-10 está limpio; tus datos no lo estarán.
+- **Fija el split y guárdalo.** Con la semilla en el código, cualquiera que lo repita obtiene la misma validación, y dos modelos solo se comparan si se validan con las mismas imágenes.
+- **Fotos de la misma fuente, en el mismo lado del split.** Si tienes varias fotos del mismo paciente, producto o cámara, se reparten por grupo (`GroupShuffleSplit`), como hiciste con los pacientes en el TFM. Si no, la validación se infla.
+</Callout>
+
+<Callout kind="practice" title="De tus prácticas (VC04–VC05)">
+`07MIAR_VC04_VC05_Deep_Vision_Colab.ipynb` usa CIFAR-10 en «¿Por qué convolutional neural networks?»: cargar el conjunto de datos, acondicionarlo e inspeccionarlo antes de entrenar. Son los mismos pasos que aquí, en Keras. Las dos diferencias reales con PyTorch: las imágenes van en CHW en vez de HWC, y las etiquetas se quedan como enteros en lugar de pasar a one-hot.
+</Callout>
+
+<Callout kind="idea" title="En Keras">
+`(X_train, y_train), (X_test, y_test) = cifar10.load_data()` carga todo en memoria como arrays de NumPy, y `model.fit(..., validation_split=0.1)` separa la validación por ti. En PyTorch todo es explícito: el `Dataset` lee cada imagen cuando se pide (escala a millones de imágenes en disco) y tú decides el split. Hay más líneas, pero no hay magia.
+</Callout>
+
+## Para llevar
+
+- CIFAR-10: 50.000 + 10.000 imágenes de 32×32×3, 10 clases equilibradas.
+- `ToTensor` pasa de HWC uint8 a CHW float en $[0, 1]$; `Normalize` resta la media y divide entre la std de cada canal.
+- Las estadísticas se calculan **solo con train** y se aplican igual a validación, test y producción.
+- Validación sacada de train con una semilla fija; el test, una vez y al final.
+- `Dataset` da ejemplos, `Subset` hace el split, `DataLoader` hace lotes.

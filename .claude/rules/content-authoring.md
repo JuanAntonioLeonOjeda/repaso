@@ -34,6 +34,7 @@ description: How lessons are written — tone, structure, the components availab
 | `<Predict id answer tolerance? explanation hints?>`                | "work it out and type the result"                                      |
 | `<CodeExercise id title starter solution hints check files?>`      | fill-the-gaps Python, checked by `check` asserts (or `expectedOutput`) |
 | `<RunCode title code files?>`                                      | editable runnable example, nothing to solve                            |
+| `<Temario links={[{ to: "subject/lesson", why }]} />`              | "Del temario" box (TFM, tutorials); links checked by the content tests |
 | `<XxxSim />`                                                       | a simulation from `features/simulations/registry.tsx`                  |
 | `<XxxDiagram />`                                                   | an illustration from `features/illustrations/index.ts`                 |
 

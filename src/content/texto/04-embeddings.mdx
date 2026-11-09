@@ -1,0 +1,149 @@
+En TF-IDF cada término es una columna independiente: «genial» y «estupendo» no tienen nada que ver para el modelo, y lo que aprende de una no sirve para la otra. Un **embedding** da a cada palabra un vector denso y pequeño que se **aprende** durante el entrenamiento, y palabras que se usan igual acaban con vectores parecidos. El modelo más sencillo con embeddings hace la media de los vectores de la reseña y la pasa a una capa lineal. Es una bolsa de palabras que aprende qué significa cada palabra.
+
+## nn.Embedding: una tabla que se entrena
+
+`nn.Embedding(30000, 128)` es una matriz de 30.000 filas (una por palabra del vocabulario) y 128 columnas. Dado un id, devuelve su fila. Es lo mismo que multiplicar un one-hot por una matriz, pero sin construir el one-hot. Las filas empiezan aleatorias y el backprop las ajusta.
+
+```python
+from torch import nn
+
+class BagOfEmbeddings(nn.Module):
+    """Media de los embeddings de la reseña (sin contar el relleno) y una capa lineal."""
+
+    def __init__(self, vocab_size, dim=128):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, dim, padding_idx=PAD)
+        self.classifier = nn.Linear(dim, 5)
+
+    def forward(self, ids, lengths):
+        mask = (ids != PAD).unsqueeze(-1).float()            # (B, T, 1)
+        summed = (self.embedding(ids) * mask).sum(dim=1)     # (B, dim)
+        return self.classifier(summed / lengths.unsqueeze(1).to(summed))   # longitudes a float
+```
+
+La media tiene que **ignorar el relleno**. Si un lote junta una reseña de 3 palabras con otra de 100, la corta lleva 97 posiciones de `<pad>`. Una media sobre las 100 posiciones diluiría sus 3 palabras reales entre 97 ceros.
+
+<CodeExercise
+  id="media-con-mascara"
+  title="La media que ignora el relleno"
+  starter={`
+    import numpy as np
+
+    def masked_mean(emb, mask):
+        """emb: (B, T, D) embeddings; mask: (B, T) con 1 en el texto real y 0 en el relleno."""
+        m = mask[:, :, None]                       # (B, T, 1) para multiplicar por emb
+        suma = (emb * m).sum(axis=___)             # suma solo las posiciones reales
+        n_reales = m.sum(axis=1)                   # (B, 1)
+        return suma / ___
+
+    emb = np.array([[[1., 2.], [3., 4.], [9., 9.]],      # reseña de 2 tokens + 1 de relleno
+                    [[5., 5.], [7., 1.], [0., 3.]]])     # reseña de 3 tokens
+    mask = np.array([[1, 1, 0], [1, 1, 1]])
+    print(masked_mean(emb, mask))
+  `}
+  solution={`
+    import numpy as np
+
+    def masked_mean(emb, mask):
+        """emb: (B, T, D) embeddings; mask: (B, T) con 1 en el texto real y 0 en el relleno."""
+        m = mask[:, :, None]                       # (B, T, 1) para multiplicar por emb
+        suma = (emb * m).sum(axis=1)               # suma solo las posiciones reales
+        n_reales = m.sum(axis=1)                   # (B, 1)
+        return suma / n_reales
+
+    emb = np.array([[[1., 2.], [3., 4.], [9., 9.]],      # reseña de 2 tokens + 1 de relleno
+                    [[5., 5.], [7., 1.], [0., 3.]]])     # reseña de 3 tokens
+    mask = np.array([[1, 1, 0], [1, 1, 1]])
+    print(masked_mean(emb, mask))
+  `}
+  hints={[
+    "Hay que sumar a lo largo de la secuencia (el eje T), que es el eje 1.",
+    "Se divide entre el número de posiciones reales de cada reseña, no entre T.",
+    "suma = (emb * m).sum(axis=1) y return suma / n_reales",
+  ]}
+  check={`
+    r = masked_mean(emb, mask)
+    assert r.shape == (2, 2), f"Una media por reseña y dimensión: forma (2, 2); sale {r.shape}"
+    assert np.allclose(r[0], [2, 3]), f"La primera reseña solo tiene 2 tokens reales: media de [1, 2] y [3, 4] = [2, 3]; sale {r[0]}"
+    assert np.allclose(r[1], [4, 3]), f"La segunda no tiene relleno: media de las 3 filas = [4, 3]; sale {r[1]}"
+    rng = np.random.default_rng(0)
+    e = rng.normal(size=(1, 4, 3)); e2 = e.copy(); e2[0, 3] = 1000
+    assert np.allclose(masked_mean(e, np.array([[1, 1, 1, 0]])), masked_mean(e2, np.array([[1, 1, 1, 0]]))), "Lo que haya en las posiciones de relleno no puede cambiar el resultado"
+  `}
+>
+Escribe la media de los embeddings de cada reseña contando solo las posiciones reales. El `check` comprueba que lo que haya en el relleno no cambia el resultado.
+</CodeExercise>
+
+<Quiz
+  id="padding-idx"
+  options={[
+    "Que el id 0 no se puede usar",
+    "Que la fila del id 0 empieza a ceros y no recibe gradiente: el relleno siempre es un vector nulo y no se entrena",
+    "Que PyTorch quita el relleno de las secuencias automáticamente",
+    "Que la red ignora las secuencias que empiezan por 0",
+  ]}
+  answer={1}
+  explanation="Con padding_idx=PAD, la fila de <pad> se inicializa a ceros y su gradiente es siempre cero, así que nunca se mueve. Es una defensa más: aunque alguna operación sumase el relleno por error, sumaría ceros. Pero no quita las posiciones de relleno, que siguen ocupando sitio en el tensor: la máscara sigue haciendo falta para la media, y una LSTM o un transformer necesitan saber dónde acaba cada texto."
+  hints={["Mira qué dice la documentación de nn.Embedding sobre padding_idx y los gradientes."]}
+>
+¿Qué hace `padding_idx=PAD` en `nn.Embedding`?
+</Quiz>
+
+## El resultado
+
+Se entrena con el mismo bucle de siempre (AdamW, `lr=1e-3`, lotes de 128, 5 épocas) sobre las 200.000 reseñas:
+
+| Época | Pérdida train | Acc. train | Acc. val. | MAE val. |
+| ----: | ------------: | ---------: | --------: | -------: |
+| 1 | 1,210 | 48,8% | 52,8% | 0,597 |
+| 2 | 1,063 | 55,0% | 53,8% | 0,565 |
+| 3 | 1,025 | 56,8% | 54,1% | 0,560 |
+| 4 | 1,000 | 58,0% | **54,2%** | 0,556 |
+| 5 | 0,980 | 59,2% | 53,9% | **0,550** |
+
+El modelo tiene **3.840.645 parámetros**, casi todos en la tabla de embeddings (30.000 × 128 = 3.840.000; la capa lineal solo tiene 645). Cada época tarda 19 segundos en MPS.
+
+Se queda en un **54,2%**, por debajo del 56,5% de TF-IDF con bigramas. No es raro: este modelo solo ve palabras sueltas, y TF-IDF tenía además 356.000 términos con sus bigramas («no funciona»). Lo interesante es lo que aprende sin que nadie se lo diga. Estas son las palabras con el embedding más parecido (por coseno) a algunas del vocabulario, en el modelo entrenado:
+
+| Palabra | Sus vecinas más cercanas |
+| ------- | ------------------------ |
+| genial | estupendo, acierto, perfectamente, encanta, sorprendido, perfeccion, maravilla, perfectas |
+| horrible | malísimo, basura, compreis, engaño, estafa, mentira, imposible, decepcionada |
+| regular | mejorable, digamos, fa, antideslizantes, embargo, fu, 6kg, montarla |
+
+Nadie le dijo que «genial» y «estupendo» son sinónimos: lo aprendió porque aparecen en reseñas con las mismas estrellas. Fíjate también en sus límites. Los vecinos son palabras que **predicen lo mismo**, no sinónimos de diccionario: «compreis» (de «no lo compréis») está junto a «horrible». Y «regular», una palabra de reseña intermedia, tiene vecinos casi aleatorios («fa» y «fu», de «ni fu ni fa»): es coherente con lo que se vio en TF-IDF: las estrellas intermedias son las más difíciles. Esa tabla de embeddings es la pieza que aprovechan los modelos de las próximas lecciones.
+
+<Quiz
+  id="sin-orden"
+  options={[
+    "La de la primera, porque «bueno» va antes",
+    "Exactamente la misma: tienen las mismas palabras, así que la media de sus embeddings es idéntica",
+    "La de la segunda, porque «malo» va antes",
+    "Depende del entrenamiento",
+  ]}
+  answer={1}
+  explanation="Una media no tiene orden: cualquier permutación de las palabras da el mismo vector y, por tanto, la misma predicción. Es la limitación que comparte con TF-IDF sin bigramas. La red recurrente de la siguiente lección lee las palabras en orden y puede distinguirlas."
+  hints={["¿Cambia una media si reordenas los sumandos?"]}
+>
+El modelo de la bolsa de embeddings recibe «es bueno, no malo» y «es malo, no bueno». ¿Qué predicción da a cada una?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Este modelo es, en esencia, fastText.** El clasificador de fastText (Joulin et al., 2016) hace la media de los embeddings de las palabras, con bigramas de palabras opcionales, y entrena millones de textos en minutos en una CPU. Su repositorio de Meta está archivado, pero la idea sigue siendo una opción muy seria cuando la latencia o el coste importan.
+- **Embeddings preentrenados.** En lugar de empezar de cero, la tabla se puede inicializar con vectores aprendidos sobre mucho texto (Word2Vec, GloVe, fastText en español) y ajustarlos. Hoy se usan más los embeddings de frase de un transformer (lección 6), pero la idea es la misma.
+- **`nn.EmbeddingBag(mode="mean")`** hace la búsqueda y la media en una sola operación, sin relleno, recibiendo los ids concatenados y dónde empieza cada texto. Es más rápido para este modelo.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/texto-y-secuencias", why: "Qué es un embedding, Word2Vec y por qué palabras parecidas quedan cerca." },
+    { to: "deep-learning/perceptron-y-mlp", why: "La capa lineal final y por qué, sin activaciones, apilar capas no añade capacidad: este modelo es lineal en los embeddings." },
+  ]}
+/>
+
+## Para llevar
+
+- `nn.Embedding`: una tabla de vectores, uno por palabra, que se entrena con el resto de la red.
+- La media de los embeddings tiene que ignorar el relleno: máscara y división entre la longitud real.
+- `padding_idx` deja el vector de `<pad>` a cero y sin gradiente, pero no sustituye a la máscara.
+- En nuestra ejecución: 54,2% en validación. Sin orden ni bigramas, por debajo de TF-IDF, pero con 19 segundos por época.

@@ -127,6 +127,40 @@ export function SubjectIcon({ slug, size = 56 }: { slug: SubjectSlug; size?: num
           <path d="M42 12 l8 -6 M42 24 l8 -6" opacity={0.6} />
         </svg>
       );
+    case "vision":
+      // A photo with a 3×3 convolution kernel sliding over it.
+      return (
+        <svg {...common}>
+          <rect x="5" y="9" width="40" height="32" rx="4" opacity={0.45} />
+          <path d="M5 35 L18 23 L27 31 L33 26 L45 36" opacity={0.45} />
+          <circle cx="15" cy="17" r="3" opacity={0.45} />
+          <rect
+            x="29"
+            y="25"
+            width="22"
+            height="22"
+            rx="2"
+            fill="currentColor"
+            fillOpacity={0.15}
+          />
+          <path d="M36.3 25 V47 M43.7 25 V47 M29 32.3 H51 M29 39.7 H51" opacity={0.6} />
+        </svg>
+      );
+    case "texto":
+      // A speech bubble whose words are cut into tokens.
+      return (
+        <svg {...common}>
+          <path
+            d="M8 10 H48 a4 4 0 0 1 4 4 V36 a4 4 0 0 1 -4 4 H24 L14 48 V40 H8 a4 4 0 0 1 -4 -4 V14 a4 4 0 0 1 4 -4 Z"
+            opacity={0.45}
+          />
+          <rect x="11" y="18" width="12" height="7" rx="2" fill="currentColor" fillOpacity={0.2} />
+          <rect x="26" y="18" width="7" height="7" rx="2" fill="currentColor" fillOpacity={0.35} />
+          <rect x="36" y="18" width="10" height="7" rx="2" fill="currentColor" fillOpacity={0.2} />
+          <rect x="11" y="28" width="16" height="7" rx="2" fill="currentColor" fillOpacity={0.35} />
+          <rect x="30" y="28" width="9" height="7" rx="2" fill="currentColor" fillOpacity={0.2} />
+        </svg>
+      );
     case "fastapi":
       return (
         <svg {...common}>

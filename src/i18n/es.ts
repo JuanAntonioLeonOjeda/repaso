@@ -18,8 +18,9 @@ export const es = {
     lead: "Lo que el máster contó en diapositivas, contado como lo contaría un compañero: con ejemplos, simulaciones que puedes tocar y ejercicios con Python de verdad.",
     subjectsHeading: "Asignaturas",
     tfmHeading: "Trabajo Fin de Máster",
-    extrasHeading: "Expandir conocimientos",
-    extrasLead: "Tutoriales prácticos de lo que se usa en el trabajo y el máster no cubrió.",
+    tutorialsHeading: "Tutoriales",
+    tutorialsLead:
+      "Proyectos completos, paso a paso: lo que el máster explicó por partes, montado como se hace en el trabajo y enlazado con el temario. Y alguna herramienta que el máster no cubrió.",
     lessons: (n: number): string => `${n} lecciones`,
     progress: (done: number, total: number): string => `${done} de ${total} completadas`,
     continueLabel: "Seguir por donde ibas",
@@ -93,6 +94,10 @@ export const es = {
     exampleHint: "Puedes editarlo y volver a ejecutarlo.",
     figure: (n: number): string => `Figura ${n} generada por el código`,
     solutionLabel: "Solución",
+  },
+  temario: {
+    title: "Del temario",
+    label: "Relación con el temario",
   },
   callout: {
     real: "En el trabajo real",

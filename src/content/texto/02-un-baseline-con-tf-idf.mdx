@@ -1,0 +1,180 @@
+Antes de tocar una red neuronal, el baseline de texto que todo el mundo debería probar: **TF-IDF + regresión logística**. Convierte cada reseña en un vector que cuenta qué palabras aparecen, dando más peso a las que distinguen y menos a las que salen en todas partes, y encima pone un clasificador lineal. Se entrena en segundos, se explica mirando sus pesos y, como vas a ver, deja el listón bastante alto.
+
+## Contar palabras, con cabeza
+
+Una **bolsa de palabras** representa cada texto por cuántas veces aparece cada palabra del vocabulario, sin importar el orden. Contar a secas tiene un problema: «de», «el» o «que» salen en todas las reseñas y dominan el vector sin decir nada. **TF-IDF** multiplica cada recuento (TF, *term frequency*) por un peso que castiga las palabras comunes (IDF, *inverse document frequency*). scikit-learn usa por defecto esta versión suavizada:
+
+$$
+\text{idf}(t) = \ln\frac{1 + n}{1 + \text{df}(t)} + 1
+$$
+
+donde $n$ es el número de documentos y $\text{df}(t)$ en cuántos aparece el término $t$. Después, cada vector se normaliza a longitud 1, para que una reseña larga no pese más que una corta.
+
+<CodeExercise
+  id="idf"
+  title="El IDF de scikit-learn, a mano"
+  starter={`
+    import numpy as np
+
+    docs = ["no me gusta nada", "me gusta mucho", "no funciona", "funciona muy bien, me gusta"]
+
+    def idf(term, docs):
+        n = len(docs)
+        df = sum(term in d.replace(",", "").split() for d in docs)   # documentos que lo contienen
+        return np.log((1 + ___) / (1 + ___)) + 1
+
+    for t in ["gusta", "nada", "no"]:
+        print(t, round(idf(t, docs), 4))
+  `}
+  solution={`
+    import numpy as np
+
+    docs = ["no me gusta nada", "me gusta mucho", "no funciona", "funciona muy bien, me gusta"]
+
+    def idf(term, docs):
+        n = len(docs)
+        df = sum(term in d.replace(",", "").split() for d in docs)   # documentos que lo contienen
+        return np.log((1 + n) / (1 + df)) + 1
+
+    for t in ["gusta", "nada", "no"]:
+        print(t, round(idf(t, docs), 4))
+  `}
+  hints={[
+    "Arriba va el número de documentos; abajo, en cuántos aparece el término.",
+    "Los dos llevan el +1 del suavizado, que ya está escrito.",
+    "np.log((1 + n) / (1 + df)) + 1",
+  ]}
+  check={`
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    v = TfidfVectorizer(norm=None).fit(docs)
+    ref = dict(zip(v.get_feature_names_out(), v.idf_))
+    for t in ["gusta", "nada", "no", "funciona", "bien"]:
+        assert abs(idf(t, docs) - ref[t]) < 1e-9, f"El idf de «{t}» debería ser {ref[t]:.4f} (el de scikit-learn) y sale {idf(t, docs):.4f}"
+    assert idf("nada", docs) > idf("gusta", docs), "Una palabra rara («nada», en 1 documento) tiene que pesar más que una común («gusta», en 3)"
+  `}
+>
+Calcula el IDF de cada término con la fórmula de arriba. El `check` lo compara con el `idf_` de `TfidfVectorizer`.
+</CodeExercise>
+
+## «No me gusta»: los bigramas
+
+Una bolsa de palabras ve «me gusta» en «no me gusta» y en «me gusta mucho». Sin orden, la negación se pierde. El arreglo barato es contar también **pares de palabras seguidas** (bigramas): «no_me», «me_gusta», «no_funciona». El vocabulario crece mucho, pero un modelo lineal lo maneja sin problema.
+
+```python
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+
+vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=2, sublinear_tf=True)
+X_train = vectorizer.fit_transform(train_texts)      # aprende vocabulario e idf SOLO con train
+X_val = vectorizer.transform(val_texts)              # los aplica tal cual
+
+clf = LogisticRegression(C=0.3, max_iter=2000)        # C se elige con validación, más abajo
+clf.fit(X_train, train_y)
+val_pred = clf.predict(X_val)
+```
+
+- `ngram_range=(1, 2)`: palabras sueltas y bigramas.
+- `min_df=2`: descarta términos que solo aparecen en una reseña (erratas, nombres raros). Con palabras y bigramas, el vocabulario baja de 1,06 millones a 356.160 términos.
+- `sublinear_tf=True`: usa $1 + \ln(\text{tf})$ en vez del recuento. Repetir «malo» cinco veces no es cinco veces más negativo.
+
+<RunCode
+  title="TF-IDF + regresión logística con ocho reseñas"
+  code={`
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.linear_model import LogisticRegression
+
+    textos = [
+        "me gusta mucho, funciona genial", "perfecto, muy contento",
+        "funciona bien y llegó pronto", "me encanta, lo recomiendo",
+        "no me gusta nada", "no funciona, lo devuelvo",
+        "llegó roto y no funciona", "muy malo, no lo recomiendo",
+    ]
+    etiquetas = [1, 1, 1, 1, 0, 0, 0, 0]   # 1 = positiva, 0 = negativa
+
+    for ngramas in [(1, 1), (1, 2)]:
+        vec = TfidfVectorizer(ngram_range=ngramas)
+        clf = LogisticRegression(C=10).fit(vec.fit_transform(textos), etiquetas)
+        prueba = ["no me gusta", "me gusta", "no lo recomiendo", "lo recomiendo"]
+        probs = clf.predict_proba(vec.transform(prueba))[:, 1]
+        print(ngramas, [f"{t}: {p:.2f}" for t, p in zip(prueba, probs)])
+  `}
+/>
+
+Ejecútalo y fíjate en dos cosas. Primero, con ocho frases los bigramas apenas cambian nada: «no» aparece en todas las reseñas negativas y ya empuja hacia negativo por sí solo. Segundo, «lo recomiendo» se queda cerca de 0,5 con los dos vectorizadores, porque «lo», «recomiendo» y el bigrama «lo recomiendo» salen en una reseña positiva y en otra negativa. Con tan pocos datos no hay de dónde aprender matices. Con 200.000 reseñas la diferencia sí se mide: con solo palabras sueltas (39.667 términos) el modelo se queda en un 55,0% de accuracy y un MAE de 0,554 en validación; con bigramas (356.160 términos), un 56,5% y 0,529. Un punto y medio, gratis.
+
+<Quiz
+  id="bigramas"
+  options={[
+    "Porque los bigramas siempre mejoran cualquier modelo",
+    "Porque recuperan algo de orden local, y en reseñas el orden local carga mucho significado: negaciones («no funciona») e intensificadores («muy bien»)",
+    "Porque reducen el tamaño del vocabulario",
+    "Porque la regresión logística no funciona con palabras sueltas",
+  ]}
+  answer={1}
+  explanation="Una bolsa de palabras no sabe qué va con qué. Los bigramas son una forma barata de capturar el orden más cercano, justo donde están las negaciones y los matices. El precio es un vocabulario mucho mayor (aquí, cientos de miles de términos), que un modelo lineal con regularización maneja bien. No siempre mejoran: con textos muy cortos o temas en los que el orden no importa, apenas cambian nada."
+  hints={["Piensa en qué pierde una bolsa de palabras y en qué parte del texto está esa información."]}
+>
+¿Por qué añadir bigramas ayuda tanto en reseñas?
+</Quiz>
+
+## Elegir la regularización con validación
+
+`C` es la inversa de la fuerza de regularización: un `C` pequeño obliga a pesos pequeños (modelo más simple) y uno grande deja que el modelo se ajuste más a train. Con cientos de miles de términos, la regularización importa. Se prueba en una rejilla y se elige con **validación**:
+
+| Reseñas de train | C | Términos | Entrenar (s) | Acc. val. | MAE val. | A una estrella |
+| ---------------: | --: | -------: | -----------: | --------: | -------: | -------------: |
+| 40.000 | 0,3 | 106.148 | 3 | **53,3%** | 0,596 | 90,3% |
+| 40.000 | 1 | 106.148 | 6 | 53,0% | **0,580** | 91,2% |
+| 40.000 | 3 | 106.148 | 8 | 52,3% | 0,584 | 91,4% |
+| 200.000 | 0,3 | 356.160 | 31 | **56,5%** | 0,529 | 92,6% |
+| 200.000 | 1 | 356.160 | 48 | 56,3% | **0,521** | 93,0% |
+| 200.000 | 3 | 356.160 | 76 | 55,2% | 0,534 | 92,6% |
+
+<Quiz
+  id="elegir-c"
+  options={[
+    "C = 0,3, porque la accuracy es lo que importa",
+    "C = 1, porque el MAE es lo que importa",
+    "La que optimice la métrica que decidiste antes de mirar los resultados; si las dos importan, da igual: 0,2 puntos de accuracy y 0,008 de MAE están dentro del ruido de 5.000 reseñas",
+    "C = 3, porque tiene más términos útiles",
+  ]}
+  answer={2}
+  explanation="Elegir la métrica después de ver qué configuración gana en cada una es una forma sutil de hacerse trampas. Se decide antes, por el problema: si las estrellas se usan como número (medias por producto), el MAE; si se usan como categoría, la accuracy. Y aquí la diferencia es diminuta: con 5.000 reseñas de validación, el error estándar de una accuracy del 56% ronda los 0,7 puntos, así que C = 0,3 y C = 1 están empatados. Lo que sí se ve claro: C = 3 es peor (regulariza poco) y 200.000 reseñas dan unos 3 puntos más que 40.000. El script se queda con C = 0,3, el de mejor accuracy."
+  hints={["¿Cuántas reseñas tiene la validación? Calcula el error estándar de una accuracy del 56%: √(0,56 · 0,44 / 5.000)."]}
+>
+Con las 200.000 reseñas, C = 0,3 da la mejor accuracy y C = 1 el mejor MAE. ¿Con cuál te quedas?
+</Quiz>
+
+## Qué ha aprendido
+
+Un modelo lineal se puede abrir: cada clase tiene un peso por término. Estos son los diez términos con más peso hacia 1 y hacia 5 estrellas:
+
+| Hacia 1 estrella | Hacia 5 estrellas |
+| ---------------- | ----------------- |
+| no, mala, no funciona, nada, fatal, estafa, mal, nunca, timo, malo | perfecto, genial, excelente, perfectamente, perfecta, muy, muy bien, encantado, buena, buen |
+
+Tiene todo el sentido, y por eso este modelo es fácil de auditar: «no funciona», «estafa» y «timo» contra «perfecto», «encantado» y «muy bien». Un bigrama («no funciona») se cuela entre los diez más negativos.
+
+En números: **56,5% de accuracy y MAE 0,53**, frente al 20% y 1,2 de no saber nada, y el 92,6% de las predicciones a una estrella o menos de la real. Pero el recall por clase delata dónde está la dificultad: acierta el 73% de las reseñas de 1 estrella y el 71% de las de 5, y solo entre el 43% y el 49% de las de 2, 3 y 4. Los extremos tienen palabras inconfundibles; las estrellas intermedias se escriben con matices («cumple, pero…»), y una bolsa de palabras los capta mal.
+
+<Callout kind="real" title="En el trabajo">
+- **TF-IDF + logística es el primer modelo de cualquier problema de texto.** En minutos sabes si el problema es fácil, si las etiquetas tienen sentido y qué palabras deciden. Muchas veces se queda en producción: es barato, rápido y explicable.
+- **Mira los pesos para auditar el modelo.** Si entre los términos más importantes aparece un nombre de marca, un código de producto o la firma de un agente, el modelo está aprendiendo un atajo, no la opinión.
+- **Un `Pipeline` de scikit-learn** (`make_pipeline(TfidfVectorizer(...), LogisticRegression(...))`) guarda vectorizador y modelo juntos, así que en producción se aplica exactamente la misma transformación.
+</Callout>
+
+<Temario
+  links={[
+    { to: "python/texto", why: "Bolsa de palabras y stopwords, y TF-IDF + logística como base recomendada para el sentimiento." },
+    { to: "supervisado/clasificacion", why: "La regresión logística, su frontera lineal y la regularización." },
+    { to: "supervisado/validacion", why: "Elegir hiperparámetros con validación, nunca con test." },
+    { to: "deep-learning/texto-y-secuencias", why: "Bolsa de palabras y TF-IDF frente a embeddings." },
+  ]}
+/>
+
+## Para llevar
+
+- TF-IDF: recuento de cada término × un peso que castiga los términos comunes; luego, normalizar.
+- Los bigramas recuperan orden local: negaciones e intensificadores.
+- `fit` del vectorizador solo con train; `C` elegido con validación.
+- El listón: 56,5% de accuracy y MAE 0,53 en validación, entrenando 31 segundos en una CPU. Las estrellas intermedias son las difíciles.
