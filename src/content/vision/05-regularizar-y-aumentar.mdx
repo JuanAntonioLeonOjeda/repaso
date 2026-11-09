@@ -82,10 +82,10 @@ Hay que elegir aumentos que **no cambien la etiqueta** y que produzcan imágenes
   options={[
     "Volteo horizontal",
     "Recortes con desplazamientos de pocos píxeles",
-    "Volteo vertical",
     "Pequeños cambios de brillo y contraste",
+    "Volteo vertical",
   ]}
-  answer={2}
+  answer={3}
   explanation="En CIFAR-10 no hay aviones, barcos ni caballos boca abajo: el volteo vertical genera imágenes que nunca aparecerán en test y obliga a la red a gastar capacidad en ellas. Las otras tres producen fotos plausibles. El criterio depende del dominio: en imágenes de satélite o de microscopio, rotar 90° o voltear en vertical sí es válido, porque ahí no hay un arriba. Y con dígitos, rotar 180° convierte un 6 en un 9."
   hints={["Piensa si la imagen transformada podría estar en el conjunto de test."]}
 >
@@ -110,12 +110,12 @@ val_loader = DataLoader(Subset(val_full, val_idx), batch_size=128, shuffle=False
 <Quiz
   id="validacion-aumentada"
   options={[
-    "Sí: así la validación es más exigente, y eso es bueno",
     "No: la validación tiene que medir lo mismo que el test (imágenes sin tocar) y ser igual en cada época, para poder comparar épocas y modelos",
+    "Sí: así la validación es más exigente, y eso es bueno",
     "Da igual, porque los aumentos son pequeños",
     "Solo importa si se usa early stopping",
   ]}
-  answer={1}
+  answer={0}
   explanation="La validación sirve para decidir: qué época guardar, qué modelo es mejor. Para eso tiene que ser fija y parecerse a lo que verá el modelo de verdad. Con aumentos aleatorios es ruidosa (cada época ve recortes distintos) y no se puede comparar con la del modelo sin aumentos. Los aumentos solo se aplican a train. La única excepción a propósito es el test-time augmentation: promediar las predicciones de varias versiones de la imagen, y se aplica igual en validación y en test."
   hints={["¿Para qué usas la validación en el bucle de la lección 4?"]}
 >

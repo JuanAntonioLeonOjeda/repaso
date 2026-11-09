@@ -109,11 +109,11 @@ Un píxel tiene el valor 200 en el canal rojo. ¿Cuánto vale después de `ToTen
   id="fuga"
   options={[
     "Ninguno: la media de 60.000 imágenes es prácticamente la misma que la de 50.000",
-    "Que el test deja de ser independiente: una decisión del preprocesado ha mirado los datos de test",
     "Que la red entrena más despacio",
+    "Que el test deja de ser independiente: una decisión del preprocesado ha mirado los datos de test",
     "Que Normalize da error si la media no viene de train",
   ]}
-  answer={1}
+  answer={2}
   explanation="En CIFAR-10 la diferencia numérica sería mínima, pero el principio es el que te salva en los proyectos reales: todo lo que se aprende de los datos (medias, escalas, vocabularios, umbrales) se aprende solo de train. Si no, el test deja de medir cómo funcionará el modelo con datos que nunca ha visto. Con datasets pequeños o con deriva entre train y test, la diferencia sí se nota."
   hints={["Piensa en para qué sirve el conjunto de test."]}
 >

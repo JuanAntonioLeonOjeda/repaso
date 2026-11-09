@@ -78,11 +78,11 @@ Escribe la media de los embeddings de cada reseña contando solo las posiciones 
   id="padding-idx"
   options={[
     "Que el id 0 no se puede usar",
-    "Que la fila del id 0 empieza a ceros y no recibe gradiente: el relleno siempre es un vector nulo y no se entrena",
     "Que PyTorch quita el relleno de las secuencias automáticamente",
+    "Que la fila del id 0 empieza a ceros y no recibe gradiente: el relleno siempre es un vector nulo y no se entrena",
     "Que la red ignora las secuencias que empiezan por 0",
   ]}
-  answer={1}
+  answer={2}
   explanation="Con padding_idx=PAD, la fila de <pad> se inicializa a ceros y su gradiente es siempre cero, así que nunca se mueve. Es una defensa más: aunque alguna operación sumase el relleno por error, sumaría ceros. Pero no quita las posiciones de relleno, que siguen ocupando sitio en el tensor: la máscara sigue haciendo falta para la media, y una LSTM o un transformer necesitan saber dónde acaba cada texto."
   hints={["Mira qué dice la documentación de nn.Embedding sobre padding_idx y los gradientes."]}
 >
@@ -116,12 +116,12 @@ Nadie le dijo que «genial» y «estupendo» son sinónimos: lo aprendió porque
 <Quiz
   id="sin-orden"
   options={[
-    "La de la primera, porque «bueno» va antes",
     "Exactamente la misma: tienen las mismas palabras, así que la media de sus embeddings es idéntica",
+    "La de la primera, porque «bueno» va antes",
     "La de la segunda, porque «malo» va antes",
     "Depende del entrenamiento",
   ]}
-  answer={1}
+  answer={0}
   explanation="Una media no tiene orden: cualquier permutación de las palabras da el mismo vector y, por tanto, la misma predicción. Es la limitación que comparte con TF-IDF sin bigramas. La red recurrente de la siguiente lección lee las palabras en orden y puede distinguirlas."
   hints={["¿Cambia una media si reordenas los sumandos?"]}
 >

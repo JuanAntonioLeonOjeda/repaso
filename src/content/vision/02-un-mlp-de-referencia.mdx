@@ -33,7 +33,7 @@ Dos detalles que confunden al venir de Keras:
 
 <Predict
   id="params-primera-capa"
-  answer="1573376"
+  answer={["1573376", "1.573.376"]}
   explanation="Cada una de las 512 neuronas tiene un peso por entrada (3 · 32 · 32 = 3.072) más un sesgo: 3.072 · 512 + 512 = 1.573.376. Es el 92% de todos los parámetros del MLP, y casi todos sirven para conectar cada píxel con cada neurona por separado."
   hints={[
     "Una imagen aplanada tiene 3 · 32 · 32 entradas.",
@@ -161,12 +161,12 @@ Completa el gradiente de un clasificador softmax y entrénalo 100 pasos. Es lo q
 <Quiz
   id="zero-grad"
   options={[
-    "Nada: PyTorch borra los gradientes automáticamente después de step()",
     "Los gradientes de cada lote se suman a los anteriores, así que cada paso usa la suma de todos los gradientes desde el principio",
+    "Nada: PyTorch borra los gradientes automáticamente después de step()",
     "Da un error en la segunda iteración",
     "Los parámetros dejan de actualizarse",
   ]}
-  answer={1}
+  answer={0}
   explanation="backward() acumula: suma el gradiente nuevo al que ya hay en p.grad. Sin zero_grad, el paso n usa la suma de los n gradientes anteriores, los pasos se hacen cada vez más grandes y el entrenamiento diverge o se vuelve errático. No da ningún error. La acumulación existe a propósito: sirve para simular un batch grande con varios lotes pequeños (gradient accumulation), llamando a zero_grad solo cada k lotes."
   hints={["Mira qué hace backward() con p.grad si ya tiene un valor."]}
 >

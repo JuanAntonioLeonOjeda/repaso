@@ -57,7 +57,7 @@ El esquema general de una CNN de clasificación es este (dibujado con dos bloque
 
 <Predict
   id="entradas-lineal"
-  answer="8192"
+  answer={["8192", "8.192"]}
   explanation="Tres poolings dividen el lado entre 8: 64 → 32 → 16 → 8. Del último bloque salen 128 canales de 8×8, y el Flatten da 128 · 8 · 8 = 8.192 valores. La Linear tendría que ser nn.Linear(8192, 10); con nn.Linear(2048, 10) el forward falla con «mat1 and mat2 shapes cannot be multiplied». Es el motivo para usar global average pooling (más abajo): con él da igual el tamaño de la imagen."
   hints={["Cada bloque divide el lado entre 2: hay tres bloques.", "Canales del último bloque × lado final × lado final."]}
 >
@@ -68,7 +68,7 @@ Si entrenaras la misma `SmallCNN` con imágenes de **64×64**, ¿cuántas entrad
 
 <Predict
   id="params-bloque"
-  answer="10272"
+  answer={["10272", "10.272"]}
   explanation="Primera convolución: 3 · 3 · 3 · 32 pesos + 32 sesgos = 896. Su BatchNorm: 2 · 32 = 64 (escala y desplazamiento por canal; la media y la varianza acumuladas no se entrenan, son buffers). Segunda convolución: 3 · 3 · 32 · 32 + 32 = 9.248. Su BatchNorm: 64. Total: 896 + 64 + 9.248 + 64 = 10.272. El pooling y la ReLU no tienen parámetros."
   hints={[
     "Una Conv2d tiene k · k · c_in · c_out pesos más c_out sesgos.",
@@ -105,11 +105,11 @@ El problema también se ve: la CNN **sobreajusta igual que el MLP**, solo que m�
   id="por-que-gana"
   options={[
     "Porque tiene más capas, y más profundidad siempre es mejor",
-    "Porque comparte cada filtro por toda la imagen y solo mira vecindarios: aprende un detector de bordes una vez y lo usa en todas partes",
     "Porque BatchNorm es lo que da la mejora, la convolución da igual",
     "Porque entrena durante más épocas",
+    "Porque comparte cada filtro por toda la imagen y solo mira vecindarios: aprende un detector de bordes una vez y lo usa en todas partes",
   ]}
-  answer={1}
+  answer={3}
   explanation="Pesos compartidos y conectividad local. Un filtro 3×3 que detecta un borde horizontal sirve en cualquier posición, así que no hay que aprenderlo 1.024 veces. Por eso la CNN tiene menos parámetros y generaliza mejor: la arquitectura ya trae la suposición correcta sobre las imágenes (el sesgo inductivo). BatchNorm ayuda a entrenar, pero no añade ninguna suposición sobre las imágenes."
   hints={["Piensa qué tiene que aprender el MLP para reconocer un gato en la esquina contraria a donde lo vio."]}
 >
