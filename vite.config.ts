@@ -10,6 +10,9 @@ import remarkMath from "remark-math";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  // GitHub Pages serves the app under /<repo>/ (BASE_PATH=/repaso/ in the deploy workflow);
+  // Docker and the dev server keep it at the root. ADR-0007.
+  base: process.env.BASE_PATH ?? "/",
   plugins: [
     {
       // MDX runs before React's plugin so lessons get Fast Refresh like any component.

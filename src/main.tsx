@@ -19,7 +19,8 @@ if (root === null) {
 }
 
 // A data router is created once, outside React: it must not live in component state.
-const router = createBrowserRouter(routes);
+// The basename follows Vite's `base`: "/" in Docker, "/repaso/" on GitHub Pages (ADR-0007).
+const router = createBrowserRouter(routes, { basename: import.meta.env.BASE_URL });
 
 createRoot(root).render(
   <StrictMode>

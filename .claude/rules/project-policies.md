@@ -12,7 +12,10 @@ reinforcement learning, optimisation algorithms, approximate reasoning), each a 
 course material in plain language, with interactive simulations and exercises that run real
 Python in the browser.
 
-- It runs on localhost in Docker. **No accounts, no backend, no telemetry** (ADR-0001).
+- It runs on localhost in Docker and is published on GitHub Pages at
+  `https://juanantonioleonojeda.github.io/repaso/` from the public repository, on every push to
+  `main` (ADR-0007). **No accounts, no backend, no telemetry** (ADR-0001). Everything in the
+  repository is public: never commit secrets or patient data.
 - Progress lives in the browser's `localStorage` (ADR-0003).
 - Python exercises run in Pyodide inside a Web Worker, loaded from the jsDelivr CDN
   (ADR-0002). The machine needs internet access the first time an exercise runs.
