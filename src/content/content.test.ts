@@ -34,7 +34,7 @@ describe("content catalog", () => {
       ...tutorials.map((s) => s.slug),
     ]);
     // FastAPI keeps its slug when it moves into the tutorials: stored progress depends on it.
-    expect(tutorials.map((s) => s.slug)).toEqual(["vision", "fastapi"]);
+    expect(tutorials.map((s) => s.slug)).toEqual(["vision", "texto", "fastapi"]);
   });
 
   for (const subject of sections) {

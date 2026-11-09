@@ -1,0 +1,133 @@
+Este tutorial hace con texto lo que el de visión hizo con imágenes: construir de principio a fin un modelo que lee una reseña de un producto, en español, y adivina **cuántas estrellas** le puso quien la escribió. Es un problema real (ordenar reseñas, detectar clientes enfadados, resumir opiniones) y tiene una trampa interesante: las estrellas tienen **orden**, y confundir un 4 con un 5 no es lo mismo que confundir un 1 con un 5. Irás de lo más sencillo que funciona (TF-IDF) a lo que se usa hoy (ajustar un transformer preentrenado), y verás cuánto aporta cada paso.
+
+<Callout kind="note" title="Cómo leer este tutorial">
+Como en el de visión, el código de PyTorch y de Hugging Face no se ejecuta en el navegador: sale de `scripts/tutorials/texto.py`, y las cifras que verás son de una ejecución real en un Mac M4 con MPS (semilla 42). Los ejercicios del navegador reproducen cada pieza con NumPy y scikit-learn. Las reseñas de ejemplo de las lecciones están escritas para el tutorial, imitando el estilo del corpus.
+</Callout>
+
+## El corpus
+
+El **Multilingual Amazon Reviews Corpus** (MARC) recoge reseñas de Amazon de 2015 a 2019 en seis idiomas. La parte en español tiene **200.000 reseñas para entrenar, 5.000 para validar y 5.000 para test**, exactamente equilibradas: una quinta parte de cada número de estrellas. Cada ejemplo es el título y el cuerpo de la reseña, y su etiqueta, de 0 a 4 (1 a 5 estrellas).
+
+```python
+import json
+from huggingface_hub import hf_hub_download
+
+def load_split(split):
+    path = hf_hub_download("mteb/amazon_reviews_multi", f"es/{split}.jsonl", repo_type="dataset")
+    rows = [json.loads(line) for line in open(path, encoding="utf-8")]
+    return [r["text"] for r in rows], np.array([r["label"] for r in rows])
+
+train_texts, train_y = load_split("train")      # 200.000 textos y etiquetas 0–4
+```
+
+Son reseñas como estas:
+
+| Estrellas | Reseña (inventada, del estilo del corpus) |
+| :-------: | ----------------------------------------- |
+| 1 | «No funciona. Llegó con la caja abierta y no enciende. Devuelto.» |
+| 2 | «Pequeño para lo que anuncian. Cumple, pero no lo volvería a comprar.» |
+| 3 | «Correcto. La calidad es la que esperas por ese precio, ni más ni menos.» |
+| 4 | «Buen soporte, fácil de montar. Le quito una estrella porque faltaba un tornillo.» |
+| 5 | «Perfecto, llegó antes de lo previsto y funciona de maravilla.» |
+
+Son textos **cortos**: la mitad tiene 25 palabras o menos, el 90% no pasa de 59 y solo el 1% supera las 127. Eso importa más adelante, para decidir cuántos tokens procesa la red.
+
+<Callout kind="warn" title="Las reseñas son datos de terceros">
+El script descarga el corpus cada vez y no se guarda en el repositorio. MARC se publicó para investigación con sus propias condiciones de uso: léelas antes de usarlo en algo que no sea estudiar.
+</Callout>
+
+## Una etiqueta con orden
+
+Hay dos formas de mirar las estrellas. Como **clases** (cinco categorías sin relación) o como un **número** (1 < 2 < 3 < 4 < 5). En este tutorial se entrenan clasificadores de cinco clases, que es lo habitual, pero se evalúan también como números, con el **error absoluto medio** (MAE): cuántas estrellas te equivocas, en media.
+
+$$
+\text{MAE} = \frac{1}{n} \sum_{i=1}^{n} |\,\hat{y}_i - y_i\,|
+$$
+
+Antes de entrenar nada conviene saber cuánto se consigue **sin saber nada**. Como las clases están equilibradas, predecir siempre lo mismo acierta un 20%.
+
+<Predict
+  id="mae-constante"
+  answer={["1.2", "1,2"]}
+  tolerance={0.01}
+  explanation="Con el test equilibrado, una quinta parte de las reseñas tiene cada número de estrellas. Predecir siempre 3 falla por 2 en las de 1 y 5 estrellas, por 1 en las de 2 y 4, y acierta las de 3: (2 + 1 + 0 + 1 + 2) / 5 = 1,2. Es el MAE más bajo que se puede conseguir con una predicción constante: la mediana minimiza el error absoluto. Cualquier modelo tiene que bajar de ahí."
+  hints={[
+    "Cada número de estrellas es el 20% del test.",
+    "Calcula el error de cada grupo: |1 − 3|, |2 − 3|, |3 − 3|, |4 − 3| y |5 − 3|, y haz la media.",
+  ]}
+>
+Un "modelo" que siempre predice **3 estrellas**. ¿Qué MAE tiene en un test con las cinco clases igual de representadas?
+</Predict>
+
+<Quiz
+  id="ordinal"
+  options={[
+    "El A, porque tiene más accuracy",
+    "El B: con un punto menos de accuracy, sus errores son de una estrella y los de A son de cuatro; para el negocio, B es mucho mejor",
+    "Son iguales, porque la diferencia de accuracy es pequeña",
+    "No se puede saber sin la matriz de confusión de los dos",
+  ]}
+  answer={1}
+  explanation="La accuracy trata todos los errores igual. Con una etiqueta ordinal no lo son: llamar «5 estrellas» a un cliente furioso es un error grave; llamar 4 a un 5, casi irrelevante. Por eso se mira también el MAE y el «acierto a una estrella» (el porcentaje de predicciones que se quedan a una estrella o menos). La matriz de confusión ayuda a ver dónde están los errores, pero aquí el enunciado ya dice cómo son."
+  hints={["¿Qué error le molestaría más a la empresa que lee estas predicciones?"]}
+>
+El modelo A tiene un 56% de accuracy y, cuando falla, suele confundir 1 con 5. El modelo B tiene un 55% y casi todos sus errores son entre estrellas vecinas. ¿Cuál prefieres?
+</Quiz>
+
+## El fichero viene ordenado
+
+Este es el error que casi se cuela en el script del tutorial. Para ajustar BETO (lección 6) se usan 40.000 reseñas de las 200.000. Lo natural es coger las primeras:
+
+```python
+train_texts[:40_000]          # ¡cuidado!
+```
+
+Pero el fichero de entrenamiento **viene ordenado por etiqueta**: las primeras 40.000 filas son todas de 1 estrella. Lo detectó la prueba rápida del script, cuando la regresión logística se quejó de que solo había una clase. La solución es barajar una vez, con semilla, antes de hacer cualquier subconjunto:
+
+```python
+def shuffled(texts, labels, seed=42):
+    order = np.random.default_rng(seed).permutation(len(labels))
+    return [texts[i] for i in order], labels[order]
+
+train_texts, train_y = shuffled(train_texts, train_y)   # ahora sí: train_texts[:40_000]
+```
+
+<Quiz
+  id="ordenado"
+  options={[
+    "Un modelo que aprende bien las reseñas de 1 estrella",
+    "Un modelo que predice «1 estrella» para todo: en validación acierta un 20% y su MAE es 2",
+    "Un error al entrenar, porque falta el resto de clases",
+    "Nada grave: el modelo generaliza a las demás clases",
+  ]}
+  answer={1}
+  explanation="Con una cabeza de 5 salidas no hay error, simplemente aprende que la respuesta siempre es la clase 0. En la validación equilibrada acierta el 20% (las reseñas de 1 estrella) y falla por 1, 2, 3 y 4 en las demás: MAE = (0 + 1 + 2 + 3 + 4) / 5 = 2. scikit-learn sí avisa (la regresión logística necesita al menos dos clases); una red de PyTorch entrena sin rechistar. Por eso hay que mirar siempre la distribución de etiquetas de lo que de verdad entra en el entrenamiento."
+  hints={["¿Qué etiquetas vería el modelo durante todo el entrenamiento?"]}
+>
+Si ajustas BETO con las primeras 40.000 filas del fichero, sin barajar, ¿qué obtienes?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Comprueba la distribución de etiquetas de cada subconjunto** que entra en el entrenamiento, no solo la del dataset completo. Un `np.bincount(y_train)` antes de entrenar evita muchos disgustos.
+- **Los datos reales no están equilibrados.** En Amazon, la mayoría de las reseñas son de 5 estrellas. Este corpus se equilibró a propósito; con datos reales tendrías que pensar en pesos por clase o en métricas que no premien predecir siempre la clase mayoritaria.
+- **El texto va con su contexto.** El título de la reseña suele concentrar la opinión ("Dinero tirado", "Perfecto"). Aquí van juntos en un solo texto; en otros problemas, separar campos o añadir metadatos (categoría del producto, idioma) ayuda.
+</Callout>
+
+<Callout kind="practice" title="De tus prácticas">
+La práctica de introducción al deep learning (`07MAIR_VC02_VC03_Introducción_a_Deep_Learning_Practica_Colab_Clase.ipynb`) tiene una sección «MLP aplicado a texto: ejemplo Reuters» con los mismos pasos: cargar, inspeccionar y acondicionar el conjunto de datos antes de entrenar. Aquí el texto llega en bruto, sin convertir a números: esa parte la harás tú.
+</Callout>
+
+<Temario
+  links={[
+    { to: "python/texto", why: "Tokens, frecuencias y un primer análisis de sentimiento con texto en español." },
+    { to: "supervisado/metricas", why: "Accuracy, matriz de confusión y por qué la métrica depende del problema." },
+    { to: "supervisado/validacion", why: "Train, validación y test, y por qué el test se usa una sola vez." },
+  ]}
+/>
+
+## Para llevar
+
+- MARC en español: 200.000 / 5.000 / 5.000 reseñas, equilibradas en 5 estrellas, cortas (mediana de 25 palabras).
+- La etiqueta es ordinal: se mide con accuracy y también con MAE y acierto a una estrella.
+- Sin saber nada: 20% de accuracy y MAE 1,2 (prediciendo siempre 3).
+- Baraja con semilla antes de hacer subconjuntos: el fichero viene ordenado por etiqueta.

@@ -11,6 +11,7 @@ export type SubjectSlug =
   | "razonamiento"
   | "tfm"
   | "vision"
+  | "texto"
   | "fastapi";
 
 export interface Lesson {

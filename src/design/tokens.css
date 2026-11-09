@@ -64,6 +64,8 @@
   /* Tutorials */
   --subject-vision: #9a4a1c;
   --subject-vision-soft: #f8ebe2;
+  --subject-texto: #8a3b7a;
+  --subject-texto-soft: #f5e6f1;
   --subject-fastapi: #3f7d20;
   --subject-fastapi-soft: #e6f2dd;
 
@@ -166,6 +168,8 @@
   --subject-tfm-soft: #1b2539;
   --subject-vision: #f0a37a;
   --subject-vision-soft: #33200f;
+  --subject-texto: #eba2d9;
+  --subject-texto-soft: #33172d;
   --subject-fastapi: #9fd67a;
   --subject-fastapi-soft: #1c2a12;
 

@@ -1,0 +1,172 @@
+Hasta aquí, todos los modelos han aprendido el español desde cero con 200.000 reseñas: qué palabras hay, qué significan y cómo se combinan. Un **transformer preentrenado** llega sabiendo todo eso, porque se entrenó antes con miles de millones de palabras de texto general. Solo hay que enseñarle la tarea. Es el *transfer learning* de visión aplicado al texto, y es lo que se hace hoy en casi cualquier problema de clasificación de texto. El modelo es **BETO**, un BERT entrenado con texto en español por la Universidad de Chile.
+
+## Qué es BETO
+
+BETO tiene la arquitectura de BERT-base: 12 capas de *encoder* de transformer, vectores de 768 dimensiones, 12 cabezas de atención y un máximo de 512 tokens. Se preentrenó con un corpus grande de texto en español con la tarea de **adivinar palabras tapadas** (*masked language modeling*): se ocultan algunas palabras de una frase y el modelo tiene que recuperarlas mirando el contexto de los dos lados. Para hacerlo bien tiene que aprender gramática, significado y bastante conocimiento del mundo. Esa es la parte que se reutiliza.
+
+```python
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+BETO = "dccuchile/bert-base-spanish-wwm-cased"
+STARS = ["1★", "2★", "3★", "4★", "5★"]
+
+tokenizer = AutoTokenizer.from_pretrained(BETO)
+model = AutoModelForSequenceClassification.from_pretrained(
+    BETO, num_labels=5,
+    id2label=dict(enumerate(STARS)), label2id={s: i for i, s in enumerate(STARS)},
+)
+print(sum(p.numel() for p in model.parameters()))     # 109.854.725
+```
+
+`AutoModelForSequenceClassification` coge el BERT preentrenado y le pone encima una cabeza de clasificación. Al cargarlo, `transformers` imprime un informe que conviene leer:
+
+- **UNEXPECTED**: `cls.predictions.*`. Es la cabeza que adivinaba palabras tapadas. No hace falta para clasificar y se descarta.
+- **MISSING**: `classifier.*` y `bert.pooler.*`. Son las capas que no venían en el checkpoint de BETO y empiezan **aleatorias**. Hay que entrenarlas.
+
+## La cabeza de clasificación
+
+BERT añade al principio de cada texto un token especial, `[CLS]`. Después de las 12 capas de atención, su vector ha "mirado" toda la frase. La cabeza de clasificación de `transformers` hace: vector de `[CLS]` → *pooler* (una capa densa de 768 a 768 con tanh) → dropout → capa lineal de 768 a 5.
+
+<Predict
+  id="cls"
+  answer="594437"
+  explanation="El pooler es una capa densa de 768 a 768: 768 · 768 + 768 = 590.592 parámetros. El clasificador, de 768 a 5: 768 · 5 + 5 = 3.845. En total, 594.437 parámetros empiezan aleatorios, alrededor del 0,5% del modelo. El otro 99,5% llega preentrenado. Por eso unas pocas épocas bastan."
+  hints={[
+    "Las dos capas que el informe marca como MISSING son el pooler (768 → 768) y el clasificador (768 → 5).",
+    "Cada capa densa: entradas · salidas + salidas.",
+    "768 · 768 + 768 + 768 · 5 + 5",
+  ]}
+>
+¿Cuántos parámetros empiezan **aleatorios** (los que el informe marca como MISSING)?
+</Predict>
+
+## El fine-tuning
+
+Se entrena **todo** el modelo, no solo la cabeza, con el mismo bucle de las lecciones anteriores. Cambian tres cosas: los datos pasan por el tokenizador de BETO, el learning rate es muy pequeño y sube y baja con *warmup*.
+
+```python
+from transformers import get_linear_schedule_with_warmup
+
+def collate(batch):                                   # relleno hasta la más larga del lote
+    features, ys = zip(*batch)
+    padded = tokenizer.pad(list(features), return_tensors="pt")
+    return padded["input_ids"], padded["attention_mask"], torch.tensor(ys)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5, weight_decay=0.01)
+total_steps = epochs * len(train_loader)              # 2 épocas · 1.250 lotes = 2.500 pasos
+scheduler = get_linear_schedule_with_warmup(optimizer, int(0.1 * total_steps), total_steps)
+
+for ids, mask, y in train_loader:
+    logits = model(input_ids=ids.to(device), attention_mask=mask.to(device)).logits
+    loss = loss_fn(logits, y.to(device))
+    optimizer.zero_grad()
+    loss.backward()
+    nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    optimizer.step()
+    scheduler.step()
+```
+
+La `attention_mask` es la máscara de la lección 3: las posiciones de relleno no reciben atención, así que el resultado no depende de cuánto relleno lleve el lote.
+
+<CodeExercise
+  id="warmup"
+  title="Warmup lineal y bajada lineal"
+  starter={`
+    def lr_factor(step, warmup, total):
+        """Factor por el que se multiplica el lr en el paso step (lo que hace get_linear_schedule_with_warmup)."""
+        if step < warmup:
+            return step / ___                          # sube de 0 a 1 durante el warmup
+        return max(0.0, (total - step) / (total - ___))  # baja de 1 a 0 hasta el final
+
+    total, warmup = 2500, 250
+    for paso in [0, 125, 250, 1375, 2500]:
+        print(paso, round(2e-5 * lr_factor(paso, warmup, total), 8))
+  `}
+  solution={`
+    def lr_factor(step, warmup, total):
+        """Factor por el que se multiplica el lr en el paso step (lo que hace get_linear_schedule_with_warmup)."""
+        if step < warmup:
+            return step / warmup                          # sube de 0 a 1 durante el warmup
+        return max(0.0, (total - step) / (total - warmup))  # baja de 1 a 0 hasta el final
+
+    total, warmup = 2500, 250
+    for paso in [0, 125, 250, 1375, 2500]:
+        print(paso, round(2e-5 * lr_factor(paso, warmup, total), 8))
+  `}
+  hints={[
+    "Durante el warmup, el factor va de 0 (paso 0) a 1 (paso warmup).",
+    "Después baja en línea recta: vale 1 en el paso warmup y 0 en el paso total.",
+    "step / warmup y (total - step) / (total - warmup).",
+  ]}
+  check={`
+    assert lr_factor(0, 250, 2500) == 0, "En el paso 0 el learning rate empieza en 0"
+    assert abs(lr_factor(125, 250, 2500) - 0.5) < 1e-12, "A mitad del warmup, el factor vale 0,5"
+    assert abs(lr_factor(250, 250, 2500) - 1) < 1e-12, "Al acabar el warmup se llega al lr máximo (factor 1)"
+    assert abs(lr_factor(1375, 250, 2500) - 0.5) < 1e-12, "A mitad de la bajada (paso 1.375), el factor vuelve a ser 0,5"
+    assert lr_factor(2500, 250, 2500) == 0 and lr_factor(2600, 250, 2500) == 0, "Al final (y después) el factor es 0, nunca negativo"
+  `}
+>
+Escribe el factor del learning rate que aplica `get_linear_schedule_with_warmup` en cada paso.
+</CodeExercise>
+
+<Quiz
+  id="lr-pequeno"
+  options={[
+    "Porque BETO es muy grande y con un lr mayor no cabe en memoria",
+    "Porque los pesos preentrenados ya son buenos y solo hay que moverlos un poco: con lr = 1e-3 los primeros pasos, empujados por una cabeza aleatoria, borrarían lo aprendido. El warmup protege justo esos primeros pasos",
+    "Porque los transformers no admiten learning rates mayores",
+    "Para que el entrenamiento dure más épocas",
+  ]}
+  answer={1}
+  explanation="Es el mismo razonamiento que el fine-tuning de la ResNet en el tutorial de visión, llevado más lejos: en BERT los learning rates habituales están entre 1e-5 y 5e-5. Al principio la cabeza es aleatoria y sus gradientes no tienen sentido, así que el warmup empieza con lr casi 0 y lo sube poco a poco. Con lr alto y sin warmup, el fine-tuning de BERT diverge con frecuencia o se queda prediciendo una sola clase."
+  hints={["Recuerda la fase 2 del transfer learning en el tutorial de visión."]}
+>
+¿Por qué el fine-tuning de BERT usa `lr=2e-5` y warmup?
+</Quiz>
+
+## El resultado
+
+BETO se ajusta con **40.000 reseñas** (una quinta parte del train; con las 200.000, cada época tardaría unas dos horas en el portátil), 2 épocas y lotes de 32:
+
+| Época | Pérdida train | Acc. train | Acc. val. | MAE val. | Tiempo |
+| ----: | ------------: | ---------: | --------: | -------: | -----: |
+| 1 | 1,033 | 53,9% | 58,1% | 0,470 | 24,5 min |
+| 2 | 0,835 | 63,6% | **59,1%** | **0,464** | 24,3 min |
+
+| Modelo | Reseñas de train | Acc. val. | MAE val. |
+| ------ | ---------------: | --------: | -------: |
+| TF-IDF + logística | 40.000 | 53,3% | 0,596 |
+| TF-IDF + logística | 200.000 | 56,5% | 0,529 |
+| Bolsa de embeddings | 200.000 | 54,2% | 0,556 |
+| BiLSTM | 200.000 | 58,0% | 0,485 |
+| **BETO** | **40.000** | **59,1%** | **0,464** |
+
+**Con una quinta parte de los datos, BETO es el mejor en las dos métricas.** Con las mismas 40.000 reseñas, TF-IDF se queda casi 6 puntos por debajo; con cinco veces más datos, la LSTM sigue un punto por detrás. Eso es lo que aporta el preentrenamiento: el modelo no tiene que aprender el español con tus reseñas, solo la tarea. Y ya en la primera época, con el learning rate todavía alto, supera a todo lo anterior.
+
+El precio está en el cálculo: **49 minutos** de entrenamiento en el portátil frente a los 31 segundos de TF-IDF, y un modelo de 110 millones de parámetros que habrá que servir (lección 8). Con una GPU dedicada sería mucho más rápido, pero el orden de magnitud frente a TF-IDF no cambia.
+
+<Callout kind="real" title="En el trabajo">
+- **El `Trainer` de Hugging Face** hace este bucle por ti (warmup, recorte, evaluación, checkpoints, precisión mixta, varias GPU). Para proyectos reales suele compensar; escribir el bucle una vez sirve para saber qué hace.
+- **Elige el modelo base por idioma, tamaño y licencia.** Para español: BETO, los RoBERTa de la BNE (MarIA) o modelos multilingües como XLM-RoBERTa. Si la latencia importa, versiones destiladas (DistilBERT y similares) con la mitad de capas pierden poco.
+- **Pocos datos etiquetados**: con unos cientos de ejemplos, el fine-tuning completo sobreajusta. Prueba antes embeddings de frase de un modelo preentrenado con una regresión logística encima, o un LLM con unos ejemplos en el prompt (lección 8).
+- **LoRA y compañía** ajustan solo unas matrices pequeñas añadidas al modelo, en vez de todos los pesos. Ahorran memoria y permiten guardar una versión por tarea ocupando unos pocos MB. Volverán a salir en el tutorial sobre LLM, que está previsto.
+</Callout>
+
+<Callout kind="idea" title="En Keras">
+`keras_hub` (antes `keras_nlp`) tiene clasificadores de BERT preentrenados (`keras_hub.models.BertTextClassifier.from_preset(...)`) que se ajustan con `compile` y `fit`. El catálogo de modelos de Hugging Face es mucho mayor, y es donde se publican los modelos en español.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/texto-y-secuencias", why: "Atención y transformers: BERT como codificador para entender texto, GPT como decodificador para generarlo." },
+    { to: "deep-learning/augmentation-y-transfer-learning", why: "Transfer learning: reutilizar un modelo preentrenado y ajustarlo con un lr pequeño." },
+    { to: "vision/transfer-learning", why: "La misma receta con una ResNet: cabeza nueva, learning rate pequeño." },
+  ]}
+/>
+
+## Para llevar
+
+- BETO: BERT-base en español (12 capas, 768 dimensiones, 110 M de parámetros), preentrenado adivinando palabras tapadas.
+- `AutoModelForSequenceClassification` añade una cabeza sobre `[CLS]`; el informe de carga dice qué empieza aleatorio.
+- Fine-tuning de todo el modelo con `lr=2e-5`, warmup del 10%, bajada lineal y recorte del gradiente.
+- En nuestra ejecución: 59,1% y MAE 0,464 en validación con 40.000 reseñas y 2 épocas. Mejor que todo lo entrenado desde cero con 200.000.
