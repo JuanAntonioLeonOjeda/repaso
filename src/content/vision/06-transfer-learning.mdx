@@ -32,7 +32,7 @@ En la fase 1 solo se entrena la cabeza: `nn.Linear(512, 10)`, con 512 · 10 + 10
 
 <Predict
   id="entrenables-cabeza"
-  answer="11181642"
+  answer={["11181642", "11.181.642"]}
   explanation="La ResNet-18 original tiene 11.689.512 parámetros, de los que su fc (512 → 1000) se lleva 512 · 1000 + 1000 = 513.000. Al cambiarla por la cabeza de 5.130: 11.689.512 − 513.000 + 5.130 = 11.181.642. En la fase 2 se entrenan todos, unas 2.180 veces más que en la fase 1."
   hints={[
     "Parte del total de la ResNet-18 original y cambia su capa fc por la nueva.",
@@ -76,11 +76,11 @@ eval_tf = transforms.Compose([transforms.Resize(160), transforms.ToTensor(), tra
   id="estadisticas-imagenet"
   options={[
     "Porque son más precisas que las de CIFAR-10",
-    "Porque los pesos de la primera capa se aprendieron esperando entradas normalizadas así: con otras estadísticas, la red ve colores y contrastes desplazados",
     "Porque PyTorch da un error si no se usan",
+    "Porque los pesos de la primera capa se aprendieron esperando entradas normalizadas así: con otras estadísticas, la red ve colores y contrastes desplazados",
     "Da igual cuáles uses, la red se adapta en la primera época",
   ]}
-  answer={1}
+  answer={2}
   explanation="Los filtros de la primera convolución están calibrados para una distribución de entrada concreta. Las estadísticas de CIFAR-10 y de ImageNet no se parecen tanto, pero con datos médicos o de satélite la diferencia es enorme: si cambias la normalización, desplazas todas las activaciones y la red preentrenada rinde peor justo cuando más falta te hace. En fine-tuning la red acaba adaptándose, pero partiendo de peor sitio. Los pesos de torchvision traen su preprocesado: ResNet18_Weights.IMAGENET1K_V1.transforms()."
   hints={["¿Con qué datos se entrenaron los pesos de la primera capa?"]}
 >

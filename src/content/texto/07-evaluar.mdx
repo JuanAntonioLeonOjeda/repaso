@@ -116,12 +116,12 @@ Esos 21 errores lejanos son los que hay que leer. El script guarda los más conf
 <Quiz
   id="errores-lejanos"
   options={[
-    "Que el modelo es malo y hay que entrenar más",
     "Que hay que mirar esas reseñas una a una: muchas serán ironía, opiniones sobre el envío y no sobre el producto, o reseñas cuyas estrellas no cuadran con el texto, y eso es un límite de las etiquetas, no del modelo",
+    "Que el modelo es malo y hay que entrenar más",
     "Que hay que quitarlas del test para que las métricas salgan mejor",
     "Nada: con una accuracy alta, unos pocos errores no importan",
   ]}
-  answer={1}
+  answer={0}
   explanation="Los errores de tres o cuatro estrellas son los más informativos. Cuando el modelo está muy seguro y se equivoca por mucho, a menudo es la etiqueta la que no cuadra con el texto: alguien que escribe «perfecto» y pone una estrella por error, una queja sobre el envío en un producto que le encanta, o ironía. No se quitan del test (eso inflaría las métricas), pero se cuentan y se describen: dicen cuánto se puede mejorar de verdad y si hace falta revisar el etiquetado."
   hints={["Repasa los tipos de error que viste al mirar las imágenes en el tutorial de visión."]}
 >

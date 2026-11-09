@@ -1,0 +1,136 @@
+El VAE genera dígitos variados pero borrosos, porque su pérdida compara píxel a píxel y premia el promedio. Una **GAN** cambia la pregunta: en vez de "¿se parece píxel a píxel a una imagen real?", pregunta "¿una red entrenada para detectar falsificaciones la distingue de una real?". El juego del falsificador y el policía ya lo viste en la asignatura. Aquí lo montas en PyTorch con convoluciones (una **DCGAN**) y aprendes lo que la teoría no cuenta: cómo se escribe el bucle y cómo saber si está funcionando.
+
+## Generador y discriminador
+
+El generador hace lo contrario que una CNN de clasificación: parte de un vector de ruido de 100 números y lo va ampliando con **convoluciones traspuestas** hasta tener una imagen de 28×28.
+
+```python
+Z_DIM = 100
+
+class Generator(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(Z_DIM, 128 * 7 * 7), nn.Unflatten(1, (128, 7, 7)), nn.BatchNorm2d(128), nn.ReLU(),
+            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1), nn.BatchNorm2d(64), nn.ReLU(),  # 14×14
+            nn.ConvTranspose2d(64, 1, 4, stride=2, padding=1), nn.Tanh(),                        # 28×28 en [-1, 1]
+        )
+    def forward(self, z):
+        return self.net(z)
+
+class Discriminator(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 64, 4, stride=2, padding=1), nn.LeakyReLU(0.2),                         # 14×14
+            nn.Conv2d(64, 128, 4, stride=2, padding=1), nn.BatchNorm2d(128), nn.LeakyReLU(0.2),  # 7×7
+            nn.Flatten(), nn.Linear(128 * 7 * 7, 1),                                             # un logit: "real"
+        )
+    def forward(self, x):
+        return self.net(x).squeeze(1)
+```
+
+Las recetas de la DCGAN que aparecen aquí: `Tanh` a la salida del generador (y las imágenes reales normalizadas a $[-1, 1]$ para que coincidan), `BatchNorm` en las dos redes, `LeakyReLU` en el discriminador para que el gradiente no se apague con activaciones negativas, y `stride=2` en vez de pooling.
+
+<Predict
+  id="params-generador"
+  answer={["633472", "633.472"]}
+  explanation="La capa lineal pasa de 100 números a 128 · 7 · 7 = 6.272: 100 · 6.272 + 6.272 = 633.472 parámetros. Es el 83% de todo el generador (766.017): casi todo el trabajo de «inventar» está en convertir el ruido en un mapa de características de 7×7; las convoluciones traspuestas solo lo amplían."
+  hints={["128 · 7 · 7 salidas.", "Entradas · salidas + un sesgo por salida."]}
+>
+¿Cuántos parámetros tiene la primera capa del generador, `nn.Linear(100, 128 * 7 * 7)`?
+</Predict>
+
+## El bucle: dos optimizadores y un detach
+
+```python
+G, D = Generator().to(device), Discriminator().to(device)
+opt_g = torch.optim.Adam(G.parameters(), lr=2e-4, betas=(0.5, 0.999))
+opt_d = torch.optim.Adam(D.parameters(), lr=2e-4, betas=(0.5, 0.999))
+bce = nn.BCEWithLogitsLoss()
+
+for real, _ in loader:                                   # imágenes en [-1, 1]; las etiquetas no se usan
+    ones, zeros = torch.ones(len(real)), torch.zeros(len(real))
+    # 1) Discriminador: reales -> 1, falsas -> 0
+    fake = G(torch.randn(len(real), Z_DIM))
+    loss_d = bce(D(real), ones) + bce(D(fake.detach()), zeros)
+    opt_d.zero_grad(); loss_d.backward(); opt_d.step()
+    # 2) Generador: que D diga "real" de las falsas (pérdida no saturante)
+    loss_g = bce(D(fake), ones)
+    opt_g.zero_grad(); loss_g.backward(); opt_g.step()
+```
+
+Dos detalles que separan una GAN que funciona de una que no:
+
+- **Cada red tiene su optimizador**, y cada paso solo mueve los parámetros de una. `opt_d.step()` no toca $G$ y `opt_g.step()` no toca $D$, aunque el gradiente de `loss_g` atraviese $D$ para llegar a $G$.
+- **`betas=(0.5, 0.999)`**: un momento más corto que el de Adam por defecto (0,9). En un juego entre dos redes, el objetivo de cada una cambia en cada paso, y un momento largo arrastra demasiada historia.
+
+<Quiz
+  id="detach"
+  options={[
+    "Para ahorrar memoria, sin más efecto",
+    "Para que el generador no cambie las imágenes reales",
+    "Porque BCEWithLogitsLoss no acepta tensores con gradiente",
+    "Para que la pérdida del discriminador no envíe gradientes al generador: en ese paso solo se entrena D, y sin detach el backward de loss_d llenaría los gradientes de G empujándolo en la dirección equivocada (hacia que sus falsas parezcan falsas)",
+  ]}
+  answer={3}
+  explanation="loss_d quiere que D(fake) se acerque a 0. Si el gradiente de esa pérdida llegase a G, le diría a G cómo hacer sus imágenes más fáciles de detectar: justo lo contrario de lo que debe aprender. Sin detach, esos gradientes se acumularían en los .grad de G. opt_g.zero_grad() los borra antes de su propio paso, pero en este bucle ni siquiera llega a eso: loss_d.backward() libera el grafo del generador, y el loss_g.backward() posterior, que reutiliza fake, falla con «Trying to backward through the graph a second time». El «arreglo» habitual, retain_graph=True, hace que funcione pero deja la fuga de gradientes y gasta más memoria. Con detach, el paso de D trata las falsas como datos fijos."
+  hints={["¿Qué haría el gradiente de loss_d con los pesos de G si pudiera llegar hasta ellos?"]}
+>
+¿Para qué sirve `fake.detach()` en la pérdida del discriminador?
+</Quiz>
+
+## El resultado
+
+20 épocas sobre los 60.000 dígitos. Las mismas 16 entradas de ruido, decodificadas por el generador al final de las épocas 1, 5 y 20 (una fila por época):
+
+![Dígitos generados por la GAN con el mismo ruido al final de las épocas 1, 5 y 20, una fila por época](/tutorials/generativa/gan-epocas.png)
+
+En la época 1 hay manchas con forma vagamente de dígito. En la 5 ya se reconocen casi todos, con trazos rotos. En la 20 la mayoría son dígitos nítidos (más que los del VAE), aunque varios siguen siendo deformes: la GAN no promedia, así que cuando falla no sale un dígito borroso, sale uno deforme. Cada época tarda unos 16 segundos en MPS: 5,5 minutos en total.
+
+Y ahora mira los números del entrenamiento:
+
+| Época | Pérdida D | Pérdida G | $D(x)$ medio | $D(G(z))$ medio |
+| ----: | --------: | --------: | -----------: | --------------: |
+| 1 | 0,452 | 2,235 | 0,82 | 0,19 |
+| 5 | 0,342 | 2,673 | 0,87 | 0,13 |
+| 10 | 0,349 | 2,697 | 0,87 | 0,13 |
+| 20 | 0,350 | 2,982 | 0,87 | 0,13 |
+
+Desde la época 5, las pérdidas casi no se mueven, y la del generador incluso **sube** un poco. Las imágenes, mientras tanto, mejoran mucho. En el equilibrio teórico, $D$ diría 0,5 a todo y las pérdidas valdrían $2 \ln 2 \approx 1{,}39$ (la de $D$) y $\ln 2 \approx 0{,}69$ (la de $G$). Aquí el discriminador gana con claridad (da 0,87 a las reales y 0,13 a las falsas), pero no tanto como para dejar al generador sin gradiente.
+
+<Quiz
+  id="leer-las-perdidas"
+  options={[
+    "Nada sobre la calidad: cada pérdida mide lo bien que lo hace una red contra la otra, y las dos mejoran a la vez; unas pérdidas estables solo dicen que ninguna red ha ganado del todo",
+    "Que el generador no está aprendiendo, porque su pérdida no baja",
+    "Que hay que parar el entrenamiento",
+    "Que el discriminador es demasiado grande",
+  ]}
+  answer={0}
+  explanation="En una red normal, la pérdida baja si el modelo mejora. En una GAN, la del generador depende de lo bueno que sea el discriminador en ese momento, y el discriminador también mejora. Por eso las pérdidas se quedan más o menos planas mientras las imágenes mejoran mucho, como en la figura. Las señales de alarma son otras: que la pérdida de D se vaya a 0 (D gana y G deja de recibir gradiente útil) o que las muestras de épocas seguidas sean todas iguales (mode collapse). Para medir calidad hace falta mirar muestras y usar métricas como el FID (lección 7)."
+  hints={["¿Contra quién compite el generador, y ese rival se queda quieto?"]}
+>
+Las pérdidas de D y G apenas cambian entre la época 5 y la 20, pero las imágenes mejoran claramente. ¿Qué dicen esas pérdidas?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Las GAN han cedido el terreno a la difusión** en generación de imágenes: entrenan de forma inestable y tienden al *mode collapse*. Siguen vivas donde importa la velocidad, porque generan en **una sola pasada** (la difusión necesita muchas): superresolución en tiempo real, traducción imagen a imagen, y como pérdida adicional para afinar otros modelos (el «adversarial» de SD-Turbo, lección 8).
+- **Si entrenas una**: guarda una cuadrícula de muestras con ruido fijo en cada época, como aquí. Es la forma más rápida de ver si aprende, si se estanca o si colapsa.
+- **Trucos habituales** cuando no converge: suavizar las etiquetas reales (0,9 en vez de 1), *spectral normalization* en el discriminador, o pasar a una pérdida tipo WGAN-GP.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/gans", why: "El juego minimax, el bucle alterno, la pérdida no saturante, el mode collapse y las variantes." },
+    { to: "deep-learning/redes-convolucionales", why: "Convoluciones con stride y cómo cambian el tamaño de los mapas." },
+    { to: "deep-learning/optimizadores-y-regularizacion", why: "Adam y su momento (β₁), el parámetro que la DCGAN acorta a 0,5." },
+  ]}
+/>
+
+## Para llevar
+
+- DCGAN: generador con convoluciones traspuestas y `Tanh`, discriminador convolucional con `LeakyReLU`, `BatchNorm` en los dos.
+- Dos optimizadores, `fake.detach()` en el paso de D y pérdida no saturante en el de G.
+- Las pérdidas de una GAN no miden calidad: mira muestras con ruido fijo cada época.
+- En nuestra ejecución: dígitos nítidos tras 20 épocas (5,5 minutos), con las pérdidas planas desde la época 5.

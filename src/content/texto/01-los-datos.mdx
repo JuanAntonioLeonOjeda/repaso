@@ -96,11 +96,11 @@ train_texts, train_y = shuffled(train_texts, train_y)   # ahora sí: train_texts
   id="ordenado"
   options={[
     "Un modelo que aprende bien las reseñas de 1 estrella",
-    "Un modelo que predice «1 estrella» para todo: en validación acierta un 20% y su MAE es 2",
     "Un error al entrenar, porque falta el resto de clases",
     "Nada grave: el modelo generaliza a las demás clases",
+    "Un modelo que predice «1 estrella» para todo: en validación acierta un 20% y su MAE es 2",
   ]}
-  answer={1}
+  answer={3}
   explanation="Con una cabeza de 5 salidas no hay error, simplemente aprende que la respuesta siempre es la clase 0. En la validación equilibrada acierta el 20% (las reseñas de 1 estrella) y falla por 1, 2, 3 y 4 en las demás: MAE = (0 + 1 + 2 + 3 + 4) / 5 = 2. scikit-learn sí avisa (la regresión logística necesita al menos dos clases); una red de PyTorch entrena sin rechistar. Por eso hay que mirar siempre la distribución de etiquetas de lo que de verdad entra en el entrenamiento."
   hints={["¿Qué etiquetas vería el modelo durante todo el entrenamiento?"]}
 >

@@ -66,6 +66,8 @@
   --subject-vision-soft: #f8ebe2;
   --subject-texto: #8a3b7a;
   --subject-texto-soft: #f5e6f1;
+  --subject-generativa: #4338a8;
+  --subject-generativa-soft: #e9e7f8;
   --subject-fastapi: #3f7d20;
   --subject-fastapi-soft: #e6f2dd;
 
@@ -170,6 +172,8 @@
   --subject-vision-soft: #33200f;
   --subject-texto: #eba2d9;
   --subject-texto-soft: #33172d;
+  --subject-generativa: #aaa3f5;
+  --subject-generativa-soft: #1f1c3d;
   --subject-fastapi: #9fd67a;
   --subject-fastapi-soft: #1c2a12;
 

@@ -1,0 +1,160 @@
+Ya tienes cuatro generadores y una galería de imágenes de cada uno. ¿Cuál es mejor? Mirar ayuda, pero engaña: el ojo se fija en las muestras bonitas y no ve si faltan dígitos enteros, si todos los 3 son iguales o si el modelo está copiando el entrenamiento. Esta lección mide las cuatro cosas que dijimos en la primera: **calidad, variedad, control y novedad**, con herramientas que se usan igual para evaluar Stable Diffusion.
+
+## Un clasificador como juez
+
+Para hablar de "parece un 7" hace falta alguien que reconozca sietes. Aquí es una CNN pequeña entrenada con MNIST en 3 épocas, que acierta el 98,35% del test. Sirve para dos cosas:
+
+- **Variedad**: clasificar 2.000 muestras de cada generador y contar cuántas salen de cada dígito.
+- **Control**: pedir dígitos concretos al modelo condicionado y ver cuántos reconoce el clasificador como el dígito pedido.
+
+## FID: comparar distribuciones, no imágenes
+
+El **FID** (*Fréchet Inception Distance*) compara el conjunto de imágenes generadas con un conjunto de imágenes reales, no una imagen con otra. Pasa las dos por una red que extrae características (en el FID estándar, la red Inception de Google; aquí, la penúltima capa de nuestro clasificador, con 128 números por imagen), ajusta una gaussiana a cada conjunto y mide la distancia entre las dos gaussianas:
+
+$$
+\text{FID} = \lVert \mu_1 - \mu_2 \rVert^2 + \operatorname{tr}\!\left(\Sigma_1 + \Sigma_2 - 2\,(\Sigma_1 \Sigma_2)^{1/2}\right)
+$$
+
+El primer término castiga que las medias difieran (las imágenes "en promedio" no se parecen). El segundo, que las covarianzas difieran: si al generador le falta variedad, su covarianza es más pequeña. **Más bajo es mejor**; 0 sería indistinguible.
+
+<CodeExercise
+  id="frechet"
+  title="La distancia de Fréchet entre dos gaussianas"
+  starter={`
+    import numpy as np
+    from scipy import linalg
+
+    def frechet(a, b):
+        """a, b: (n, d) características de dos conjuntos de imágenes."""
+        mu1, mu2 = a.mean(axis=0), b.mean(axis=0)
+        s1, s2 = np.cov(a, rowvar=False), np.cov(b, rowvar=False)
+        covmean = linalg.sqrtm(s1 @ s2).real         # raíz cuadrada de una matriz
+        return float(((mu1 - mu2) ** 2).sum() + np.trace(s1 + s2 - ___ * covmean))
+
+    rng = np.random.default_rng(0)
+    reales = rng.normal(0, 1, size=(5000, 4))
+    parecidas = rng.normal(0, 1, size=(5000, 4))
+    desplazadas = rng.normal(0.5, 1, size=(5000, 4))
+    sin_variedad = rng.normal(0, 0.3, size=(5000, 4))
+    for nombre, x in [("parecidas", parecidas), ("desplazadas", desplazadas), ("sin variedad", sin_variedad)]:
+        print(nombre, round(frechet(reales, x), 3))
+  `}
+  solution={`
+    import numpy as np
+    from scipy import linalg
+
+    def frechet(a, b):
+        """a, b: (n, d) características de dos conjuntos de imágenes."""
+        mu1, mu2 = a.mean(axis=0), b.mean(axis=0)
+        s1, s2 = np.cov(a, rowvar=False), np.cov(b, rowvar=False)
+        covmean = linalg.sqrtm(s1 @ s2).real         # raíz cuadrada de una matriz
+        return float(((mu1 - mu2) ** 2).sum() + np.trace(s1 + s2 - 2 * covmean))
+
+    rng = np.random.default_rng(0)
+    reales = rng.normal(0, 1, size=(5000, 4))
+    parecidas = rng.normal(0, 1, size=(5000, 4))
+    desplazadas = rng.normal(0.5, 1, size=(5000, 4))
+    sin_variedad = rng.normal(0, 0.3, size=(5000, 4))
+    for nombre, x in [("parecidas", parecidas), ("desplazadas", desplazadas), ("sin variedad", sin_variedad)]:
+        print(nombre, round(frechet(reales, x), 3))
+  `}
+  hints={[
+    "Mira la fórmula: el término cruzado va multiplicado por 2.",
+    "En una dimensión queda (μ₁ − μ₂)² + (σ₁ − σ₂)².",
+  ]}
+  check={`
+    assert frechet(reales, parecidas) < 0.05, "Dos muestras de la misma distribución tienen que dar un FID casi 0"
+    assert abs(frechet(reales, desplazadas) - 4 * 0.25) < 0.1, "Desplazar 0,5 la media en 4 dimensiones suma 4 · 0,5² = 1"
+    assert abs(frechet(reales, sin_variedad) - 4 * 0.7 ** 2) < 0.1, "Con desviación 0,3 en vez de 1, cada dimensión suma (1 − 0,3)² = 0,49: falta de variedad"
+    otra = rng.normal([1.0, -1.0], [2.0, 0.5], size=(5000, 2))
+    assert frechet(reales[:, :2], otra) > 0 and frechet(otra, reales[:, :2]) > 0, "El FID nunca es negativo"
+    assert abs(frechet(reales[:, :2], otra) - frechet(otra, reales[:, :2])) < 1e-6, "Y es simétrico: da igual el orden de los conjuntos"
+  `}
+>
+Escribe la distancia de Fréchet y compruébala con tres conjuntos sintéticos: uno igual a los datos, uno desplazado y uno con poca variedad.
+</CodeExercise>
+
+## Los cuatro modelos, medidos
+
+FID con 2.000 imágenes de cada conjunto contra 2.000 del test (con menos muestras el FID sale más alto, así que solo se comparan números calculados con el mismo tamaño):
+
+| Conjunto | FID | Dígito pedido reconocido | Dígitos más y menos frecuentes (de 2.000) |
+| -------- | --: | -----------------------: | ----------------------------------------- |
+| Train contra test (referencia) | 41,6 | – | – |
+| Autoencoder | 772,7 | – | 5: 356 · 1: **2** |
+| VAE | 661,9 | – | 7: 266 · 4: 150 |
+| GAN | 132,1 | – | 9: 370 · 1: 91 |
+| Difusión sin etiqueta | 81,7 | – | 9: 321 · 3: 108 |
+| Difusión condicionada, $w = 0$ | **30,2** | 93,2% | 8 y 9: 217 · 5 y 7: 187 |
+| Difusión condicionada, $w = 3$ | 222,1 | **100%** | todos: 200 |
+
+Cómo se lee:
+
+- **El autoencoder y el VAE tienen un FID enorme.** Los del autoencoder son nítidos, pero les faltan dígitos enteros (2 unos de 2.000). Los del VAE están todos, pero son borrosos, y unas características extraídas de imágenes borrosas caen lejos de las de imágenes reales.
+- **La GAN y la difusión sin etiqueta generan dígitos creíbles, pero con las clases desequilibradas.** La GAN produce cuatro veces más nueves que unos; la difusión sin etiqueta, tres veces más nueves que treses. Parte del desequilibrio puede venir del propio clasificador, que tiene que asignar a algún dígito las formas ambiguas.
+- **La difusión condicionada sin guía es el mejor modelo**: FID de 30, todos los dígitos en proporciones casi iguales y el dígito pedido el 93% de las veces. Sale incluso por debajo de la referencia (41,6), lo que no puede significar que sea «más real que lo real»: con solo 2.000 imágenes por conjunto, el FID es una estimación ruidosa y sesgada. Lo fiable aquí son las diferencias grandes (30 frente a 132 o 772), no las de pocos puntos.
+- **La guía cambia variedad por control**: con $w = 3$ acierta el dígito siempre, pero el FID se multiplica por siete, probablemente por la combinación de menos variedad y trazos más gruesos y saturados de lo normal.
+
+<Quiz
+  id="fid-de-referencia"
+  options={[
+    "Porque el FID tiene ruido de muestreo y no tiene una escala absoluta: el FID entre dos muestras reales (train contra test) da una referencia aproximada con este tamaño y estas características: un buen generador se queda cerca, y el resto se lee en relación con ella",
+    "Para comprobar que el clasificador funciona",
+    "Porque el test podría tener dígitos mal etiquetados",
+    "Para que el FID de los modelos salga más bajo",
+  ]}
+  answer={0}
+  explanation="Un FID de 5 no significa nada por sí solo: depende de la red que extrae las características y del número de muestras. Comparar 2.000 imágenes de train con 2.000 de test, que vienen de la misma distribución, da una referencia de lo que vale «igual de real que lo real» con esta medida. Es aproximada: lleva ruido y sesgo de muestreo, y un generador puede quedar algo por debajo (aquí, la difusión condicionada) sin ser «más real». Por eso los artículos citan siempre el FID con el mismo extractor (Inception) y el mismo número de muestras (habitualmente 50.000)."
+  hints={["¿Qué FID tendría un generador perfecto, que produjese dígitos indistinguibles de los reales?"]}
+>
+¿Por qué se calcula también el FID entre imágenes de train y de test, que son todas reales?
+</Quiz>
+
+## ¿Copia el entrenamiento?
+
+Un generador que devolviese imágenes de entrenamiento tal cual tendría un FID buenísimo y no serviría para nada (y, con fotos de personas, sería un problema de privacidad). La comprobación más directa: para cada imagen generada, buscar la imagen de entrenamiento más parecida (distancia euclídea entre píxeles) y comparar con lo que pasa con imágenes reales nuevas.
+
+| Imágenes (500 de cada tipo) | Mediana | Percentil 1 | Mínimo |
+| --------------------------- | ------: | ----------: | -----: |
+| Test (reales, no vistas) | 8,77 | 2,45 | 2,25 |
+| Difusión condicionada, $w = 0$ | 9,99 | 3,32 | 2,92 |
+| Difusión condicionada, $w = 3$ | 10,76 | 3,29 | 2,88 |
+| GAN | 10,97 | 5,49 | 4,11 |
+
+Distancia de cada imagen a su vecina más cercana entre las 60.000 de entrenamiento. Una copia no se notaría en la mediana, sino en la cola baja: unas pocas imágenes casi pegadas a una de entrenamiento. Por eso importan el percentil 1 y el mínimo.
+
+<Quiz
+  id="memorizar"
+  options={[
+    "Que el generador memoriza, porque las distancias no son cero",
+    "Que el generador es malo, porque sus imágenes están más lejos del entrenamiento",
+    "Nada: la distancia entre píxeles no sirve para comparar imágenes",
+    "Que no hay señales de copia: si el modelo devolviese imágenes de entrenamiento, sus vecinos más cercanos estarían mucho más cerca que los de imágenes reales nuevas, y no es así",
+  ]}
+  answer={3}
+  explanation="La referencia es el test: dígitos reales que el modelo no ha visto tienen su vecino de entrenamiento a cierta distancia. Si una parte de las imágenes generadas estuviese mucho más cerca de sus vecinos (percentil 1 o mínimo muy por debajo de los del test), serían casi copias. Que estén a una distancia parecida o mayor indica que son nuevas (aunque «mayor» puede reflejar también que son algo menos realistas). La distancia de píxeles es tosca y no detecta una copia desplazada o con otro grosor; con fotos se usan las características de una red, como en el FID."
+  hints={["Compara el percentil 1 y el mínimo de los generados con los de las imágenes de test: ahí se vería una copia."]}
+>
+¿Qué te dice la comparación de distancias al vecino más cercano?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **FID con Inception y 50.000 muestras** es el estándar para comparar con otros trabajos (`torchmetrics.image.fid` o `clean-fid`). Para tu propio problema, un extractor entrenado en tu dominio (como aquí) es más informativo.
+- **Texto a imagen** se evalúa además con la puntuación CLIP (cuánto se parece la imagen al texto pedido), con conjuntos de prompts de prueba y, al final, con personas que comparan dos modelos a ciegas. Ninguna métrica automática sustituye eso.
+- **La memorización es real** en modelos grandes: se han extraído imágenes casi idénticas a las de entrenamiento de Stable Diffusion con los prompts adecuados. Deduplicar los datos de entrenamiento la reduce mucho.
+</Callout>
+
+<Temario
+  links={[
+    { to: "supervisado/metricas", why: "Elegir la métrica según lo que importa; aquí, varias a la vez." },
+    { to: "no-supervisado/distancias-y-evaluacion", why: "La distancia euclídea entre puntos, la que aquí se usa entre imágenes." },
+    { to: "vision/evaluar", why: "Un clasificador evaluado con su matriz de confusión: aquí hace de juez." },
+  ]}
+/>
+
+## Para llevar
+
+- Evaluar un generador es medir calidad, variedad, control y novedad, no mirar unas pocas muestras.
+- FID: distancia entre gaussianas ajustadas a las características de imágenes reales y generadas; solo comparable con el mismo extractor y el mismo número de muestras.
+- Un clasificador mide variedad (cuántos de cada clase) y control (si sale lo pedido).
+- En nuestra ejecución: el mejor es la difusión condicionada sin guía (FID 30, todas las clases, 93% de control); la guía da 100% de control a costa de la variedad, y en esta prueba ningún modelo muestra señales de copiar el entrenamiento.

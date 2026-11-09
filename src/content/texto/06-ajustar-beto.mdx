@@ -29,7 +29,7 @@ BERT añade al principio de cada texto un token especial, `[CLS]`. Después de l
 
 <Predict
   id="cls"
-  answer="594437"
+  answer={["594437", "594.437"]}
   explanation="El pooler es una capa densa de 768 a 768: 768 · 768 + 768 = 590.592 parámetros. El clasificador, de 768 a 5: 768 · 5 + 5 = 3.845. En total, 594.437 parámetros empiezan aleatorios, alrededor del 0,5% del modelo. El otro 99,5% llega preentrenado. Por eso unas pocas épocas bastan."
   hints={[
     "Las dos capas que el informe marca como MISSING son el pooler (768 → 768) y el clasificador (768 → 5).",
@@ -113,11 +113,11 @@ Escribe el factor del learning rate que aplica `get_linear_schedule_with_warmup`
   id="lr-pequeno"
   options={[
     "Porque BETO es muy grande y con un lr mayor no cabe en memoria",
-    "Porque los pesos preentrenados ya son buenos y solo hay que moverlos un poco: con lr = 1e-3 los primeros pasos, empujados por una cabeza aleatoria, borrarían lo aprendido. El warmup protege justo esos primeros pasos",
     "Porque los transformers no admiten learning rates mayores",
     "Para que el entrenamiento dure más épocas",
+    "Porque los pesos preentrenados ya son buenos y solo hay que moverlos un poco: con lr = 1e-3 los primeros pasos, empujados por una cabeza aleatoria, borrarían lo aprendido. El warmup protege justo esos primeros pasos",
   ]}
-  answer={1}
+  answer={3}
   explanation="Es el mismo razonamiento que el fine-tuning de la ResNet en el tutorial de visión, llevado más lejos: en BERT los learning rates habituales están entre 1e-5 y 5e-5. Al principio la cabeza es aleatoria y sus gradientes no tienen sentido, así que el warmup empieza con lr casi 0 y lo sube poco a poco. Con lr alto y sin warmup, el fine-tuning de BERT diverge con frecuencia o se queda prediciendo una sola clase."
   hints={["Recuerda la fase 2 del transfer learning en el tutorial de visión."]}
 >
