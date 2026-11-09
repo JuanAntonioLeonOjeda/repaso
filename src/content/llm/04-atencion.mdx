@@ -1,0 +1,159 @@
+El modelo de bigramas solo ve el token anterior. Para escribir «don Quijote», eso basta; para cerrar unas comillas abiertas hace tres frases o recordar quién está hablando, no. La **atención** permite que cada token consulte todos los anteriores y decida a cuáles hacer caso. Es la pieza que hace funcionar a los transformers, y aquí la escribes con la variante que necesita un modelo que genera: la **atención causal**, que no puede mirar al futuro.
+
+## Consultas, claves y valores
+
+Cada token produce tres vectores con tres capas lineales:
+
+- una **consulta** (*query*, $q$): qué estoy buscando;
+- una **clave** (*key*, $k$): qué ofrezco a quien busque;
+- un **valor** (*value*, $v$): qué aporto si me eligen.
+
+La afinidad entre el token $i$ y el $j$ es el producto escalar $q_i \cdot k_j$. Se convierten en pesos con un softmax, y la salida del token $i$ es la media de los valores ponderada por esos pesos:
+
+$$
+\text{Atención}(Q, K, V) = \operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}} + M\right) V
+$$
+
+$M$ es la **máscara causal**: 0 donde $j \le i$ y $-\infty$ donde $j > i$. Tras el softmax, los tokens futuros reciben peso exactamente 0.
+
+<CodeExercise
+  id="atencion-causal"
+  title="Atención causal con NumPy"
+  starter={`
+    import numpy as np
+
+    def softmax(x):
+        x = x - x.max(axis=-1, keepdims=True)
+        e = np.exp(x)
+        return e / e.sum(axis=-1, keepdims=True)
+
+    def atencion_causal(Q, K, V):
+        """Q, K, V: (T, d). Devuelve la salida (T, d) y los pesos (T, T)."""
+        T, d = Q.shape
+        scores = Q @ K.T / np.sqrt(___)                  # afinidad de cada token con cada otro
+        futuro = np.triu(np.ones((T, T), dtype=bool), k=___)   # True por encima de la diagonal
+        scores = np.where(futuro, -np.inf, scores)
+        pesos = softmax(scores)
+        return pesos @ V, pesos
+
+    rng = np.random.default_rng(0)
+    Q, K, V = rng.normal(size=(3, 4, 8))                 # 4 tokens, dimensión 8
+    salida, pesos = atencion_causal(Q, K, V)
+    print(pesos.round(3))
+  `}
+  solution={`
+    import numpy as np
+
+    def softmax(x):
+        x = x - x.max(axis=-1, keepdims=True)
+        e = np.exp(x)
+        return e / e.sum(axis=-1, keepdims=True)
+
+    def atencion_causal(Q, K, V):
+        """Q, K, V: (T, d). Devuelve la salida (T, d) y los pesos (T, T)."""
+        T, d = Q.shape
+        scores = Q @ K.T / np.sqrt(d)                    # afinidad de cada token con cada otro
+        futuro = np.triu(np.ones((T, T), dtype=bool), k=1)   # True por encima de la diagonal
+        scores = np.where(futuro, -np.inf, scores)
+        pesos = softmax(scores)
+        return pesos @ V, pesos
+
+    rng = np.random.default_rng(0)
+    Q, K, V = rng.normal(size=(3, 4, 8))                 # 4 tokens, dimensión 8
+    salida, pesos = atencion_causal(Q, K, V)
+    print(pesos.round(3))
+  `}
+  hints={[
+    "Se divide entre la raíz de la dimensión de las claves, d.",
+    "np.triu con k=1 marca lo que está estrictamente por encima de la diagonal: los tokens futuros. Con k=0 también taparías la diagonal (el propio token).",
+    "np.sqrt(d) y k=1.",
+  ]}
+  check={`
+    assert np.allclose(pesos.sum(axis=1), 1), "Los pesos de cada token tienen que sumar 1"
+    assert np.allclose(np.triu(pesos, k=1), 0), "Ningún token puede dar peso a los futuros: el triángulo superior tiene que ser 0"
+    assert np.allclose(pesos[0], [1, 0, 0, 0]), "El primer token solo puede mirarse a sí mismo"
+    assert np.allclose(salida[0], V[0]), "Por eso su salida es exactamente su propio valor"
+    s2 = Q[1] @ K[:2].T / np.sqrt(8); w2 = np.exp(s2 - s2.max()); w2 /= w2.sum()
+    assert np.allclose(pesos[1, :2], w2), "El segundo token reparte su atención entre los dos primeros, con el softmax de q·k / √d"
+    V2 = V.copy(); V2[3] += 100
+    assert np.allclose(atencion_causal(Q, K, V2)[0][:3], salida[:3]), "Cambiar el último token no puede cambiar la salida de los anteriores"
+  `}
+>
+En la lección de texto de la asignatura escribiste la atención sin máscara. Ahora añade la máscara causal. El `check` comprueba lo esencial: cambiar el último token no puede alterar la salida de los anteriores.
+</CodeExercise>
+
+<Quiz
+  id="escalar"
+  options={[
+    "Porque sin dividir, con d grande los scores son enormes y el softmax se satura en un token",
+    "Para que el modelo entrene más rápido al hacer las multiplicaciones más pequeñas",
+    "Para que las consultas y las claves tengan norma 1, como en la similitud del coseno",
+    "Es una convención del artículo original sin efecto real en el entrenamiento",
+  ]}
+  answer={0}
+  explanation="Si q y k tienen componentes independientes de varianza 1, q · k es una suma de d productos y su varianza es d: su desviación típica crece como √d. Dividir entre √d devuelve los scores a una escala de 1, sea cual sea la dimensión. Sin eso, con cabezas de 64 dimensiones los scores tendrían desviación 8, el softmax daría casi todo el peso a un único token y los gradientes de los demás serían prácticamente 0."
+  hints={["¿Qué varianza tiene una suma de d productos de componentes con varianza 1?"]}
+>
+¿Por qué se divide entre $\sqrt{d_k}$ antes del softmax?
+</Quiz>
+
+## Varias cabezas
+
+Una sola atención mezcla todo en una única media. Con **varias cabezas**, la dimensión se reparte (en este GPT, 384 = 6 × 64) y cada cabeza hace su propia atención en su trozo: una puede fijarse en el token anterior, otra en el último signo de puntuación, otra en el sujeto de la frase. Al final se concatenan y una capa lineal las mezcla.
+
+```python
+class CausalSelfAttention(nn.Module):
+    def __init__(self, d, heads, dropout):
+        super().__init__()
+        self.heads = heads
+        self.qkv = nn.Linear(d, 3 * d)          # consultas, claves y valores en una sola matriz
+        self.proj = nn.Linear(d, d)
+        self.dropout = dropout
+
+    def forward(self, x):
+        b, t, d = x.shape
+        q, k, v = self.qkv(x).split(d, dim=2)
+        # (B, T, d) -> (B, cabezas, T, d / cabezas): cada cabeza en su subespacio
+        q, k, v = (z.view(b, t, self.heads, d // self.heads).transpose(1, 2) for z in (q, k, v))
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True,
+                                           dropout_p=self.dropout if self.training else 0.0)
+        return self.proj(y.transpose(1, 2).reshape(b, t, d))
+```
+
+`F.scaled_dot_product_attention` hace en una llamada lo mismo que tu ejercicio (escalar, enmascarar, softmax y media ponderada), con implementaciones optimizadas como FlashAttention cuando el hardware lo permite.
+
+<Quiz
+  id="por-que-mascara"
+  options={[
+    "Para que el modelo vaya más rápido calculando solo la mitad de la matriz",
+    "Porque los transformers solo saben leer de izquierda a derecha por diseño",
+    "Para ahorrar memoria, ya que la matriz de pesos ocupa la mitad",
+    "Porque al entrenar, sin máscara, cada posición vería su propia respuesta y la copiaría",
+  ]}
+  answer={3}
+  explanation="La máscara es lo que permite entrenar en paralelo sin hacer trampa. En entrenamiento, la ventana entera está disponible, y sin máscara cada posición podría mirar la respuesta que tiene que predecir. La pérdida bajaría a casi 0 y el modelo no habría aprendido nada útil: al generar, el futuro no existe. Los modelos que no generan (BERT, BETO) no llevan máscara y miran en los dos sentidos."
+  hints={["Recuerda: la respuesta de la posición 5 es el token 6, que está en la misma ventana."]}
+>
+¿Por qué un GPT necesita la máscara causal?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **El coste de la atención crece con el cuadrado del contexto**: la matriz de pesos es $T \times T$. Por eso los modelos con contextos de cientos de miles de tokens usan FlashAttention (que no materializa esa matriz), atención con ventanas o variantes con menos claves y valores (*grouped-query attention*).
+- **KV cache**: al generar, las claves y valores de los tokens anteriores no cambian, así que se guardan y solo se calcula lo del token nuevo. Sin ella, cada token nuevo recalcula toda la ventana (como hace el GPT de este tutorial).
+- **Las cabezas sí se especializan**, pero no de forma tan limpia como en los ejemplos. Interpretarlas es un campo de investigación entero (*mechanistic interpretability*).
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/texto-y-secuencias", why: "Consultas, claves y valores, y por qué la atención sustituyó a la recurrencia." },
+    { to: "texto/ajustar-beto", why: "BETO: un transformer cuya máscara de atención solo tapa el relleno, no el futuro." },
+    { to: "deep-learning/entrenar-una-red", why: "Softmax, y por qué una activación saturada deja gradientes casi nulos." },
+  ]}
+/>
+
+## Para llevar
+
+- Atención: $\operatorname{softmax}(QK^\top / \sqrt{d_k} + M)\, V$. Cada token hace una media ponderada de los valores de los anteriores.
+- Dividir entre $\sqrt{d_k}$ mantiene los scores en escala 1 y el softmax sin saturar.
+- La máscara causal impide mirar al futuro: sin ella, entrenar sería copiar la respuesta.
+- Varias cabezas = varias atenciones en paralelo, cada una en su trozo de la dimensión.

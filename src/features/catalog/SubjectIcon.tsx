@@ -190,6 +190,27 @@ export function SubjectIcon({ slug, size = 56 }: { slug: SubjectSlug; size?: num
           <path d="M33 46 C36 36, 48 36, 51 46" />
         </svg>
       );
+    case "llm":
+      // A row of tokens and the next one being chosen, with attention arcs back to earlier tokens.
+      return (
+        <svg {...common}>
+          {[6, 17, 28].map((x) => (
+            <rect key={x} x={x} y={32} width={8} height={12} rx={2} opacity={0.6} />
+          ))}
+          <rect
+            x={39}
+            y={32}
+            width={11}
+            height={12}
+            rx={2}
+            fill="currentColor"
+            fillOpacity={0.25}
+          />
+          <path d="M44 30 C40 14, 14 14, 10 30" opacity={0.5} />
+          <path d="M44 30 C42 20, 24 20, 21 30" opacity={0.7} />
+          <path d="M44 30 C44 24, 34 24, 32 30" />
+        </svg>
+      );
     case "fastapi":
       return (
         <svg {...common}>
