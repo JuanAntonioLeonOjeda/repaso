@@ -6,7 +6,7 @@ export interface RunRequest {
   code: string;
   /** Optional Python run after `code` in the same namespace; assertions decide the outcome. */
   check: string | null;
-  /** Dataset files under `/datasets/` copied into Python's working directory first. */
+  /** Dataset files under `<base>/datasets/` copied into Python's working directory first. */
   files: readonly string[];
 }
 

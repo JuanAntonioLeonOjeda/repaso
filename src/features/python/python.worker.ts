@@ -95,7 +95,7 @@ function getPyodide(): Promise<PyodideAPI> {
 
 async function copyDatasets(pyodide: PyodideAPI, files: readonly string[]): Promise<void> {
   for (const name of files) {
-    const response = await fetch(`/datasets/${name}`);
+    const response = await fetch(`${import.meta.env.BASE_URL}datasets/${name}`);
     if (!response.ok) throw new Error(`No se encontró el dataset ${name}`);
     (pyodide.FS as PyFs).writeFile(name, new Uint8Array(await response.arrayBuffer()));
   }
