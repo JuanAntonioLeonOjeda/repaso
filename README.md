@@ -18,7 +18,8 @@ pista y solución), y notas de cómo se hace cada cosa en un trabajo real.
   - Próximos: IA generativa de imágenes y crea tu LLM.
   - **FastAPI**: 12 lecciones, 2 simulaciones y 47 ejercicios que construyen la API de un modelo
     de calidad de vinos (con FastAPI de verdad ejecutándose en el navegador, ver ADR-0005).
-- Funciona en local con Docker. Sin cuentas ni servidor: el progreso se guarda en el navegador.
+- Publicada en **https://juanantonioleonojeda.github.io/repaso/** (GitHub Pages, se despliega en
+  cada push a `main`; ADR-0007). También funciona en local con Docker. Sin cuentas ni servidor: el progreso se guarda en el navegador.
 - El Python de los ejercicios (numpy, pandas, scikit-learn, matplotlib, NLTK, OpenCV…) se ejecuta con
   Pyodide, que se descarga de un CDN la primera vez (hace falta conexión).
 
