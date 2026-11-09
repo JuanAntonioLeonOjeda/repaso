@@ -27,11 +27,11 @@ Python in the browser.
   in `Asignaturas/Python para IA/`). That subject is deliberately practical: most exercises
   are past exam questions.
 - **Tutoriales** (`tutorials` in `catalog.ts`, spec in `specs/tutorials/`): end-to-end
-  projects browsed like a subject. The deep learning ones (Visión done; Texto, IA generativa
-  de imágenes and Crea tu LLM planned) are written in **PyTorch** and link every step to the
+  projects browsed like a subject. The deep learning ones (Visión and Texto done; IA
+  generativa de imágenes and Crea tu LLM planned) are written in **PyTorch** and link every step to the
   syllabus with `<Temario>`. PyTorch does not exist in Pyodide: framework code is shown in
-  plain code blocks and verified by `scripts/tutorials/<slug>.py` run with the TFM's
-  environment; every number quoted comes from that run; runnable exercises practise the pieces
+  plain code blocks and verified by `scripts/tutorials/<slug>.py` run with `.venv-tutorials`
+  (`scripts/tutorials/requirements.txt`); every number quoted comes from that run; runnable exercises practise the pieces
   in NumPy (ADR-0006). FastAPI (`src/content/fastapi/`) is also a tutorial: its exercises run
   FastAPI in Pyodide with an inline thread pool and call the app with `httpx.AsyncClient` and
   top-level `await` (ADR-0005); `TestClient` and pytest appear only in non-runnable code.

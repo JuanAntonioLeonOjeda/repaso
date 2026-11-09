@@ -42,7 +42,9 @@ framework (it is what the TFM and the LLM/diffusion ecosystem use). Two constrai
 
 Option B. The browser keeps doing what it does well (small, exact exercises with instant
 feedback) and the author's machine does what only it can (real training). Each tutorial has
-one script under `scripts/tutorials/`, run with the TFM's environment, read-only on `../tfm`;
+one script under `scripts/tutorials/`, run with its own pinned environment
+(`scripts/tutorials/requirements.txt`; the TFM's environment works for Visión but lacks
+`transformers`, and `../tfm` is read-only);
 its downloads and checkpoints go to directories given on the command line, never into the
 repository. Lessons state the hardware, seed and epochs behind every number.
 
@@ -62,3 +64,5 @@ repository. Lessons state the hardware, seed and epochs behind every number.
   scikit-learn 1.8.0.
 - 2026-11-09: the TFM's environment has torch 2.13.0 and torchvision 0.28.0 with MPS
   available; `scripts/tutorials/vision.py` runs the Visión tutorial end to end there.
+- 2026-11-09: `scripts/tutorials/requirements.txt` (torch 2.13.0, transformers 5.20.2,
+  scikit-learn 1.9.1) runs `scripts/tutorials/texto.py`, including fine-tuning BETO on MPS.

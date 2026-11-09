@@ -17,7 +17,10 @@
 
 ## Next deliveries (each its own review)
 
-- [ ] Texto
+- [x] Texto: star rating of Spanish Amazon reviews (MARC es), 8 lessons, `scripts/tutorials/texto.py`
+      with its own pinned environment (`scripts/tutorials/requirements.txt`: the TFM's lacks
+      `transformers`); BETO fine-tuned on a 40.000-review subset (the train file is sorted by label:
+      shuffled with a seed before subsetting)
 - [ ] IA generativa de imágenes
 - [ ] Crea tu LLM
 
