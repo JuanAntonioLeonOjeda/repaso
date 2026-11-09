@@ -1,0 +1,225 @@
+Un modelo preentrenado sabe continuar textos parecidos a los de su corpus. Para casi todo lo demás hay que **ajustarlo**: que escriba en otro estilo, que domine un vocabulario técnico o, lo más importante, que **responda a instrucciones** en vez de seguir escribiendo. Esta lección hace las dos cosas. Primero, con **LoRA** escrito a mano, enseñas a tu GPT del Quijote a escribir como el *Lazarillo de Tormes*. Después ves, con un modelo real de 500 millones de parámetros, qué cambia cuando un modelo se ajusta para seguir instrucciones.
+
+## LoRA: ajustar con muy pocos parámetros
+
+Ajustar todos los pesos (*full fine-tuning*) funciona, pero exige guardar una copia completa del modelo por cada tarea, y con miles de millones de parámetros la memoria del optimizador no cabe. **LoRA** (*Low-Rank Adaptation*) congela los pesos originales $W$ y aprende una corrección de **rango bajo**:
+
+$$
+h = W x + \frac{\alpha}{r}\, B A x, \qquad A \in \mathbb{R}^{r \times d_\text{in}},\; B \in \mathbb{R}^{d_\text{out} \times r}
+$$
+
+Con $r = 8$ y matrices de 384 × 1.152, la corrección tiene una fracción mínima de los parámetros. $B$ empieza a ceros, así que en el primer paso el modelo es exactamente el original.
+
+```python
+class LoRALinear(nn.Module):
+    def __init__(self, base: nn.Linear, r=8, alpha=16):
+        super().__init__()
+        self.base = base
+        for p in self.base.parameters():
+            p.requires_grad = False                    # W congelado
+        self.A = nn.Parameter(torch.randn(r, base.in_features) / math.sqrt(base.in_features))
+        self.B = nn.Parameter(torch.zeros(base.out_features, r))
+        self.scale = alpha / r
+
+    def forward(self, x):
+        return self.base(x) + self.scale * (x @ self.A.T) @ self.B.T
+
+for block in model.blocks:                             # LoRA en la proyección de consultas, claves y valores
+    block.attn.qkv = LoRALinear(block.attn.qkv, r=8)
+```
+
+<CodeExercise
+  id="lora-a-mano"
+  title="LoRA con NumPy"
+  starter={`
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    d_in, d_out, r, alpha = 384, 1152, 8, 16
+    W = rng.normal(0, 0.02, size=(d_out, d_in))            # peso congelado del modelo
+    A = rng.normal(0, 1 / np.sqrt(d_in), size=(r, d_in))
+    B = np.zeros((d_out, r))                                # empieza a ceros
+
+    def lora_forward(x, W, A, B):
+        return x @ W.T + (alpha / r) * (x @ A.T) @ ___.T
+
+    x = rng.normal(size=(5, d_in))
+    print("al empezar, igual que el original:", np.allclose(lora_forward(x, W, A, B), x @ W.T))
+
+    B = rng.normal(0, 0.01, size=(d_out, r))                # como si ya hubiese entrenado
+    W_fusionado = W + (alpha / r) * B @ ___                 # se puede sumar al peso y olvidarse de LoRA
+    print("fusionado:", np.allclose(lora_forward(x, W, A, B), x @ W_fusionado.T))
+    print("parámetros entrenables:", A.size + B.size, "de", W.size)
+  `}
+  solution={`
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    d_in, d_out, r, alpha = 384, 1152, 8, 16
+    W = rng.normal(0, 0.02, size=(d_out, d_in))            # peso congelado del modelo
+    A = rng.normal(0, 1 / np.sqrt(d_in), size=(r, d_in))
+    B = np.zeros((d_out, r))                                # empieza a ceros
+
+    def lora_forward(x, W, A, B):
+        return x @ W.T + (alpha / r) * (x @ A.T) @ B.T
+
+    x = rng.normal(size=(5, d_in))
+    print("al empezar, igual que el original:", np.allclose(lora_forward(x, W, A, B), x @ W.T))
+
+    B = rng.normal(0, 0.01, size=(d_out, r))                # como si ya hubiese entrenado
+    W_fusionado = W + (alpha / r) * B @ A                   # se puede sumar al peso y olvidarse de LoRA
+    print("fusionado:", np.allclose(lora_forward(x, W, A, B), x @ W_fusionado.T))
+    print("parámetros entrenables:", A.size + B.size, "de", W.size)
+  `}
+  hints={[
+    "La corrección es (α / r) · B A x: tras multiplicar por A, se multiplica por B.",
+    "La matriz que se suma a W es (α / r) · B A, con la forma de W (1.152 × 384).",
+    "@ B.T en el forward y B @ A al fusionar.",
+  ]}
+  check={`
+    B0 = np.zeros((d_out, r))
+    assert np.allclose(lora_forward(x, W, A, B0), x @ W.T), "Con B = 0, LoRA no cambia nada"
+    assert np.allclose(lora_forward(x, W, A, B), x @ W_fusionado.T), "Sumar (α/r)·B·A a W tiene que dar el mismo resultado que el LoRA"
+    assert np.linalg.matrix_rank(W_fusionado - W) == r, "La corrección tiene rango r = 8, aunque sea una matriz de 1.152 × 384"
+    assert A.size + B.size == 12288, "A (8 × 384) y B (1.152 × 8) suman 12.288 parámetros"
+  `}
+>
+Escribe el forward de LoRA y la fusión de la corrección con el peso original. El `check` comprueba que la corrección, aunque ocupe una matriz de 1.152 × 384, tiene rango 8.
+</CodeExercise>
+
+<Predict
+  id="params-lora"
+  answer={["73728", "73.728"]}
+  explanation="En cada bloque: A tiene 8 · 384 = 3.072 parámetros y B, 1.152 · 8 = 9.216: 12.288. En los 6 bloques, 73.728. Es un 0,64% de los 11,5 millones del modelo, y el adaptador ocupa 0,29 MB en float32, frente a los 46 MB del modelo entero."
+  hints={["A es r × d_in y B es d_out × r, con d_in = 384 y d_out = 3 · 384.", "12.288 por bloque, y hay 6 bloques."]}
+>
+LoRA con $r = 8$ en la capa `qkv` (384 → 1.152) de los 6 bloques. ¿Cuántos parámetros se entrenan?
+</Predict>
+
+## Del Quijote al Lazarillo
+
+El *Lazarillo* es mucho más corto (20.088 palabras) y está narrado en primera persona por un pícaro. Se ajusta el GPT del Quijote de dos maneras, con los mismos pasos, y se mide la pérdida en el último 10% del *Lazarillo*:
+
+| Paso | Completo: train | Completo: val. | LoRA: train | LoRA: val. |
+| ---: | --------------: | -------------: | ----------: | ---------: |
+| 0 (modelo del Quijote) | 4,252 | 4,211 | 4,252 | 4,211 |
+| 100 | 2,851 | **3,821** | 3,874 | 3,970 |
+| 300 | 1,484 | 4,078 | 3,635 | 3,932 |
+| 600 | 0,916 | 4,300 | 3,545 | **3,919** |
+
+| Ajuste | Parámetros entrenados | Tamaño en float32 | Mejor pérdida val. |
+| ------ | --------------------: | ----------------: | -----------------: |
+| Ninguno (el modelo del Quijote) | 0 | – | 4,211 |
+| Completo (`lr=1e-4`) | 11.532.288 | 46,1 MB | 3,821 (paso 100) |
+| LoRA, $r = 8$ (`lr=1e-3`) | 73.728 | 0,29 MB | 3,919 |
+
+El *Lazarillo* tiene solo 33.111 tokens de entrenamiento, y eso decide todo:
+
+- **El ajuste completo aprende deprisa y después memoriza.** En el paso 100 ya tiene la mejor validación (3,821), pero luego la pérdida de entrenamiento se desploma hasta 0,92 mientras la de validación vuelve a subir, por encima de donde empezó. Con 11,5 millones de parámetros libres y un libro de 33.000 tokens, se lo aprende de memoria.
+- **LoRA se queda algo peor en su mejor punto (3,919) pero apenas sobreajusta**: la validación baja y se estabiliza en vez de volver a subir, aunque el hueco con entrenamiento crece poco a poco (3,55 frente a 3,92 al final). Con 73.728 parámetros (el 0,64%) no le cabe el libro entero. Y su adaptador ocupa 0,29 MB: se pueden guardar cien versiones distintas del modelo por lo que ocupa una copia completa.
+
+Y se nota en lo que escribe. Las tres continuaciones de «Pues sepa vuestra merced», con temperatura 0,8 y top-k 50:
+
+**Sin ajustar (el modelo del Quijote):**
+
+> Pues sepa vuestra merced se saliese de la batalla, y la atravesó a recebirle con la carta de Sancho Panza no ha sucedido […] don Quijote de la Mancha
+
+**Ajuste completo:**
+
+> Pues sepa vuestra merced se supo también el que el lugar había ido […] Sobre la bula en la juda. Haz, con todo el púlpito de mi amo, y luego toma la puerta en el arcaz
+
+**LoRA:**
+
+> Pues sepa vuestra merced se le haga, el que el que provecho […] no ha de ir a la bellaca. "Estando, como se me acuerda el pulgo y el demonio, y si no a mí le había sido pan…
+
+Las tres salen del mejor checkpoint de validación de cada ejecución (el ajuste completo, del paso 100, antes de memorizar el libro). Sin ajustar salen Sancho, la duquesa y don Quijote. Con el ajuste completo aparecen objetos del *Lazarillo*: el amo, el arcaz (el arca del pan del clérigo), la bula, el púlpito. Con LoRA, el pan y la «bellaca». Ninguno de los tres tiene sentido; lo que ha cambiado es el mundo del que hablan.
+
+## Seguir instrucciones
+
+Un modelo preentrenado (**base**) solo sabe continuar texto. Si le escribes una pregunta, puede continuarla con otra pregunta, con un foro o con lo que sea más probable en su corpus. Un modelo **instruido** (*instruct*, *chat*) se ha ajustado después con muchas conversaciones de ejemplo (pregunta → buena respuesta; en los modelos actuales, de cientos de miles a millones) y, normalmente, con preferencias humanas. Gran parte de lo que sabe viene del preentrenamiento; el ajuste cambia sobre todo el comportamiento: el formato, el estilo, cuándo parar.
+
+Los modelos instruidos esperan su **plantilla de chat**: marcas especiales que separan el papel de cada mensaje. Con Qwen2.5-0.5B-Instruct, `tokenizer.apply_chat_template` convierte la pregunta en:
+
+```
+<|im_start|>system
+You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
+<|im_start|>user
+¿Por qué el cielo es azul? Responde en dos frases.<|im_end|>
+<|im_start|>assistant
+```
+
+Fíjate en que la plantilla añade sola un mensaje de **sistema**, en inglés, aunque no lo hayas escrito: viene definido en la plantilla del tokenizador. El modelo genera a partir de `assistant` y termina con `<|im_end|>`.
+
+La misma pregunta a los dos modelos (decodificación greedy, 80 tokens como máximo):
+
+**Qwen2.5-0.5B (base)**, con la pregunta tal cual:
+
+> ␣- La Voz de la Ciudad de México
+> ¿Por qué el cielo es azul? Responde en dos frases.
+> El cielo azul es una de las características más conocidas de la atmósfera. Pero ¿por qué? ¿Por qué el cielo azul es tan especial? ¿Por qué el cielo azul es tan especial? ¿Por qué el…
+
+**Qwen2.5-0.5B-Instruct**, con la plantilla de chat:
+
+> El cielo azul se debe a la luz de las estrellas que iluminan el universo desde muy lejos. Estas estrellas emitían luz en forma de rayos violeta y rojo, lo que nos permite ver el azul del cielo como un color natural. Además, la atmósfera del planeta Earth también contribuye al azul del cielo…
+
+Los dos tienen 494 millones de parámetros y generan unos 72 tokens por segundo en MPS. El base trata la pregunta como el principio de un texto de internet: se inventa un titular, repite la pregunta y entra en un bucle. El instruido responde como un asistente y en un español fluido, aunque ignora la instrucción de longitud (escribe más de dos frases y el límite de 80 tokens lo corta). Y lo que dice es falso. El cielo es azul porque la atmósfera dispersa mucho más la luz azul del Sol que la roja (dispersión de Rayleigh), no por la luz de las estrellas. Y se le escapa «planeta Earth».
+
+<Quiz
+  id="base-o-instruido"
+  options={[
+    "El instruido sabe muchos más hechos que el base, gracias al ajuste",
+    "El base está roto: un modelo bien entrenado respondería a la pregunta",
+    "Gran parte del conocimiento viene del preentrenamiento; el ajuste cambia sobre todo el comportamiento",
+    "El instruido es un modelo más grande, con más capas",
+  ]}
+  answer={2}
+  explanation="El instruido parte del base y se ajusta con conversaciones de ejemplo y preferencias; ese ajuste cambia todos los pesos, pero la mayor parte de lo que el modelo sabe viene del preentrenamiento. Lo que cambia sobre todo es el comportamiento: seguir la plantilla de chat, responder en vez de continuar, parar. En los modelos actuales el ajuste también mejora capacidades concretas (seguir instrucciones, matemáticas, código), pero no le da al modelo hechos que no vio. Con 500 millones de parámetros, ninguno de los dos sabe física de verdad: el base lo disimula escribiendo cualquier cosa, el instruido lo hace con una respuesta segura y bien formada."
+  hints={["Compara qué hace cada modelo con la pregunta, no si acierta."]}
+>
+¿Qué diferencia de fondo hay entre el modelo base y el instruido?
+</Quiz>
+
+<Quiz
+  id="alucinar"
+  options={[
+    "Porque el modelo miente a propósito cuando no quiere responder",
+    "Porque genera el texto más plausible, no consulta hechos, y no sabe cuándo no sabe",
+    "Porque la temperatura era demasiado alta y el muestreo eligió mal",
+    "Porque la pregunta estaba mal escrita y el modelo la entendió mal",
+  ]}
+  answer={1}
+  explanation="El objetivo de entrenamiento es predecir texto plausible, y el ajuste con instrucciones premia respuestas con forma de respuesta. Nada obliga a que sean verdad, y un modelo pequeño no ha memorizado suficientes hechos. Aquí la generación era greedy, sin azar: el error no es mala suerte del muestreo. Los modelos grandes alucinan menos, pero también lo hacen. Las defensas habituales son darle la información en el prompt (RAG: recuperar documentos y pasárselos), pedir que cite fuentes y verificar lo que importa."
+  hints={["¿Qué aprende a hacer un LLM durante el entrenamiento: decir la verdad o predecir texto plausible?"]}
+>
+El modelo instruido da una explicación falsa con total seguridad. ¿Por qué pasa?
+</Quiz>
+
+## Preferencias: RLHF y DPO
+
+Tras el ajuste con instrucciones, los modelos de chat se ajustan con **preferencias**: personas (o un modelo) comparan dos respuestas y eligen la mejor.
+
+- **RLHF** entrena primero un **modelo de recompensa** que puntúa respuestas, y después ajusta el LLM con aprendizaje por refuerzo (normalmente PPO) para maximizar esa recompensa sin alejarse demasiado del modelo original. El LLM es la política; cada token, una acción. Es el *policy gradient* de la asignatura de refuerzo aplicado a texto.
+- **DPO** llega a un resultado parecido sin modelo de recompensa ni refuerzo: una pérdida de clasificación directamente sobre los pares (respuesta preferida, respuesta rechazada). Es más simple y hoy muy habitual en modelos abiertos.
+
+<Callout kind="real" title="En el trabajo">
+- **LoRA y QLoRA** (LoRA sobre un modelo cuantizado a 4 bits) permiten ajustar modelos de 7.000 a 70.000 millones de parámetros en una sola GPU. Las librerías habituales son `peft` y `trl` de Hugging Face, que hacen lo de esta lección con `LoraConfig` y `SFTTrainer`.
+- **Antes de ajustar, prueba con el prompt.** Unas instrucciones claras y unos pocos ejemplos en el prompt resuelven muchos casos sin entrenar nada. Ajustar compensa para un formato o estilo muy concreto, para reducir costes con un modelo pequeño o cuando hay miles de ejemplos.
+- **Para conocimiento que cambia, RAG, no fine-tuning.** Ajustar enseña forma y estilo; los datos concretos (documentos de la empresa, precios, normativa) se recuperan y se pasan en el prompt.
+- **Licencias.** Qwen2.5-0.5B se publica con licencia Apache 2.0 (compruébalo en su ficha); otros tamaños de la misma familia, y otros modelos abiertos, tienen licencias con condiciones de uso. Revísala antes de ajustar y desplegar uno.
+</Callout>
+
+<Temario
+  links={[
+    { to: "vision/transfer-learning", why: "Reutilizar un modelo preentrenado: congelar, ajustar y elegir qué capas entrenar." },
+    { to: "texto/ajustar-beto", why: "Ajustar un transformer preentrenado con un learning rate pequeño; LoRA ya se mencionaba allí." },
+    { to: "refuerzo/policy-gradient", why: "Policy gradient: la base de RLHF, donde el LLM es la política." },
+    { to: "refuerzo/acciones-continuas-y-modelos", why: "PPO, el algoritmo con el que se hace RLHF." },
+  ]}
+/>
+
+## Para llevar
+
+- LoRA: congelar $W$ y aprender $\frac{\alpha}{r} BA$ de rango $r$; $B$ empieza a 0 y la corrección se puede fusionar con $W$.
+- Con un libro pequeño, el ajuste completo memoriza (46 MB entrenables) y LoRA apenas sobreajusta (0,29 MB), a cambio de quedarse algo por detrás en su mejor punto.
+- Base continúa texto; instruido sigue la plantilla de chat y responde. El ajuste enseña formato, no conocimiento.
+- RLHF (recompensa + PPO) y DPO ajustan con preferencias; contra las alucinaciones, contexto (RAG) y verificación.

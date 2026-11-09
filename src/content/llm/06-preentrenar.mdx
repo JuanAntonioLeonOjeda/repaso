@@ -1,0 +1,147 @@
+Tienes el tokenizador, el modelo y el listón de los bigramas. Toca **preentrenar**: enseñar al GPT a predecir el siguiente token del Quijote. Es la fase que en los modelos grandes cuesta millones de euros en GPU; aquí son unos minutos de portátil. Las decisiones son las mismas: cómo sacar ejemplos del texto, qué learning rate, cuánto entrenar y cómo saber cuándo parar.
+
+## Ventanas aleatorias
+
+No hay "ejemplos" como en un dataset de clasificación: hay un único texto larguísimo. En cada paso se sacan 32 ventanas de 256 tokens que empiezan en posiciones al azar, y la respuesta de cada una es la misma ventana desplazada un token.
+
+```python
+def get_batch(data, batch, g):
+    starts = torch.randint(len(data) - CONTEXT - 1, (batch,), generator=g)
+    x = torch.stack([data[s:s + CONTEXT] for s in starts])
+    y = torch.stack([data[s + 1:s + CONTEXT + 1] for s in starts])
+    return x, y
+```
+
+<CodeExercise
+  id="ventanas"
+  title="Entradas y respuestas de un lote"
+  starter={`
+    import numpy as np
+
+    def get_batch(data, contexto, inicios):
+        x = np.stack([data[s:s + contexto] for s in inicios])
+        y = np.stack([data[s + ___:s + contexto + ___] for s in inicios])
+        return x, y
+
+    data = np.arange(100, 120)                    # un "texto" de 20 tokens: 100, 101, ..., 119
+    x, y = get_batch(data, contexto=5, inicios=[0, 7, 14])
+    print(x)
+    print(y)
+  `}
+  solution={`
+    import numpy as np
+
+    def get_batch(data, contexto, inicios):
+        x = np.stack([data[s:s + contexto] for s in inicios])
+        y = np.stack([data[s + 1:s + contexto + 1] for s in inicios])
+        return x, y
+
+    data = np.arange(100, 120)                    # un "texto" de 20 tokens: 100, 101, ..., 119
+    x, y = get_batch(data, contexto=5, inicios=[0, 7, 14])
+    print(x)
+    print(y)
+  `}
+  hints={[
+    "La respuesta de cada posición es el token que viene justo después.",
+    "La ventana de respuestas empieza un token más tarde y acaba un token más tarde.",
+  ]}
+  check={`
+    assert x.shape == (3, 5) and y.shape == (3, 5), "Tres ventanas de 5 tokens, para las entradas y para las respuestas"
+    assert np.array_equal(y[:, :-1], x[:, 1:]), "La respuesta de la posición i es la entrada de la posición i + 1"
+    assert list(y[1]) == [108, 109, 110, 111, 112], f"La ventana que empieza en 7 tiene como respuestas 108...112; sale {list(y[1])}"
+    assert y[2, -1] == 119, "La última respuesta de la ventana que empieza en 14 es el token 119: por eso el inicio máximo es len(data) − contexto − 1"
+  `}
+>
+Construye las entradas y las respuestas de un lote a partir de un "texto" de números consecutivos, para ver el desplazamiento a simple vista.
+</CodeExercise>
+
+## El entrenamiento
+
+```python
+opt = torch.optim.AdamW(model.parameters(), lr=6e-4, betas=(0.9, 0.95), weight_decay=0.1)
+for step in range(3000):
+    for group in opt.param_groups:
+        group["lr"] = lr_at(step, 3000, peak=6e-4, warmup=200)     # warmup lineal y bajada en coseno
+    x, y = get_batch(train, 32, g)
+    loss = F.cross_entropy(model(x).reshape(-1, VOCAB), y.reshape(-1))
+    opt.zero_grad(set_to_none=True)
+    loss.backward()
+    nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    opt.step()
+```
+
+Todo lo de los tutoriales anteriores, junto: AdamW (con `betas=(0.9, 0.95)`, la elección habitual en LLM), *warmup* lineal en los primeros 200 pasos, bajada en coseno hasta el 10% del máximo, recorte del gradiente y dropout de 0,2. Cada 250 pasos se mide la pérdida en 40 lotes fijos de entrenamiento y de validación, y se guarda el mejor punto.
+
+## El resultado
+
+Dos tamaños, los mismos 3.000 pasos (24,6 millones de tokens: cada token del libro se ve unas 40 veces) y el mismo dropout; el pequeño, con un learning rate máximo de 1e-3, y el grande, con 6e-4:
+
+| Paso | Pequeño: train | Pequeño: val. | GPT: train | GPT: val. |
+| ---: | -------------: | ------------: | ---------: | --------: |
+| 0 | 7,649 | 7,649 | 7,631 | 7,630 |
+| 500 | 4,463 | 4,539 | 4,025 | 4,153 |
+| 1.000 | 4,144 | 4,263 | 3,401 | 3,738 |
+| 2.000 | 3,858 | 4,037 | 2,630 | **3,559** |
+| 3.000 | 3,758 | **3,963** | 2,296 | 3,590 |
+
+| Modelo | Parámetros | Mejor pérdida val. | Perplejidad | Tiempo |
+| ------ | ---------: | -----------------: | ----------: | -----: |
+| Bigramas | – | 4,466 | 87 | segundos |
+| GPT pequeño (2 bloques, $d = 128$) | 691.712 | 3,963 | 53 | 3 min |
+| GPT (6 bloques, $d = 384$) | 11.532.288 | **3,559** | **35** | 23 min |
+
+El grande bate a los bigramas desde el paso 500 y el pequeño desde el 750, y el grande deja la perplejidad en 35: menos de la mitad que los bigramas. Mirar más de un token atrás vale mucho.
+
+Pero las dos curvas del modelo grande cuentan otra historia a partir del paso 2.000: la pérdida de entrenamiento sigue bajando (de 2,63 a 2,30) mientras la de validación **sube** (de 3,559 a 3,590). El modelo empieza a memorizar el Quijote. El checkpoint que se guarda es el del paso 2.000.
+
+<Quiz
+  id="sobreajuste"
+  options={[
+    "Entrenar más pasos, porque la pérdida de entrenamiento sigue bajando",
+    "Subir el learning rate para salir del mínimo en el que se ha quedado",
+    "Quedarse con el checkpoint del paso 2.000 y buscar más texto o más regularización",
+    "Reducir la ventana de contexto para que el modelo vea menos texto a la vez",
+  ]}
+  answer={2}
+  explanation="Que la pérdida de entrenamiento baje mientras la de validación sube es la firma del sobreajuste: el modelo aprende el libro, no el idioma. Seguir entrenando lo empeora. Guardar el mejor checkpoint de validación (como hace el script) es la defensa mínima; para bajar de 3,56 hace falta más texto distinto (otros libros de la época) o más regularización. Con 11,5 millones de parámetros y 610.000 tokens, el límite son los datos."
+  hints={["Compara las dos curvas a partir del punto en que la de validación deja de bajar."]}
+>
+Desde el paso 2.000, la pérdida de entrenamiento del GPT sigue bajando (2,63 → 2,30) y la de validación sube (3,559 → 3,590). ¿Qué harías?
+</Quiz>
+
+<Quiz
+  id="escala"
+  options={[
+    "Los dos están limitados por los datos: un solo libro no da para más",
+    "El grande está mal entrenado: un modelo bien entrenado no sobreajusta",
+    "El pequeño es mejor, porque no sobreajusta y generaliza mejor",
+    "El pequeño parece limitado por capacidad o pasos; el grande, por los datos",
+  ]}
+  answer={3}
+  explanation="El pequeño (0,7 M parámetros) acaba con train 3,76 y validación 3,96, y las dos siguen bajando: le falta capacidad o pasos, no datos. El grande (11,5 M) llega a 3,56 en validación, mucho mejor, pero en el paso 2.000 ya ha exprimido el libro. Es la idea de las leyes de escala: para aprovechar un modelo más grande hace falta más texto en proporción. Con datos fijos, hay un tamaño a partir del cual crecer ya no ayuda."
+  hints={["Mira cuántos tokens tiene el libro y cuántos parámetros cada modelo."]}
+>
+El GPT pequeño (691.712 parámetros) acaba en 3,96 de validación; el grande (11,5 millones), en 3,56 en su mejor punto, pero sobreajustando. ¿Qué limita a cada uno?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Leyes de escala.** Con más parámetros, más datos y más cálculo, la pérdida baja de forma muy predecible. La regla de Chinchilla (DeepMind, 2022) dice que, para un presupuesto de cálculo fijo, conviene unos 20 tokens de entrenamiento por parámetro. Nuestro GPT de 11,5 M "querría" 230 M de tokens; el Quijote tiene 0,6 M.
+- **Con datos limitados, cada pasada cuenta.** Los modelos grandes ven casi cada token una o pocas veces. Aquí cada token se ve unas 40 veces, y por eso aparece el sobreajuste. (Y al revés: modelos como Llama 3 se entrenan a propósito con muchos más de 20 tokens por parámetro, para que un modelo más pequeño, y más barato de usar, rinda más.)
+- **El weight decay se suele excluir de los sesgos, las normas y los embeddings** (en nanoGPT, de todos los parámetros de una dimensión). El script lo aplica a todo por simplicidad.
+- **Monitoriza y guarda checkpoints**: los entrenamientos grandes se cortan (fallos de hardware, picos de pérdida) y se reanudan desde el último checkpoint. Se vigilan la pérdida, la norma del gradiente y el learning rate en todo momento.
+</Callout>
+
+<Temario
+  links={[
+    { to: "vision/entrenar-bien", why: "Validar, guardar el mejor checkpoint y un learning rate que sube y baja." },
+    { to: "deep-learning/optimizadores-y-regularizacion", why: "AdamW, warmup, curvas de aprendizaje y dropout." },
+    { to: "optimizacion/descenso-del-gradiente", why: "El learning rate y el descenso por mini-lotes." },
+  ]}
+/>
+
+## Para llevar
+
+- Un lote son ventanas aleatorias del texto; la respuesta es la misma ventana desplazada un token.
+- AdamW, warmup + coseno, recorte del gradiente y dropout: la receta estándar.
+- En nuestra ejecución: el GPT de 11,5 M llega a 3,559 en validación (perplejidad 35, frente a 87 de los bigramas) en el paso 2.000, y después sobreajusta.
+- Con un solo libro, el límite son los datos: más parámetros sin más texto acaban en sobreajuste.

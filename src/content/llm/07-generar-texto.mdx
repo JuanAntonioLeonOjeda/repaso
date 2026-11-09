@@ -1,0 +1,196 @@
+El modelo entrenado da, para cada contexto, una distribución sobre los 2.048 tokens. Generar texto es elegir uno, añadirlo y repetir. Cómo se elige cambia muchísimo el resultado: quedarse siempre con el más probable produce bucles, y sortear sin más produce disparates. Las perillas que verás en cualquier API de LLM (**temperatura, top-k, top-p**) son las tres maneras de encontrar el punto medio.
+
+## El bucle de generación
+
+```python
+@torch.no_grad()
+def generate(model, idx, n, temperature=1.0, top_k=None, top_p=None, g=None):
+    for _ in range(n):
+        logits = model(idx[:, -CONTEXT:])[:, -1, :]     # solo la última posición: lo que viene ahora
+        if temperature == 0:
+            nxt = logits.argmax(-1, keepdim=True)       # greedy: siempre el más probable
+        else:
+            logits = logits / temperature
+            if top_k is not None:                       # solo los k más probables
+                kth = torch.topk(logits, top_k).values[:, -1, None]
+                logits = logits.masked_fill(logits < kth, float("-inf"))
+            probs = F.softmax(logits, dim=-1)
+            if top_p is not None:                       # el conjunto más pequeño que suma top_p
+                sorted_p, order = probs.sort(descending=True)
+                sorted_p[sorted_p.cumsum(-1) - sorted_p > top_p] = 0
+                probs = torch.zeros_like(probs).scatter(-1, order, sorted_p)
+                probs /= probs.sum(-1, keepdim=True)
+            nxt = torch.multinomial(probs, 1, generator=g)
+        idx = torch.cat([idx, nxt], dim=1)
+    return idx
+```
+
+- **Temperatura**: divide los logits antes del softmax. Por debajo de 1 concentra la probabilidad en los favoritos; por encima, la reparte.
+- **Top-k**: solo pueden salir los $k$ tokens más probables.
+- **Top-p** (*nucleus sampling*): solo el conjunto más pequeño de tokens cuya probabilidad suma $p$. Se adapta: si el modelo está seguro, quedan pocos; si duda, muchos.
+
+Prueba las tres sobre la distribución real que da nuestro GPT:
+
+<SamplingSim />
+
+<CodeExercise
+  id="temperatura"
+  title="Temperatura, top-k y top-p con NumPy"
+  starter={`
+    import numpy as np
+
+    def distribucion(logits, temperatura=1.0, top_k=None, top_p=None):
+        z = np.asarray(logits, dtype=float) / ___
+        p = np.exp(z - z.max())
+        p /= p.sum()
+        orden = np.argsort(-p)                               # de más a menos probable
+        quedan = np.ones(len(p), dtype=bool)
+        if top_k is not None:
+            quedan[orden[top_k:]] = False
+        if top_p is not None:
+            acumulada_antes = np.cumsum(p[orden]) - p[orden]  # lo que suman los anteriores
+            quedan[orden[acumulada_antes > ___]] = False
+        p = np.where(quedan, p, 0)
+        return p / p.sum()
+
+    logits = [3.0, 2.0, 1.0, 0.0, -1.0]
+    print("T = 1:  ", distribucion(logits).round(3))
+    print("T = 0,5:", distribucion(logits, 0.5).round(3))
+    print("top-k 2:", distribucion(logits, top_k=2).round(3))
+    print("top-p 0,8:", distribucion(logits, top_p=0.8).round(3))
+  `}
+  solution={`
+    import numpy as np
+
+    def distribucion(logits, temperatura=1.0, top_k=None, top_p=None):
+        z = np.asarray(logits, dtype=float) / temperatura
+        p = np.exp(z - z.max())
+        p /= p.sum()
+        orden = np.argsort(-p)                               # de más a menos probable
+        quedan = np.ones(len(p), dtype=bool)
+        if top_k is not None:
+            quedan[orden[top_k:]] = False
+        if top_p is not None:
+            acumulada_antes = np.cumsum(p[orden]) - p[orden]  # lo que suman los anteriores
+            quedan[orden[acumulada_antes > top_p]] = False
+        p = np.where(quedan, p, 0)
+        return p / p.sum()
+
+    logits = [3.0, 2.0, 1.0, 0.0, -1.0]
+    print("T = 1:  ", distribucion(logits).round(3))
+    print("T = 0,5:", distribucion(logits, 0.5).round(3))
+    print("top-k 2:", distribucion(logits, top_k=2).round(3))
+    print("top-p 0,8:", distribucion(logits, top_p=0.8).round(3))
+  `}
+  hints={[
+    "La temperatura divide los logits.",
+    "Un token se queda fuera de top-p cuando lo que suman los que tiene delante ya supera p.",
+    "/ temperatura y acumulada_antes > top_p.",
+  ]}
+  check={`
+    base = distribucion(logits)
+    assert abs(base.sum() - 1) < 1e-12 and abs(base[0] - np.exp(3) / np.exp([3, 2, 1, 0, -1]).sum()) < 1e-12, "Con T = 1 y sin filtros es el softmax de siempre"
+    assert distribucion(logits, 0.5)[0] > base[0] and distribucion(logits, 2.0)[0] < base[0], "Bajar la temperatura concentra la probabilidad en el favorito; subirla la reparte"
+    k2 = distribucion(logits, top_k=2)
+    assert (k2 > 0).sum() == 2 and abs(k2[0] / k2[1] - np.e) < 1e-9, "Top-k 2 deja los dos favoritos y conserva su proporción (e¹)"
+    p8 = distribucion(logits, top_p=0.8)
+    assert (p8 > 0).sum() == 2, f"Con estos logits, el primero vale 0,636 y los dos primeros suman 0,871: top-p 0,8 deja dos tokens; salen {(p8 > 0).sum()}"
+    assert (distribucion(logits, top_p=0.5) > 0).sum() == 1, "Con top-p 0,5 basta el favorito (0,636)"
+  `}
+>
+Escribe la distribución final tras aplicar temperatura, top-k y top-p. Aquí top-p se aplica sobre la distribución completa; la función `generate` del script lo aplica después de top-k, sobre los supervivientes renormalizados, y cuando se usan los dos filtros a la vez el resultado puede cambiar.
+</CodeExercise>
+
+<Predict
+  id="top-p"
+  answer="3"
+  explanation="Ordenados: 0,5; 0,25; 0,15; 0,1. Acumulado: 0,5 → 0,75 → 0,90. Con 0,5 y 0,25 todavía no se llega a 0,8; con el tercero sí (0,90). Top-p se queda con el conjunto más pequeño que alcanza p: tres tokens. Si el modelo estuviese más seguro (por ejemplo, 0,85 para el primero), con p = 0,8 quedaría uno solo."
+  hints={["Suma las probabilidades de mayor a menor hasta llegar a 0,8.", "0,5 + 0,25 = 0,75 todavía no llega."]}
+>
+Un modelo da a los cuatro únicos tokens posibles las probabilidades 0,5; 0,25; 0,15 y 0,1. Con **top-p = 0,8**, ¿cuántos tokens pueden salir?
+</Predict>
+
+## Lo que escribe nuestro GPT
+
+Empezando por «En un lugar de la Mancha», 80 tokens con cada estrategia (la misma semilla para todas):
+
+**Greedy (siempre el más probable)** (pares de tokens distintos: 70%)
+
+> En un lugar de la Mancha, que, como no se le ha de
+> ser, se le da a entender que no se le da lugar de las cosas que se
+> aconseguir, y que no se le da lugar de hacerlas, y que no se
+> aconseguir la historia de la historia, por no haberle visto
+> que no se le había de hacer, ni aun se lo
+
+**Temperatura 0,7 y top-k 50** (pares de tokens distintos: 94%)
+
+> En un lugar de la Mancha, sale de la caña,
+> la cual se puso en el suelo.
+> 
+> Puese Sancho Panza en el punto y el rostro de las locuras,
+> y la duquesa, y con otros con muestras de su
+> escudero, con otros sucesos que se le avino a su señor don Quijote,
+> cual era su pensamiento, y que en un punto
+
+**Temperatura 1, sin filtros** (pares de tokens distintos: 94%)
+
+> En un lugar de la Mancha se sale también el que el andante
+> proplado conocía; y, con todo eso, se ha estado no ha de ir a la figura
+> y a la reina del ejercicio della; y con todo eso, me acordáis de
+> serer que queda dicho a caballero andante, señor cristiano, el mismo
+> cualquiera le tiene puesto en perjuicio dis
+
+**Temperatura 1,5** (pares de tokens distintos: 99%)
+
+> En un lugar de la Mancha se saliese también el que el andante
+> había dejado conomado para recebir dellos lo que el
+> cuenta no ha leydos años. Con esta loquina llegó la prometida, y sin
+> gallo cual se prestaría blanca ponelaba y tornó a corralle. Pobre los
+> cuadrilínos con todos pensictando dis
+
+**Temperatura 1 y top-p 0,9** (pares de tokens distintos: 99%)
+
+> En un lugar de la Mancha se sale donde el valeroso don
+> Quijote se quedó el Caballero de los Espejos con la Mancha
+> 
+> Venía don Quijote a la Mancha y Sancho Panza en la
+> razón de la empresa con dos palabras, templó de nuevo y
+> más si era propósito caballero, para el mismo que llevaba felicísima
+> andante, con
+
+La medida entre paréntesis es la proporción de pares de tokens consecutivos que no se repiten: cuanto más baja, más bucles. Greedy se queda en el 70% y entra en un bucle de «que no se le da lugar»; en esta ejecución, con temperatura 0,7 y top-k 50 sale el texto más coherente (aunque se cuela algún «Puese»), con Sancho, la duquesa y «su señor don Quijote»; con temperatura 1,5 el modelo se inventa palabras («conomado», «pensictando»). Ninguno tiene sentido más allá de una frase: con un libro y 11,5 millones de parámetros, el modelo aprende el estilo, los personajes y la sintaxis, pero no a contar una historia.
+
+<Quiz
+  id="greedy"
+  options={[
+    "Porque elegir siempre el más probable lleva a bucles de los que nada le saca",
+    "Porque greedy elige mal el primer token y el error se arrastra",
+    "Porque el modelo está mal entrenado y con más pasos dejaría de repetirse",
+    "Porque greedy usa menos contexto que el muestreo con temperatura",
+  ]}
+  answer={0}
+  explanation="Greedy maximiza cada paso por separado. Las frases que ya se han dicho suelen ser muy probables como continuación de sí mismas, así que el modelo cae en bucles: la misma frase una y otra vez. El texto humano no está hecho solo de las palabras más probables. Muestrear con algo de azar (temperatura alrededor de 0,7–1 y top-p o top-k) da texto más variado y natural. Greedy sigue teniendo sentido cuando hay una respuesta correcta y corta (extraer un dato, clasificar), y para que las pruebas sean reproducibles."
+  hints={["Compara la medida de repetición (pares distintos) del greedy con la de las demás estrategias."]}
+>
+¿Por qué el texto greedy se repite tanto?
+</Quiz>
+
+<Callout kind="real" title="En el trabajo">
+- **Valores habituales**: temperatura entre 0,7 y 1 y top-p entre 0,9 y 0,95. El valor por defecto depende de la API (varias usan temperatura 1 y top-p 1): revísalo. Para tareas con respuesta exacta (extraer datos, código, clasificar), temperatura 0 o muy baja.
+- **Temperatura 0 no garantiza la misma respuesta siempre**: en GPU, el orden de las operaciones en paralelo cambia ligeramente los resultados, y un empate cercano puede resolverse distinto.
+- **La velocidad de generación** depende de la caché de claves y valores, del tamaño del lote y de la cuantización. Nuestro GPT, sin caché: 166,6 tokens por segundo en MPS.
+</Callout>
+
+<Temario
+  links={[
+    { to: "texto/servir-el-modelo", why: "Cuándo usar un LLM y cuándo un modelo pequeño ajustado." },
+    { to: "deep-learning/entrenar-una-red", why: "El softmax que convierte logits en probabilidades." },
+    { to: "refuerzo/que-es-el-refuerzo", why: "Explorar o explotar: el mismo dilema que la temperatura." },
+  ]}
+/>
+
+## Para llevar
+
+- Greedy repite; sortear sin control desvaría. Temperatura, top-k y top-p regulan el punto medio.
+- Temperatura < 1 concentra, > 1 reparte. Top-k fija cuántos; top-p, cuánta probabilidad.
+- Nuestro GPT: greedy entra en bucles; temperatura 0,7 con top-k 50 da el texto más coherente; 1,5 inventa palabras.

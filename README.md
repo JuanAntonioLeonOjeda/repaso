@@ -18,7 +18,10 @@ pista y solución), y notas de cómo se hace cada cosa en un trabajo real.
   - **IA generativa de imágenes** (PyTorch con MNIST, y SD-Turbo con `diffusers`): 8 lecciones,
     1 simulación y 24 ejercicios: autoencoder, VAE, GAN, difusión, guía, evaluación (FID) y
     Stable Diffusion. Lo ejecuta `scripts/tutorials/generativa.py`.
-  - Próximo: crea tu LLM.
+  - **Crea tu LLM** (PyTorch, el Quijote): 8 lecciones, 1 simulación y 25 ejercicios: un tokenizador
+    BPE, bigramas, atención, el bloque transformer, preentrenar un GPT de 11,5 M de parámetros,
+    generar, LoRA a mano y un modelo base frente a uno instruido (Qwen2.5-0.5B). Lo ejecuta
+    `scripts/tutorials/llm.py`.
   - **FastAPI**: 12 lecciones, 2 simulaciones y 47 ejercicios que construyen la API de un modelo
     de calidad de vinos (con FastAPI de verdad ejecutándose en el navegador, ver ADR-0005).
 - Publicada en **https://juanantonioleonojeda.github.io/repaso/** (GitHub Pages, se despliega en
@@ -107,6 +110,7 @@ VIRTUAL_ENV=.venv-tutorials uv pip install -r scripts/tutorials/requirements.txt
 .venv-tutorials/bin/python scripts/tutorials/vision.py --data /tmp/cifar --out /tmp/vision   # ~25 min en un M4 con MPS
 .venv-tutorials/bin/python scripts/tutorials/texto.py --out /tmp/texto                       # ~2 h en un M4 con MPS
 .venv-tutorials/bin/python scripts/tutorials/generativa.py --data /tmp/mnist --out /tmp/gen   # ~1,5 h en un M4 con MPS
+.venv-tutorials/bin/python scripts/tutorials/llm.py --out /tmp/llm                            # ~1 h en un M4 con MPS
 # --quick en cualquiera de los dos: prueba rápida con un subconjunto
 python scripts/tutorials/vision_curves.py /tmp/vision/results.json > src/features/simulations/tutorials/vision-runs.ts
 cp /tmp/vision/errores.png public/tutorials/vision/errores.png
@@ -115,7 +119,8 @@ cp /tmp/vision/errores.png public/tutorials/vision/errores.png
 Visión descarga CIFAR-10 (~170 MB) y los pesos de ResNet-18 (~45 MB); Texto, las reseñas en
 español del Multilingual Amazon Reviews Corpus (~50 MB) y BETO (~440 MB);
 Generativa, MNIST (~12 MB) y SD-Turbo (~2,6 GB; usarlo supone aceptar la Stability AI
-Community License). Nada de eso se guarda en el repositorio; las figuras de las lecciones se
+Community License); LLM, el Quijote y el Lazarillo de Project Gutenberg (dominio público) y
+Qwen2.5-0.5B base e instruido (~1 GB cada uno, Apache 2.0). Nada de eso se guarda en el repositorio; las figuras de las lecciones se
 copian de `--out/figures` a `public/tutorials/generativa/`. Las cifras de las lecciones salen de los `results.json`.
 
 ## Cómo está hecho

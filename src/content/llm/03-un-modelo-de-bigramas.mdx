@@ -1,0 +1,156 @@
+Antes del transformer, el modelo de lenguaje más sencillo que existe: mirar solo el token anterior y contar. ¿Qué viene después de «don»? Casi siempre «Quijote». Un **modelo de bigramas** es una tabla de 2.048 × 2.048 con esas cuentas. No aprende nada en el sentido de una red, pero sirve para tres cosas: entender la pérdida que vas a minimizar, saber qué valores son buenos y tener un listón que el GPT tiene que batir.
+
+## Contar y normalizar
+
+Para cada token $a$, se cuenta cuántas veces le sigue cada token $b$ en el texto de entrenamiento, y se divide entre el total de la fila:
+
+$$
+P(b \mid a) = \frac{\text{cuenta}(a, b) + \lambda}{\sum_{b'} \big(\text{cuenta}(a, b') + \lambda\big)}
+$$
+
+El $\lambda$ (suavizado) evita probabilidades cero: una pareja que nunca salió en entrenamiento puede aparecer en validación, y $-\ln 0$ es infinito.
+
+```python
+counts = torch.zeros(VOCAB, VOCAB)
+counts.index_put_((train[:-1], train[1:]), torch.ones(len(train) - 1), accumulate=True)
+probs = (counts + 0.01) / (counts + 0.01).sum(dim=1, keepdim=True)
+loss = -probs[val[:-1], val[1:]].log().mean()     # entropía cruzada media en validación
+```
+
+## La pérdida: entropía cruzada
+
+La misma pérdida que en cualquier clasificador, y la misma que minimiza ChatGPT: el logaritmo negativo de la probabilidad que el modelo dio al token que de verdad vino, en media sobre todas las posiciones. Si el modelo acierta con probabilidad 1, vale 0. Si no sabe nada, reparte por igual.
+
+<Predict
+  id="perdida-uniforme"
+  answer={["7.62", "7,62", "7.625", "7,625"]}
+  tolerance={0.01}
+  explanation="Un modelo que no sabe nada da 1/2.048 a cada token, así que la pérdida es −ln(1/2.048) = ln 2.048 ≈ 7,62 en cada posición. Es el valor con el que empieza el GPT del tutorial (7,63 en el paso 0), y comprobarlo es una buena prueba de que la inicialización está bien: si una red recién creada da mucho más, sus logits iniciales son demasiado grandes."
+  hints={["Con un vocabulario de 2.048 tokens, ¿qué probabilidad da un modelo uniforme a cada uno?", "−ln(1/2.048) = ln 2.048"]}
+>
+¿Qué pérdida (entropía cruzada, con logaritmo natural) tiene un modelo que da la misma probabilidad a los 2.048 tokens del vocabulario?
+</Predict>
+
+<CodeExercise
+  id="bigramas"
+  title="Un modelo de bigramas con NumPy"
+  starter={`
+    import numpy as np
+
+    texto = "el perro come . el gato come . el perro duerme . el gato duerme . un perro come ."
+    vocab = sorted(set(texto.split()))
+    ids = np.array([vocab.index(t) for t in texto.split()])
+    V = len(vocab)
+
+    cuentas = np.zeros((V, V))
+    np.add.at(cuentas, (ids[:-1], ids[___]), 1)          # cuentas[a, b]: veces que b sigue a a
+    probs = (cuentas + 0.01) / (cuentas + 0.01).sum(axis=___, keepdims=True)
+
+    def perdida(seq):
+        """Entropía cruzada media de una secuencia de ids."""
+        return -np.log(probs[seq[:-1], seq[1:]]).mean()
+
+    def siguiente(palabra):
+        fila = probs[vocab.index(palabra)]
+        return {vocab[i]: round(p, 3) for i, p in enumerate(fila) if p > 0.05}
+
+    print("tras «el»:", siguiente("el"))
+    print("tras «perro»:", siguiente("perro"))
+    print("pérdida en el texto:", round(perdida(ids), 3), " uniforme:", round(np.log(V), 3))
+  `}
+  solution={`
+    import numpy as np
+
+    texto = "el perro come . el gato come . el perro duerme . el gato duerme . un perro come ."
+    vocab = sorted(set(texto.split()))
+    ids = np.array([vocab.index(t) for t in texto.split()])
+    V = len(vocab)
+
+    cuentas = np.zeros((V, V))
+    np.add.at(cuentas, (ids[:-1], ids[1:]), 1)          # cuentas[a, b]: veces que b sigue a a
+    probs = (cuentas + 0.01) / (cuentas + 0.01).sum(axis=1, keepdims=True)
+
+    def perdida(seq):
+        """Entropía cruzada media de una secuencia de ids."""
+        return -np.log(probs[seq[:-1], seq[1:]]).mean()
+
+    def siguiente(palabra):
+        fila = probs[vocab.index(palabra)]
+        return {vocab[i]: round(p, 3) for i, p in enumerate(fila) if p > 0.05}
+
+    print("tras «el»:", siguiente("el"))
+    print("tras «perro»:", siguiente("perro"))
+    print("pérdida en el texto:", round(perdida(ids), 3), " uniforme:", round(np.log(V), 3))
+  `}
+  hints={[
+    "El siguiente token de cada posición es el mismo array desplazado una posición: ids[1:].",
+    "Cada fila (el token anterior) tiene que sumar 1: se normaliza a lo largo de las columnas.",
+    "ids[1:] y axis=1.",
+  ]}
+  check={`
+    assert cuentas.sum() == len(ids) - 1, "Hay una pareja por cada par de tokens consecutivos"
+    assert np.allclose(probs.sum(axis=1), 1), "Cada fila de probabilidades tiene que sumar 1"
+    i_el, i_perro, i_gato = vocab.index("el"), vocab.index("perro"), vocab.index("gato")
+    assert cuentas[i_el, i_perro] == 2 and cuentas[i_el, i_gato] == 2, "Tras «el» vienen 2 veces «perro» y 2 «gato»"
+    assert abs(probs[i_el, i_perro] - probs[i_el, i_gato]) < 1e-12, "Por eso, tras «el», perro y gato son igual de probables"
+    assert perdida(ids) < np.log(V), "Contar bigramas tiene que mejorar al modelo uniforme"
+  `}
+>
+Cuenta los bigramas de una frase de juguete, normaliza por filas y calcula la entropía cruzada. Mira qué predice el modelo después de «el» y de «perro».
+</CodeExercise>
+
+## El listón
+
+En el Quijote, con los 610.205 tokens de entrenamiento y midiendo en el 10% final del libro:
+
+| Modelo | Pérdida en validación | Perplejidad |
+| ------ | --------------------: | ----------: |
+| Uniforme (no sabe nada) | 7,625 | 2.048 |
+| Unigramas (frecuencia de cada token, sin contexto) | 6,161 | 474 |
+| Bigramas, suavizado 1 | 5,226 | 186 |
+| Bigramas, suavizado 0,1 | 4,561 | 96 |
+| **Bigramas, suavizado 0,01** | **4,466** | **87** |
+
+En entrenamiento, los bigramas llegan a 3,972: medio punto mejor que en validación, porque 101.811 de las 4,2 millones de parejas posibles aparecen en el texto de entrenamiento, y en validación salen parejas que el modelo nunca vio.
+
+Y esto es lo que escribe el modelo de bigramas, sorteando cada token según la fila del anterior, a partir de «En»:
+
+> Entresoro responde; el lugar
+>
+> a Dios, como
+> —Con esto tomó el
+> es: no ha sucedificen mi amo lo cual había puesto
+> razar. Orbis con muestrario prestar y blanca rantada y principal a
+
+Palabras reales y trozos de frases plausibles («el lugar», «a Dios», «mi amo lo cual había puesto»), pero sin ningún sentido: cada token solo conoce al anterior.
+
+<Predict
+  id="perplejidad"
+  answer={["87", "87.0", "87,0"]}
+  tolerance={1}
+  explanation="La perplejidad es e elevado a la pérdida media: e^4,466 ≈ 87. Se lee como «el modelo duda como si eligiese al azar entre 87 tokens igual de probables». El modelo uniforme tiene perplejidad 2.048 (e^7,62); el de unigramas, unos 474. El GPT tiene que bajar de 87."
+  hints={["La perplejidad deshace el logaritmo de la entropía cruzada.", "e^4,466"]}
+>
+La pérdida del modelo de bigramas en validación es 4,466. ¿Cuál es su **perplejidad**, $e^{\text{pérdida}}$?
+</Predict>
+
+<Callout kind="real" title="En el trabajo">
+- **La perplejidad solo se compara con el mismo tokenizador.** Con tokens más largos, cada predicción es más difícil y la perplejidad por token sube, aunque el modelo sea igual de bueno. Para comparar modelos con tokenizadores distintos se usan bits por carácter o bits por byte.
+- **Los n-gramas no han muerto.** Los modelos de n-gramas (con contextos de 3, 4 o 5 tokens) siguen siendo útiles para filtrar corpus enormes: se marcan como sospechosos los textos con perplejidad muy alta (basura) o muy baja (texto repetido).
+- **El suavizado se elige con validación**, como cualquier hiperparámetro: aquí, el de 0,01 entre tres candidatos. Como se elige y se mide con el mismo bloque, la cifra es algo optimista.
+</Callout>
+
+<Temario
+  links={[
+    { to: "deep-learning/entrenar-una-red", why: "La entropía cruzada: −ln de la probabilidad de la clase correcta." },
+    { to: "razonamiento/incertidumbre-y-bayes", why: "Probabilidades condicionadas: P(b | a) se estima contando." },
+    { to: "texto/un-baseline-con-tf-idf", why: "Empezar por un modelo sencillo para saber qué cifra hay que batir." },
+  ]}
+/>
+
+## Para llevar
+
+- Bigramas: contar qué token sigue a cada uno y normalizar por filas, con un poco de suavizado.
+- La pérdida es la entropía cruzada; un modelo uniforme da $\ln V$ (7,62 con 2.048 tokens).
+- Perplejidad $= e^{\text{pérdida}}$: entre cuántos tokens duda el modelo.
+- En el Quijote: bigramas 4,466 en validación (perplejidad 87); el listón del GPT.

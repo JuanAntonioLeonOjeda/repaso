@@ -149,7 +149,7 @@ El precio está en el cálculo: **49 minutos** de entrenamiento en el portátil 
 - **El `Trainer` de Hugging Face** hace este bucle por ti (warmup, recorte, evaluación, checkpoints, precisión mixta, varias GPU). Para proyectos reales suele compensar; escribir el bucle una vez sirve para saber qué hace.
 - **Elige el modelo base por idioma, tamaño y licencia.** Para español: BETO, los RoBERTa de la BNE (MarIA) o modelos multilingües como XLM-RoBERTa. Si la latencia importa, versiones destiladas (DistilBERT y similares) con la mitad de capas pierden poco.
 - **Pocos datos etiquetados**: con unos cientos de ejemplos, el fine-tuning completo sobreajusta. Prueba antes embeddings de frase de un modelo preentrenado con una regresión logística encima, o un LLM con unos ejemplos en el prompt (lección 8).
-- **LoRA y compañía** ajustan solo unas matrices pequeñas añadidas al modelo, en vez de todos los pesos. Ahorran memoria y permiten guardar una versión por tarea ocupando unos pocos MB. Volverán a salir en el tutorial sobre LLM, que está previsto.
+- **LoRA y compañía** ajustan solo unas matrices pequeñas añadidas al modelo, en vez de todos los pesos. Ahorran memoria y permiten guardar una versión por tarea ocupando unos pocos MB. Las escribirás a mano en la última lección del tutorial «Crea tu LLM».
 </Callout>
 
 <Callout kind="idea" title="En Keras">

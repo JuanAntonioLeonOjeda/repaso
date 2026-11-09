@@ -68,6 +68,8 @@
   --subject-texto-soft: #f5e6f1;
   --subject-generativa: #4338a8;
   --subject-generativa-soft: #e9e7f8;
+  --subject-llm: #a8321f;
+  --subject-llm-soft: #f8e5e1;
   --subject-fastapi: #3f7d20;
   --subject-fastapi-soft: #e6f2dd;
 
@@ -174,6 +176,8 @@
   --subject-texto-soft: #33172d;
   --subject-generativa: #aaa3f5;
   --subject-generativa-soft: #1f1c3d;
+  --subject-llm: #ff9e8c;
+  --subject-llm-soft: #3a1712;
   --subject-fastapi: #9fd67a;
   --subject-fastapi-soft: #1c2a12;
 
